@@ -1,0 +1,6 @@
+{
+  "name": "شاطر كلاسيز — Shatir Classes",
+  "description": "منصة تعليمية عربية توصل ولي الأمر بأفضل المعلمين الخصوصيين المعتمدين لطفله مع حصة تجريبية مجانية أولى وتنسيق مباشر.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

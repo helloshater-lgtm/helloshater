@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --shater-blue: #0D4E8B;
+    --shater-deep-blue: #003767;
+    --shater-yellow: #FFC629;
+    --shater-navy: #1F2A44;
+    --shater-bg: #F8F9FC;
+    --shater-slate: #64748B;
+    --shater-border: #E2E8F0;
+  }
+
+  html {
+    font-family: 'Tajawal', system-ui, -apple-system, sans-serif;
+    background-color: var(--shater-bg);
+    color: var(--shater-navy);
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Custom scrollbar and utilities */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Smooth Fade-in Entrance */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

@@ -1,0 +1,585 @@
+import React, { useState } from 'react';
+import { Tutor, SearchCriteria } from '../types';
+import { VideoModal } from './VideoModal';
+import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
+import {
+  ArrowRight,
+  GraduationCap,
+  Clock,
+  Play,
+  Lightbulb,
+  Check,
+  BookOpen,
+  Calendar,
+  CreditCard,
+  ShieldCheck,
+  MessageCircle,
+  CheckCircle2,
+  Bookmark,
+} from 'lucide-react';
+
+interface TutorProfileViewProps {
+  tutor: Tutor;
+  criteria?: SearchCriteria;
+  onBack: () => void;
+  stageName?: string;
+  gradeName?: string;
+  subjectName?: string;
+  curriculumName?: string;
+  quranAgeName?: string;
+  quranLevelName?: string;
+}
+
+export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
+  tutor,
+  criteria,
+  onBack,
+  stageName,
+  gradeName,
+  subjectName,
+  curriculumName,
+  quranAgeName,
+  quranLevelName,
+}) => {
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+
+  // If criteria exists, use its track. Otherwise detect from tutor's offerings.
+  const hasCriteria = Boolean(criteria);
+  const detectedTrack = criteria?.track || (tutor.offerings.some((o) => o.track === 'school') ? 'school' : 'quran');
+  const isSchool = detectedTrack === 'school';
+
+  const primarySubjectName =
+    subjectName ||
+    tutor.subjectsTaughtSummary?.[0]?.title ||
+    (isSchool ? 'المناهج المدرسية' : 'القرآن الكريم والتأسيس');
+
+  const defaultCurriculumName =
+    curriculumName ||
+    tutor.curriculumTags?.[0] ||
+    'لغات وتجريبي وعربي';
+
+  const bookingPayload = {
+    tutorName: tutor.name,
+    tutorHonorific: tutor.honorific,
+    track: detectedTrack,
+    subjectName: primarySubjectName,
+    stageName: isSchool ? stageName : undefined,
+    gradeName: isSchool ? gradeName : undefined,
+    curriculumName: isSchool ? (curriculumName || (hasCriteria ? undefined : defaultCurriculumName)) : undefined,
+    quranAgeGroupName: !isSchool ? quranAgeName : undefined,
+    quranLevelName: !isSchool ? quranLevelName : undefined,
+  };
+
+  const handleStartBooking = () => {
+    setIsWhatsAppModalOpen(true);
+  };
+
+  const previewQuickMessage = hasCriteria
+    ? isSchool
+      ? `أود حجز حصة تجريبية مع ${tutor.honorific} ${tutor.name} (${primarySubjectName}${gradeName ? ` - ${gradeName}` : ''}${curriculumName ? ` - ${curriculumName}` : ''})`
+      : `أود حجز حصة تجريبية مع ${tutor.honorific} ${tutor.name} (قرآن وتأسيس${quranAgeName ? ` - ${quranAgeName}` : ''}${quranLevelName ? ` - ${quranLevelName}` : ''})`
+    : `أود حجز حصة تجريبية مع ${tutor.honorific} ${tutor.name} (تخصص: ${primarySubjectName})`;
+
+  return (
+    <div className="w-full pb-28 lg:pb-16 animate-fade-in">
+      {/* 1. Breadcrumbs Bar (Matching Desktop Stitch Image 3) */}
+      <div className="w-full py-3.5 mb-6 border-b border-[#E2E8F0] bg-white/50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between flex-wrap gap-2 text-xs sm:text-sm">
+          <div className="flex items-center gap-2 flex-wrap text-[#535E7B]">
+            <button
+              onClick={onBack}
+              className="text-[#0D4E8B] hover:text-[#003767] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>{hasCriteria ? 'العودة إلى نتائج البحث' : 'العودة لاختيار معلم'}</span>
+            </button>
+            <span>/</span>
+            {hasCriteria ? (
+              isSchool ? (
+                <>
+                  {stageName && <span>{stageName}</span>}
+                  {gradeName && (
+                    <>
+                      <span>/</span>
+                      <span>{gradeName}</span>
+                    </>
+                  )}
+                  <span>/</span>
+                  <span>{primarySubjectName}</span>
+                  {curriculumName && (
+                    <>
+                      <span>/</span>
+                      <span className="font-medium text-[#1F2A44]">{curriculumName}</span>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span>مسار القرآن والتأسيس</span>
+                  {quranAgeName && (
+                    <>
+                      <span>/</span>
+                      <span>{quranAgeName}</span>
+                    </>
+                  )}
+                  {quranLevelName && (
+                    <>
+                      <span>/</span>
+                      <span className="font-medium text-[#1F2A44]">{quranLevelName}</span>
+                    </>
+                  )}
+                </>
+              )
+            ) : (
+              <>
+                <span>معلمو شاطر</span>
+                <span>/</span>
+                <span className="font-medium text-[#1F2A44]">{primarySubjectName}</span>
+              </>
+            )}
+          </div>
+
+          <div className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200">
+            <Bookmark className="w-3 h-3 text-[#0D4E8B]" />
+            <span>ملف المعلم التعريفي</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Main 2-Column Responsive Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* ========================================================================= */}
+          {/* COLUMN 1: RIGHT / MAIN CONTENT (Tutor Profile Details) - 8 cols on desktop */}
+          {/* ========================================================================= */}
+          <div className="lg:col-span-8 space-y-6 sm:space-y-8">
+            {/* Tutor Header Card */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm relative overflow-hidden">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5 sm:gap-6">
+                {/* Avatar with Verified Badge */}
+                <div className="relative shrink-0">
+                  <div className="w-22 h-22 sm:w-26 sm:h-26 rounded-full overflow-hidden bg-[#F2F3F6] border-4 border-white shadow-md flex items-center justify-center text-[#0D4E8B] text-2xl font-bold font-['Cairo']">
+                    {tutor.avatarUrl ? (
+                      <img
+                        src={tutor.avatarUrl}
+                        alt={`${tutor.honorific} ${tutor.name}`}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : null}
+                    <span>{tutor.name.charAt(0)}</span>
+                  </div>
+                  {tutor.verifiedCredentials && (
+                    <span
+                      className="absolute bottom-0 left-0 w-7 h-7 rounded-full bg-[#0D4E8B] text-white flex items-center justify-center text-xs shadow-md border-2 border-white"
+                      title="معلم معتمد وموثق"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </span>
+                  )}
+                </div>
+
+                {/* Name & Headline */}
+                <div className="flex-1 space-y-1.5">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-[#D1DCFE]/60 text-[#0D4E8B] text-xs font-bold">
+                    <GraduationCap className="w-3.5 h-3.5" />
+                    <span>تمت مراجعة المؤهلات</span>
+                  </div>
+
+                  <h1 className="font-['Cairo'] text-2xl sm:text-3xl font-extrabold text-[#1F2A44]">
+                    {tutor.honorific} {tutor.name}
+                  </h1>
+
+                  <p className="text-sm sm:text-base text-[#535E7B] leading-relaxed">
+                    {tutor.headline}
+                  </p>
+
+                  {/* Taxonomy Tags */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                    <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] border border-[#E2E8F0] font-medium text-[#1F2A44] flex items-center gap-1">
+                      <BookOpen className="w-3 h-3 text-[#64748B]" />
+                      <span>{isSchool ? `${stageName} (${tutor.subjectsTaughtSummary[0]?.gradesRange || 'الصفوف ١ - ٦'})` : 'مسار التأسيس والقرآن'}</span>
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] border border-[#E2E8F0] font-medium text-[#1F2A44]">
+                      {curriculumName}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] border border-[#E2E8F0] font-medium text-[#1F2A44] flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-[#64748B]" />
+                      <span>خبرة {tutor.yearsOfExperience} سنوات تدريس فعلي</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Video Preview Banner */}
+              {tutor.videoPreview?.available && (
+                <div className="mt-6 pt-6 border-t border-[#F2F3F6]">
+                  <div className="p-4 sm:p-5 rounded-2xl bg-[#F0F5FA] border border-[#D1DCFE] flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-3.5 text-center sm:text-right">
+                      <div className="w-11 h-11 rounded-xl bg-[#0D4E8B] text-[#FFC629] flex items-center justify-center text-lg shrink-0 shadow-sm">
+                        <Play className="w-5 h-5 fill-[#FFC629]" />
+                      </div>
+                      <div>
+                        <h4 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#0D4E8B]">
+                          فيديو تعريفي قصير: كيف أدير الحصة مع طفلك؟
+                        </h4>
+                        <p className="text-xs text-[#535E7B] mt-0.5">
+                          {tutor.videoPreview.description}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setIsVideoModalOpen(true)}
+                      className="px-4 py-2 rounded-xl bg-white hover:bg-[#0D4E8B] hover:text-white text-[#0D4E8B] text-xs font-bold border border-[#CBD5E1] transition-all shadow-sm flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <span>مشاهدة الفيديو</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Section: كيف أساعد طفلك؟ */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="w-5 h-5 text-[#0D4E8B]" />
+                <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                  كيف أساعد طفلك؟
+                </h2>
+              </div>
+
+              {/* Quote */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-[#F8F9FC] border-r-4 border-[#0D4E8B] text-[#1F2A44] leading-relaxed text-xs sm:text-sm">
+                <p className="font-medium italic">"{tutor.helpChildSummary}"</p>
+              </div>
+
+              {/* Methodology Pillars */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1">
+                {tutor.methodologyPillars.map((pillar, idx) => (
+                  <div key={idx} className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1.5">
+                    <div className="w-7 h-7 rounded-lg bg-[#D1DCFE]/60 text-[#0D4E8B] flex items-center justify-center text-xs font-bold">
+                      {idx + 1}
+                    </div>
+                    <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
+                      {pillar.title}
+                    </h3>
+                    <p className="text-xs text-[#535E7B] leading-relaxed">
+                      {pillar.description}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Target Student Cases */}
+              {tutor.targetStudentCases && tutor.targetStudentCases.length > 0 && (
+                <div className="mt-2 p-4 rounded-2xl bg-[#F2F3F6]/70 border border-[#E2E8F0]">
+                  <h4 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#0D4E8B] mb-2.5">
+                    الحالات التعليمية الأكثر استفادة من هذا المنهج:
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {tutor.targetStudentCases.map((c, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs text-[#1F2A44]">
+                        <Check className="w-3.5 h-3.5 text-emerald-600 font-bold shrink-0 mt-0.5" />
+                        <span className="leading-snug">{c}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Section: المواد والصفوف التي أدرّسها */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-[#0D4E8B]" />
+                <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                  المواد والصفوف التي أدرّسها
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                {tutor.subjectsTaughtSummary.map((item, idx) => (
+                  <div key={idx} className="p-4 sm:p-5 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] flex flex-col justify-between gap-3">
+                    <div className="space-y-1.5">
+                      <h4 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                        {item.title}
+                      </h4>
+                      <p className="text-xs text-[#535E7B] leading-relaxed">
+                        {item.curriculumNote}
+                      </p>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#E2E8F0]">
+                      <span className="inline-block px-2.5 py-1 rounded-md bg-[#E2E8F0]/70 text-[#1F2A44] font-bold text-xs">
+                        {item.gradesRange}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Section: ماذا يحدث في الحصة التجريبية؟ */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-[#0D4E8B]" />
+                  <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                    ماذا يحدث في الحصة التجريبية؟
+                  </h2>
+                </div>
+                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                  بدون التزام مالي
+                </span>
+              </div>
+
+              <p className="text-xs sm:text-sm text-[#535E7B]">
+                الحصة التجريبية مصممة خصيصاً لتمنح ولي الأمر والطالب راحة تامة وتقييماً واقعياً قبل اتخاذ أي قرار.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                {tutor.whatHappensInTrial.map((step) => (
+                  <div key={step.stepNumber} className="p-4 sm:p-5 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1.5">
+                    <span className="w-6 h-6 rounded-full bg-[#0D4E8B] text-white flex items-center justify-center text-xs font-bold font-['Cairo']">
+                      {step.stepNumber}
+                    </span>
+                    <h4 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
+                      {step.title}
+                    </h4>
+                    <p className="text-xs text-[#535E7B] leading-relaxed">
+                      {step.description}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Section: الخبرة والمؤهلات الأكاديمية */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-[#0D4E8B]" />
+                <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                  الخبرة والمؤهلات الأكاديمية
+                </h2>
+              </div>
+
+              <div className="space-y-3">
+                {tutor.qualifications.map((q, idx) => (
+                  <div key={idx} className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] flex items-start gap-3">
+                    <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+                      <Check className="w-3.5 h-3.5" />
+                    </span>
+                    <div className="space-y-0.5">
+                      <h4 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
+                        {q.title}
+                      </h4>
+                      <p className="text-xs text-[#0D4E8B] font-medium">
+                        {q.institution}
+                      </p>
+                      {q.notes && (
+                        <p className="text-xs text-[#64748B] pt-0.5 leading-relaxed">
+                          {q.notes}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Section: تفاصيل التسعير والمتابعة بعد الحصة المجانية */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <CreditCard className="w-5 h-5 text-[#0D4E8B]" />
+                  <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                    تفاصيل التسعير والمتابعة
+                  </h2>
+                </div>
+                <span className="text-xs font-bold text-[#64748B] bg-[#F2F3F6] px-3 py-1 rounded-full">
+                  بعد الحصة المجانية
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1">
+                  <span className="text-xs text-[#64748B] block">سعر الحصة الاعتيادية</span>
+                  <span className="font-['Cairo'] text-xl font-bold text-[#1F2A44]">
+                    {tutor.hourlyRateMin} - {tutor.hourlyRateMax} {tutor.currency}
+                  </span>
+                  <span className="text-xs text-[#535E7B] block">حسب عدد الحصص بالأسبوع</span>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1">
+                  <span className="text-xs text-[#64748B] block">مدة الحصة</span>
+                  <span className="font-['Cairo'] text-xl font-bold text-[#0D4E8B]">
+                    {tutor.sessionDurationMinutes} دقيقة
+                  </span>
+                  <span className="text-xs text-[#535E7B] block">شرح فردي مباشر 1:1</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#F2F3F6] text-xs text-[#1F2A44] flex items-center gap-2">
+                <span className="text-[#0D4E8B] font-bold">المحدد لاختيارك:</span>
+                <span>
+                  {isSchool ? `${subjectName} • ${gradeName} • ${curriculumName}` : `${quranAgeName} • ${quranLevelName}`}
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm space-y-1">
+                <span className="font-bold flex items-center gap-1.5 text-emerald-800">
+                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                  <span>ضمان شاطر لراحة ولي الأمر:</span>
+                </span>
+                <p className="leading-relaxed">
+                  لم يناسب طفلك المعلم بعد التجربة؟ نساعدك على تجربة معلم آخر مجاناً دون أي رسوم إضافية.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* COLUMN 2: LEFT / STICKY BOOKING CARD (Desktop Stitch Image 3) - 4 cols */}
+          {/* ========================================================================= */}
+          <div className="hidden lg:block lg:col-span-4 sticky top-24 space-y-4">
+            <div className="bg-white rounded-3xl p-6 border border-[#E2E8F0] shadow-lg space-y-5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-50 text-amber-800 text-xs font-bold border border-amber-200">
+                <CheckCircle2 className="w-3.5 h-3.5 text-amber-700" />
+                <span>عرض ترحيبي لأولياء الأمور</span>
+              </div>
+
+              <div>
+                <h3 className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
+                  ابدأ بحصة تجريبية مجانية
+                </h3>
+                <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                  تعرّف على أسلوب المعلم وتأكد من ارتياح طفلك قبل أي التزام مالي.
+                </p>
+              </div>
+
+              {/* Parameter Chips */}
+              <div className="p-3 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1.5 text-xs">
+                <span className="text-[11px] font-bold text-[#64748B] block">بيانات البحث المحددة:</span>
+                <div className="grid grid-cols-3 gap-1.5 text-center font-bold text-[#1F2A44]">
+                  <div className="p-2 bg-white rounded-xl border border-[#E2E8F0]">
+                    <span className="text-[10px] text-[#64748B] block font-normal">المادة</span>
+                    <span className="truncate block">{isSchool ? subjectName : 'قرآن'}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-xl border border-[#E2E8F0]">
+                    <span className="text-[10px] text-[#64748B] block font-normal">الصف</span>
+                    <span className="truncate block">{isSchool ? gradeName : quranAgeName || 'براعم'}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-xl border border-[#E2E8F0]">
+                    <span className="text-[10px] text-[#64748B] block font-normal">المسار</span>
+                    <span className="truncate block">{isSchool ? curriculumName : 'تأسيس'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pricing breakdown */}
+              <div className="space-y-2.5 pt-1">
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between text-xs">
+                  <span className="font-bold text-emerald-900">الحصة التجريبية الأولى</span>
+                  <span className="font-['Cairo'] font-extrabold text-sm text-emerald-700">
+                    0 ج.م (مجاناً)
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-[#535E7B]">
+                  <span>المدة المعتادة للحصة</span>
+                  <span className="font-bold text-[#1F2A44]">{tutor.sessionDurationMinutes} دقيقة</span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-[#535E7B]">
+                  <span>السعر التقديري بعد التجربة</span>
+                  <span className="font-bold text-[#1F2A44]">
+                    {tutor.hourlyRateMin} - {tutor.hourlyRateMax} {tutor.currency} / للحصة
+                  </span>
+                </div>
+              </div>
+
+              {/* Booking Button */}
+              <button
+                onClick={handleStartBooking}
+                className="w-full py-3.5 px-5 rounded-2xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-sm sm:text-base shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <MessageCircle className="w-4 h-4 text-[#1F2A44]" />
+                <span>احجز حصة تجريبية مجانية</span>
+              </button>
+
+              <p className="text-[11px] text-center text-[#64748B] leading-tight">
+                سيُفتح واتساب للتنسيق مع مستشار شاطر. الموعد يتأكد بموافقتك الكاملة.
+              </p>
+
+              {/* Ready Message Preview */}
+              <div className="p-3 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1">
+                <span className="text-[10px] font-bold text-[#64748B] block">
+                  الرسالة الجاهزة التي ستُرسل للمستشار:
+                </span>
+                <p className="text-xs text-[#1F2A44] italic font-['Tajawal'] leading-snug">
+                  "{previewQuickMessage}"
+                </p>
+              </div>
+
+              {/* Reassurance Footer */}
+              <div className="pt-2 border-t border-[#E2E8F0] space-y-1.5 text-[11px] text-[#64748B]">
+                <div className="flex items-center gap-1.5 text-[#0D4E8B] font-bold">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#0D4E8B]" />
+                  <span>ضمان شاطر لراحة البال</span>
+                </div>
+                <p className="leading-relaxed">
+                  لم يناسب طفلك المعلم بعد الحصة التجريبية؟ نساعدك على تجربة معلم آخر مجاناً.
+                </p>
+
+                <div className="flex items-center justify-between pt-1 text-[10px] text-[#535E7B]">
+                  <span>• بدون بطاقات بنكية</span>
+                  <span>• بدون تسجيل حساب</span>
+                  <span>• دفع مباشر بعد الرضا</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* MOBILE STICKY BOTTOM BAR (Strictly matching Stitch Image 1) */}
+      {/* ========================================================================= */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] p-3.5 shadow-2xl flex items-center justify-between gap-3">
+        <div className="flex flex-col">
+          <span className="text-[11px] text-[#64748B]">الحصة التجريبية</span>
+          <span className="font-['Cairo'] font-extrabold text-sm sm:text-base text-emerald-600">
+            مجاناً / {tutor.trialDurationMinutes} دقيقة
+          </span>
+        </div>
+
+        <button
+          onClick={handleStartBooking}
+          className="flex-1 max-w-[200px] py-2.5 px-4 rounded-xl bg-[#FFC629] text-[#1F2A44] font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+        >
+          <MessageCircle className="w-4 h-4 text-[#1F2A44]" />
+          <span>حجز جلسة تجريبية</span>
+        </button>
+      </div>
+
+      {/* Modals */}
+      <VideoModal
+        tutor={tutor}
+        isOpen={isVideoModalOpen}
+        onClose={() => setIsVideoModalOpen(false)}
+        onBookTrial={handleStartBooking}
+      />
+
+      <WhatsAppNoticeModal
+        payload={bookingPayload}
+        isOpen={isWhatsAppModalOpen}
+        onClose={() => setIsWhatsAppModalOpen(false)}
+      />
+    </div>
+  );
+};
