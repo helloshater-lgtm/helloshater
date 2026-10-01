@@ -159,3 +159,15 @@ export interface TutorApplicationRecord extends TutorApplicationFormData {
   createdAt: string;
   status: 'pending_review' | 'interview_scheduled' | 'approved' | 'rejected';
 }
+
+export interface TutorAvailableSlot {
+  id: string;
+  tutorId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  timezone: string;
+  isAvailable: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}

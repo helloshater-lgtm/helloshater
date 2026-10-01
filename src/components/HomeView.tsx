@@ -1,14 +1,15 @@
-import React, { useState, useRef } from 'react';
-import { SearchCriteria, Tutor } from '../types';
+import React, { useState, useRef, useEffect } from 'react';
 import {
-  DataService,
-  STAGES_DATA,
-  GRADES_DATA,
-  SUBJECTS_DATA,
-  CURRICULUM_OPTIONS,
-  QURAN_AGE_GROUPS,
-  QURAN_LEVELS,
-} from '../services/dataService';
+  SearchCriteria,
+  Tutor,
+  Stage,
+  Grade,
+  Subject,
+  CurriculumOption,
+  QuranAgeGroup,
+  QuranLevel,
+} from '../types';
+import { DataService } from '../services/dataService';
 import { TutorSelector } from './TutorSelector';
 import { SearchResults } from './SearchResults';
 import {
@@ -17,14 +18,12 @@ import {
   RotateCcw,
   MessageCircle,
   CheckCircle2,
+  CalendarClock,
   ChevronDown,
   ArrowLeft,
   ArrowDown,
-  Sparkles,
-  Phone,
 } from 'lucide-react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
-import heroBannerImg from '../assets/hero-banner.png';
 
 interface HomeViewProps {
   onSelectTutor: (tutorId: string) => void;
@@ -34,6 +33,29 @@ interface HomeViewProps {
   onSaveCriteria?: (criteria: SearchCriteria, results: Tutor[]) => void;
 }
 
+const FAQ_ITEMS = [
+  {
+    q: 'هل الحصة التجريبية مجانية؟',
+    a: 'نعم، الحصة التجريبية الأولى مجانية، دون التزام مالي أو إدخال بيانات بطاقة.',
+  },
+  {
+    q: 'كيف أختار موعد الحصة؟',
+    a: 'افتح ملف المعلم، واختر من مواعيده المتاحة، ثم أرسل طلبك عبر واتساب. يُؤكَّد الموعد بعد مراجعة الطلب.',
+  },
+  {
+    q: 'هل فتح واتساب يؤكد الحجز؟',
+    a: 'فتح واتساب يجهّز رسالة الطلب. اضغط إرسال لإكمال الطلب، ثم انتظر تأكيد فريق شاطر.',
+  },
+  {
+    q: 'ماذا لو لم يناسب طفلي أسلوب المعلم؟',
+    a: 'بعد الحصة التجريبية، يمكنك طلب تجربة معلم آخر مجانًا.',
+  },
+  {
+    q: 'ماذا لو لم أجد معلمًا أو موعدًا مناسبًا؟',
+    a: 'تواصل معنا عبر واتساب لتسجيل احتياجك، وسننسّق معك عند توفر خيار مناسب.',
+  },
+];
+
 export const HomeView: React.FC<HomeViewProps> = ({
   onSelectTutor,
   onNavigateToJoin,
@@ -41,7 +63,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   savedResults,
   onSaveCriteria,
 }) => {
-  // Only consider searched if we have a valid criteria AND results returned from previous search
+  // Requirement 4: Results section does NOT appear before user selects and searches
   const [hasSearched, setHasSearched] = useState(
     Boolean(savedCriteria && savedResults && savedResults.length > 0)
   );
@@ -51,14 +73,56 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [searchResults, setSearchResults] = useState<Tutor[]>(savedResults || []);
   const [isLoading, setIsLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
+
+  // Live taxonomy metadata for accurate labels
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [grades, setGrades] = useState<Grade[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [curricula, setCurricula] = useState<CurriculumOption[]>([]);
+  const [quranAges, setQuranAges] = useState<QuranAgeGroup[]>([]);
+  const [quranLevels, setQuranLevels] = useState<QuranLevel[]>([]);
 
   const selectorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Initial fetch of taxonomy for label lookups
+    Promise.all([
+      DataService.getStages().catch(() => []),
+      DataService.getCurriculumOptions().catch(() => []),
+      DataService.getSubjects().catch(() => []),
+      DataService.getQuranAgeGroups().catch(() => []),
+      DataService.getQuranLevels().catch(() => []),
+    ]).then(([stgs, currs, subjs, qAges, qLvls]) => {
+      setStages(stgs);
+      setCurricula(currs);
+      setSubjects(subjs);
+      setQuranAges(qAges);
+      setQuranLevels(qLvls);
+    });
+  }, []);
+
+  const handleTaxonomyLoaded = (loaded: {
+    stages: Stage[];
+    grades: Grade[];
+    subjects: Subject[];
+    curricula: CurriculumOption[];
+    quranAges: QuranAgeGroup[];
+    quranLevels: QuranLevel[];
+  }) => {
+    setStages(loaded.stages);
+    setGrades(loaded.grades);
+    setSubjects(loaded.subjects);
+    setCurricula(loaded.curricula);
+    setQuranAges(loaded.quranAges);
+    setQuranLevels(loaded.quranLevels);
+  };
 
   const handleScrollToSelector = () => {
     selectorRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Called whenever the user alters any dropdown in the selector
+  // Called whenever user alters any criteria
   const handleCriteriaChange = () => {
     setHasSearched(false);
     setSearchError(null);
@@ -66,6 +130,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     setActiveCriteria(null);
   };
 
+  // Requirement 3: Search tutors from Supabase database ONLY. No mock fallbacks.
   const executeSearch = async (criteria: SearchCriteria, simulateError = false) => {
     setIsLoading(true);
     setSearchError(null);
@@ -80,7 +145,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         document.getElementById('search-results-section')?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     } catch (err: any) {
-      setSearchError(err?.message || 'حدث خطأ في جلب النتائج.');
+      setSearchError(err?.message || 'تعذر جلب المعلمين حالياً. يرجى المحاولة مرة أخرى.');
       setSearchResults([]);
       onSaveCriteria?.(criteria, []);
     } finally {
@@ -92,143 +157,99 @@ export const HomeView: React.FC<HomeViewProps> = ({
     'السلام عليكم، أود المساعدة في اختيار المعلم المناسب لطفلي عبر منصة شاطر كلاسيز.'
   )}`;
 
-  // Human readable label helpers for summary
-  const stageName = STAGES_DATA.find((s) => s.id === activeCriteria?.stageId)?.name;
-  const gradeName = GRADES_DATA.find((g) => g.id === activeCriteria?.gradeId)?.name;
-  const subjectName = SUBJECTS_DATA.find((s) => s.id === activeCriteria?.subjectId)?.name;
-  const curriculumName = CURRICULUM_OPTIONS.find((c) => c.id === activeCriteria?.curriculumType)?.name;
-  const quranAgeName = QURAN_AGE_GROUPS.find((a) => a.id === activeCriteria?.ageGroupId)?.name;
-  const quranLevelName = QURAN_LEVELS.find((l) => l.id === activeCriteria?.levelId)?.name;
+  // Human readable label helpers from live Supabase taxonomy
+  const stageName = stages.find((s) => s.id === activeCriteria?.stageId)?.name;
+  const gradeName = grades.find((g) => g.id === activeCriteria?.gradeId)?.name;
+  const subjectName = subjects.find((s) => s.id === activeCriteria?.subjectId)?.name;
+  const curriculumName = curricula.find((c) => c.id === activeCriteria?.curriculumType)?.name;
+  const quranAgeName = quranAges.find((a) => a.id === activeCriteria?.ageGroupId)?.name;
+  const quranLevelName = quranLevels.find((l) => l.id === activeCriteria?.levelId)?.name;
 
   return (
     <div className="w-full animate-fade-in">
-      {/* 1. Hero Section */}
-      <section className="relative w-full overflow-hidden border-b border-[#E2E8F0] bg-[#F0F6FD]">
-        {/* DESKTOP HERO (md and above): Full-width background, 420-480px height, mother & child visible on left, HTML typography on right */}
-        <div className="hidden md:block relative w-full h-[440px] lg:h-[460px]">
-          {/* Background Image Container with local downloaded asset */}
-          <div className="absolute inset-0 w-full h-full overflow-hidden">
-            <img
-              src={heroBannerImg}
-              alt="أم وطفل يتعلمان مع منصة شاطر كلاسيز"
-              className="w-full h-full object-cover object-left md:object-[left_center]"
-            />
-            {/* Subtle soft gradient overlay on the right (RTL text area) for optimal typography readability while leaving the mother & child on left completely visible */}
-            <div className="absolute inset-0 bg-gradient-to-l from-[#F0F6FD]/95 via-[#F0F6FD]/80 via-40% to-transparent pointer-events-none" />
-          </div>
+      {/* 1. Redesigned Text-Focused Hero Section */}
+      <section className="relative w-full overflow-hidden border-b border-[#E2E8F0]/70 bg-gradient-to-b from-[#F0F6FD]/80 via-[#F8FAFD]/40 to-white py-6 sm:py-12 md:py-16 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-3xl mx-auto text-center space-y-3 sm:space-y-5">
+          {/* Small phrase above title */}
+          <p className="text-xs sm:text-sm font-bold text-[#0D4E8B] tracking-wide inline-flex items-center justify-center gap-1.5 font-['Cairo']">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#FFC629] shrink-0" aria-hidden="true" />
+            <span>تعليم مباشر أونلاين لطفلك</span>
+          </p>
 
-          {/* Foreground Content Container */}
-          <div className="relative z-10 max-w-7xl mx-auto px-6 lg:px-8 h-full flex items-center">
-            <div className="max-w-xl lg:max-w-2xl text-right space-y-5">
-              {/* Headline */}
-              <h1 className="font-['Cairo'] text-3xl sm:text-4xl lg:text-5xl font-black text-[#0D4E8B] leading-[1.25] tracking-tight">
-                معلم تثق به،
-                <span className="block text-[#1F2A44] font-extrabold text-2xl sm:text-3xl lg:text-4xl mt-1">
-                  ويتعلّم معه طفلك بثقة
-                </span>
-              </h1>
-
-              {/* Subtext */}
-              <p className="text-base lg:text-lg text-[#535E7B] leading-relaxed max-w-lg">
-                اختر المرحلة والمادة، وتعرّف على المعلمين المناسبين لطفلك. ابدأ بحصة تجريبية مجانية، وسننسّق معك التفاصيل عبر واتساب.
-              </p>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-3 pt-1">
-                <button
-                  type="button"
-                  onClick={handleScrollToSelector}
-                  className="px-8 py-3.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-sm sm:text-base shadow-md hover:shadow-lg active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
+          {/* Main Title */}
+          <h1 className="font-['Cairo'] font-black text-[#1F2A44] text-[32px] sm:text-[36px] md:text-[52px] lg:text-[58px] leading-[1.25] tracking-tight">
+            <span>معلم تثق به.</span>
+            <span className="block mt-1 sm:mt-2 text-[#0D4E8B]">
+              <span>وطفلك يتعلّم </span>
+              <span className="relative inline-block whitespace-nowrap">
+                <span>بثقة.</span>
+                {/* Simple yellow underline SVG */}
+                <svg
+                  className="absolute -bottom-1.5 sm:-bottom-2.5 right-0 w-full h-2.5 sm:h-3 text-[#FFC629] pointer-events-none select-none overflow-visible"
+                  viewBox="0 0 100 12"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
                 >
-                  <span>اختر معلم طفلك</span>
-                  <ArrowDown className="w-4 h-4 text-[#FFC629]" />
-                </button>
-
-                <a
-                  href={whatsappDirectUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-6 py-3.5 rounded-xl bg-white hover:bg-[#F2F3F6] text-[#0D4E8B] border border-[#CBD5E1] font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-sm"
+                  <path
+                    d="M2 9C28 3.5 72 3.5 98 8.5"
+                    stroke="currentColor"
+                    strokeWidth="3.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                {/* Decorative small star inspired by Shatir logo */}
+                <svg
+                  className="absolute -top-1 sm:-top-2 -left-4 sm:-left-6 w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#FFC629] fill-current pointer-events-none select-none"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
                 >
-                  <MessageCircle className="w-4 h-4 text-emerald-600" />
-                  <span>نساعدك تختار عبر واتساب</span>
-                </a>
-              </div>
-
-              {/* Reassurance Subtext */}
-              <div className="flex items-center gap-2 text-xs text-[#535E7B] pt-1">
-                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span className="font-medium">حصة تجريبية مجانية • دون التزام مالي</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* MOBILE HERO (md:hidden): Compact vertical layout, prominent primary button, subtle WhatsApp link, and 180-220px image */}
-        <div className="block md:hidden bg-[#F0F6FD] pt-4 pb-3.5 px-4">
-          <div className="max-w-md mx-auto space-y-2.5 text-right">
-            {/* Headline */}
-            <h1 className="font-['Cairo'] text-2xl sm:text-3xl font-black text-[#0D4E8B] leading-[1.2] tracking-tight">
-              معلم تثق به،
-              <span className="block text-[#1F2A44] font-extrabold text-xl sm:text-2xl mt-0.5">
-                ويتعلّم معه طفلك بثقة
+                  <path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" />
+                </svg>
               </span>
-            </h1>
+            </span>
+          </h1>
 
-            {/* Subtext */}
-            <p className="text-xs sm:text-sm text-[#535E7B] leading-relaxed">
-              اختر المرحلة والمادة، وتعرّف على المعلمين المناسبين لطفلك. ابدأ بحصة تجريبية مجانية، وسننسّق معك التفاصيل عبر واتساب.
-            </p>
+          {/* Description */}
+          <p className="text-base sm:text-lg text-[#535E7B] font-normal leading-relaxed max-w-xl mx-auto pt-0.5">
+            حدّد احتياج طفلك، ونساعدك في الوصول إلى معلم مناسب. والتنسيق كله عبر واتساب.
+          </p>
 
-            {/* Action Area: Prominent 50px Primary Button + Subtle Secondary WhatsApp Link & Guarantee */}
-            <div className="space-y-2 pt-0.5">
-              <button
-                type="button"
-                onClick={handleScrollToSelector}
-                className="w-full h-[50px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-base shadow-md active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>اختر معلم طفلك</span>
-                <ArrowDown className="w-4 h-4 text-[#FFC629]" />
-              </button>
+          {/* Action Area: Primary Button & Secondary WhatsApp Link */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 sm:gap-6 pt-1.5 sm:pt-3">
+            {/* Primary Button */}
+            <button
+              type="button"
+              onClick={handleScrollToSelector}
+              className="w-full sm:w-auto h-[48px] sm:h-[50px] px-8 sm:px-9 rounded-[14px] bg-[#FFC629] hover:bg-[#F5BC18] active:scale-[0.98] text-[#0D4E8B] font-['Cairo'] font-extrabold text-sm sm:text-base shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            >
+              <span>حدّد احتياج طفلك</span>
+              <ArrowDown className="w-4 h-4 text-[#0D4E8B]" />
+            </button>
 
-              <div className="flex items-center justify-between px-1 text-xs">
-                <a
-                  href={whatsappDirectUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0D4E8B] hover:text-[#003767] underline decoration-[#0D4E8B]/40 hover:decoration-[#0D4E8B] transition-colors py-0.5"
-                >
-                  <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>نساعدك تختار عبر واتساب</span>
-                </a>
-
-                {/* Reassurance Subtext */}
-                <div className="flex items-center gap-1 text-[11px] text-[#535E7B]">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span className="font-medium">تجربة مجانية • دون التزام</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Short cropped image (190-210px) keeping mother & child without distortion */}
-            <div className="relative w-full h-[190px] sm:h-[210px] rounded-2xl overflow-hidden shadow-sm border border-[#E2E8F0] mt-2.5 bg-[#E2E8F0]">
-              <img
-                src={heroBannerImg}
-                alt="أم وطفل يتعلمان عبر شاطر كلاسيز"
-                className="w-full h-full object-cover object-[15%_center]"
-              />
-            </div>
+            {/* Secondary Link */}
+            <a
+              href={whatsappDirectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-sm sm:text-base font-['Cairo'] font-bold text-[#0D4E8B] hover:text-[#003767] underline underline-offset-4 decoration-[#0D4E8B]/30 hover:decoration-[#0D4E8B] transition-colors py-1"
+            >
+              <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>محتاج مساعدة؟ تواصل معنا</span>
+            </a>
           </div>
         </div>
       </section>
 
-      {/* 2. Interactive Tutor Selector Tool (Closer to hero section) */}
-      <section ref={selectorRef} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-3 sm:mt-5 mb-10 sm:mb-14">
+      {/* 2. Interactive Tutor Selector Tool */}
+      <section id="tutor-selector" ref={selectorRef} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-2 sm:mt-5 mb-10 sm:mb-14">
         <TutorSelector
           onSearch={(criteria) => executeSearch(criteria, false)}
           initialCriteria={activeCriteria || savedCriteria || undefined}
           isSearching={isLoading}
           onCriteriaChange={handleCriteriaChange}
+          onTaxonomyLoaded={handleTaxonomyLoaded}
         />
 
         {/* 3. Search Results (Only shown after user clicks search!) */}
@@ -255,199 +276,239 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
       {/* Subsequent Sections Container */}
       <div className="space-y-10 sm:space-y-14">
-
-      {/* 4. Section: كيف تعمل منصة شاطر؟ (How it Works) */}
-      <section id="how-it-works" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2">
-        <div className="text-center max-w-xl mx-auto mb-8 space-y-2">
-          <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
-            كيف تبدأ رحلة التعلم مع شاطر؟
-          </h2>
-          <p className="text-xs sm:text-sm text-[#64748B]">
-            خطوات بسيطة تمنحك الأمان الكامل وتضمن اختيار المعلم الأنسب لطفلك.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Step 1 */}
-          <div className="p-5 rounded-2xl bg-white border border-[#E2E8F0] shadow-sm space-y-2">
-            <span className="w-8 h-8 rounded-xl bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-sm shadow-sm">
-              ١
-            </span>
-            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              اختر مواصفات طفلك
-            </h3>
-            <p className="text-xs text-[#535E7B] leading-relaxed">
-              حدد المرحلة والصف ونوع الدراسة لتظهر لك قائمة المعلمين المناسبين لاختياراتك.
+        {/* 4. Section: كيف تعمل منصة شاطر؟ */}
+        <section id="how-it-works" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2">
+          <div className="text-center max-w-xl mx-auto mb-8 space-y-2">
+            <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
+              كيف تبدأ رحلة التعلم مع شاطر؟
+            </h2>
+            <p className="text-xs sm:text-sm text-[#64748B]">
+              من تحديد احتياج طفلك إلى اختيار المعلم والموعد وإرسال الطلب.
             </p>
           </div>
 
-          {/* Step 2 */}
-          <div className="p-5 rounded-2xl bg-white border border-[#E2E8F0] shadow-sm space-y-2">
-            <span className="w-8 h-8 rounded-xl bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-sm shadow-sm">
-              ٢
-            </span>
-            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              تصفح ملفات المعلمين
-            </h3>
-            <p className="text-xs text-[#535E7B] leading-relaxed">
-              شاهد الفيديو التعريفي وتعرف على مؤهلات المعلم وطريقة شرحه قبل الاختيار.
-            </p>
-          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 sm:gap-4">
+            <div className="p-3.5 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-[#E2E8F0] shadow-xs flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+              <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-xs shrink-0 shadow-xs">
+                ١
+              </span>
+              <div className="space-y-0.5 sm:space-y-1 text-right">
+                <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                  حدّد احتياج طفلك
+                </h3>
+                <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                  اختَر المسار والتفاصيل الدراسية المناسبة.
+                </p>
+              </div>
+            </div>
 
-          {/* Step 3 */}
-          <div className="p-5 rounded-2xl bg-white border border-[#E2E8F0] shadow-sm space-y-2">
-            <span className="w-8 h-8 rounded-xl bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-sm shadow-sm">
-              ٣
-            </span>
-            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              اطلب حصة تجريبية مجانية
-            </h3>
-            <p className="text-xs text-[#535E7B] leading-relaxed">
-              ننسّق معك مباشرة عبر واتساب لتحديد موعد الحصة المجانية دون أي التزام مالي.
-            </p>
-          </div>
+            <div className="p-3.5 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-[#E2E8F0] shadow-xs flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+              <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-xs shrink-0 shadow-xs">
+                ٢
+              </span>
+              <div className="space-y-0.5 sm:space-y-1 text-right">
+                <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                  اختَر معلمك
+                </h3>
+                <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                  تعرّف على مؤهلات المعلم وطريقة تدريسه من ملفه.
+                </p>
+              </div>
+            </div>
 
-          {/* Step 4 */}
-          <div className="p-5 rounded-2xl bg-white border border-[#E2E8F0] shadow-sm space-y-2">
-            <span className="w-8 h-8 rounded-xl bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-sm shadow-sm">
-              ٤
-            </span>
-            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              قيّم التجربة وابدأ المتابعة
-            </h3>
-            <p className="text-xs text-[#535E7B] leading-relaxed">
-              إن ارتاح طفلك نبدأ خطة المتابعة، وبإمكانك تجربة معلم آخر مجاناً في أي وقت.
-            </p>
-          </div>
-        </div>
-      </section>
+            <div className="p-3.5 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-[#E2E8F0] shadow-xs flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+              <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-xs shrink-0 shadow-xs">
+                ٣
+              </span>
+              <div className="space-y-0.5 sm:space-y-1 text-right">
+                <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                  اختَر موعدًا مناسبًا
+                </h3>
+                <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                  شاهد المواعيد المتاحة في ملف المعلم واختر ما يناسب طفلك.
+                </p>
+              </div>
+            </div>
 
-      {/* 5. Section: قسم الثقة الأزرق (Full Container Width, Compact Height, Balanced Cards) */}
-      <section id="guarantee" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="w-full bg-[#0D4E8B] rounded-3xl p-6 sm:p-8 text-white shadow-lg">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-white/15">
-            <div>
-              <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold">
-                ضمان شاطر لراحة أولياء الأمور
+            <div className="p-3.5 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-[#E2E8F0] shadow-xs flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+              <span className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#0D4E8B] text-white flex items-center justify-center font-['Cairo'] font-bold text-xs shrink-0 shadow-xs">
+                ٤
+              </span>
+              <div className="space-y-0.5 sm:space-y-1 text-right">
+                <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                  أرسل طلب الحصة التجريبية
+                </h3>
+                <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                  أرسل تفاصيل المعلم والموعد عبر واتساب لإتمام تأكيد الطلب.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 5. Section: ابدأ مع شاطر باطمئنان */}
+        <section id="guarantee" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="w-full bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-8 border border-[#E2E8F0] shadow-xs">
+            {/* Header */}
+            <div className="text-center max-w-xl mx-auto mb-6 sm:mb-8 space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200/80 text-amber-800 text-[11px] sm:text-xs font-bold mb-0.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>ضمان الجودة وراحة البال</span>
+              </div>
+              <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
+                ابدأ مع شاطر باطمئنان
               </h2>
-              <p className="text-xs sm:text-sm text-white/80 mt-0.5">
-                بيئة تعليمية منضبطة ترتكز على الشفافية والمتابعة المستمرة
+              <p className="text-xs sm:text-sm text-[#64748B]">
+                تجربة مجانية، واختيار واضح، ومتابعة قريبة.
               </p>
             </div>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 text-[#FFC629] text-xs font-bold shrink-0 self-start md:self-auto border border-white/10">
-              <ShieldCheck className="w-4 h-4 text-[#FFC629]" />
-              <span>حصة تجريبية مجانية أولى</span>
+
+            {/* Items: 4 compact rows on mobile with light dividers, 4 balanced columns on desktop */}
+            <div className="divide-y divide-[#E2E8F0] md:divide-y-0 md:grid md:grid-cols-4 md:gap-4">
+              {/* Item 1 */}
+              <div className="py-3.5 first:pt-0 last:pb-0 md:py-0 md:p-4 md:rounded-2xl md:bg-[#F8FAFD] md:border md:border-[#E2E8F0] flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+                <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 md:mt-0">
+                  <GraduationCap className="w-4 h-4 text-amber-700" />
+                </span>
+                <div className="space-y-0.5 sm:space-y-1 text-right flex-1">
+                  <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#0D4E8B]">
+                    مراجعة المعلمين قبل النشر
+                  </h3>
+                  <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                    نراجع مؤهلات المعلم وكفاءته التعليمية قبل إتاحة ملفه.
+                  </p>
+                </div>
+              </div>
+
+              {/* Item 2 */}
+              <div className="py-3.5 first:pt-0 last:pb-0 md:py-0 md:p-4 md:rounded-2xl md:bg-[#F8FAFD] md:border md:border-[#E2E8F0] flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+                <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 md:mt-0">
+                  <CheckCircle2 className="w-4 h-4 text-amber-700" />
+                </span>
+                <div className="space-y-0.5 sm:space-y-1 text-right flex-1">
+                  <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#0D4E8B]">
+                    حصة تجريبية مجانية
+                  </h3>
+                  <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                    تعرّف على أسلوب المعلم قبل اتخاذ قرار الاستمرار.
+                  </p>
+                </div>
+              </div>
+
+              {/* Item 3 */}
+              <div className="py-3.5 first:pt-0 last:pb-0 md:py-0 md:p-4 md:rounded-2xl md:bg-[#F8FAFD] md:border md:border-[#E2E8F0] flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+                <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 md:mt-0">
+                  <RotateCcw className="w-4 h-4 text-amber-700" />
+                </span>
+                <div className="space-y-0.5 sm:space-y-1 text-right flex-1">
+                  <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#0D4E8B]">
+                    جرّب معلمًا آخر مجانًا
+                  </h3>
+                  <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                    إذا لم يناسب طفلك أسلوب المعلم في الحصة التجريبية، يمكنك تجربة معلم آخر مجانًا.
+                  </p>
+                </div>
+              </div>
+
+              {/* Item 4 */}
+              <div className="py-3.5 first:pt-0 last:pb-0 md:py-0 md:p-4 md:rounded-2xl md:bg-[#F8FAFD] md:border md:border-[#E2E8F0] flex md:flex-col items-start gap-3 transition-all hover:border-[#0D4E8B]/30">
+                <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 md:mt-0">
+                  <CalendarClock className="w-4 h-4 text-amber-700" />
+                </span>
+                <div className="space-y-0.5 sm:space-y-1 text-right flex-1">
+                  <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#0D4E8B]">
+                    اختَر الموعد وتابع عبر واتساب
+                  </h3>
+                  <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
+                    اختَر من مواعيد المعلم المتاحة، وأرسل الطلب عبر واتساب للتأكيد والمتابعة.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom phrase */}
+            <div className="mt-5 sm:mt-6 pt-3.5 sm:pt-4 border-t border-[#E2E8F0] text-center">
+              <p className="text-xs sm:text-sm font-semibold text-[#0D4E8B] inline-flex items-center justify-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-[#0D4E8B] shrink-0" />
+                <span>الحصة التجريبية دون التزام مالي أو إدخال بيانات بطاقة.</span>
+              </p>
             </div>
           </div>
+        </section>
 
-          {/* 4 Balanced Cards Distributed Across Full Width */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-6">
-            <div className="p-4 rounded-2xl bg-white/10 border border-white/10 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <GraduationCap className="w-4 h-4 text-[#FFC629]" />
-                <h4 className="font-['Cairo'] font-bold text-sm text-white">تدقيق المؤهلات الأكاديمية</h4>
-              </div>
-              <p className="text-xs text-white/75 leading-relaxed">
-                مراجعة دقيقة للمؤهل الجامعي وسنوات التدريس الفعلية في المدارس.
+        {/* 6. Section: بطاقة انضمام المعلم */}
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#F0F6FD] border border-[#D1DCFE] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1 text-right flex-1">
+              <h3 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#0D4E8B]">
+                علّم مع شاطر
+              </h3>
+              <p className="text-xs sm:text-sm text-[#535E7B] leading-relaxed">
+                هل لديك الخبرة والشغف بالتدريس؟ تقدّم للانضمام، وسنتواصل معك لمراجعة مؤهلاتك والتعرّف على أسلوبك.
               </p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-white/10 border border-white/10 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <RotateCcw className="w-4 h-4 text-[#FFC629]" />
-                <h4 className="font-['Cairo'] font-bold text-sm text-white">استبدال المعلم مجاناً</h4>
-              </div>
-              <p className="text-xs text-white/75 leading-relaxed">
-                لم يناسب أسلوب المعلم طفلك؟ نتيح لك تجربة معلم آخر دون أي تكلفة.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white/10 border border-white/10 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <MessageCircle className="w-4 h-4 text-[#FFC629]" />
-                <h4 className="font-['Cairo'] font-bold text-sm text-white">تنسيق مباشر عبر واتساب</h4>
-              </div>
-              <p className="text-xs text-white/75 leading-relaxed">
-                فريق إدارة شاطر معك خطوة بخطوة لترتيب المواعيد والمتابعة.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white/10 border border-white/10 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#FFC629]" />
-                <h4 className="font-['Cairo'] font-bold text-sm text-white">مرونة تامة دون التزام</h4>
-              </div>
-              <p className="text-xs text-white/75 leading-relaxed">
-                لا باقات إجبارية ولا خصم مسبق من البطاقة الائتمانية.
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={onNavigateToJoin}
+              className="w-full sm:w-auto h-[44px] px-6 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] active:scale-[0.98] text-white font-['Cairo'] font-bold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+            >
+              <span>تقدّم كمعلم</span>
+              <ArrowLeft className="w-4 h-4" />
+            </button>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* 6. Section: Call to action for Teachers */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="p-6 sm:p-8 rounded-3xl bg-[#F2F3F6] border border-[#CBD5E1] flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-1 text-right">
-            <h3 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
-              هل أنت معلم متخصص وشغوف بالتدريس؟
-            </h3>
-            <p className="text-xs sm:text-sm text-[#535E7B] max-w-xl leading-relaxed">
-              انضم إلى نخبة معلّمي شاطر. نصلك بأولياء أمور يبحثون عن الكفاءة والالتزام، مع مرونة تامة في أوقاتك.
-            </p>
+        {/* 7. Section: FAQs */}
+        <section id="faq-section" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-4 space-y-6">
+          <div className="text-center space-y-1">
+            <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
+              الأسئلة الشائعة لأولياء الأمور
+            </h2>
+            <p className="text-xs sm:text-sm text-[#64748B]">إجابات واضحة ومباشرة عن الحصص وآلية العمل</p>
           </div>
 
-          <button
-            onClick={onNavigateToJoin}
-            className="w-full md:w-auto px-7 py-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
-          >
-            <span>انضم كمعلم في شاطر</span>
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-        </div>
-      </section>
-
-      {/* 7. Section: FAQs */}
-      <section id="faq-section" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-4 space-y-6">
-        <div className="text-center space-y-1">
-          <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
-            الأسئلة الشائعة لأولياء الأمور
-          </h2>
-          <p className="text-xs sm:text-sm text-[#64748B]">إجابات واضحة ومباشرة عن الحصص وآلية العمل</p>
-        </div>
-
-        <div className="space-y-3">
-          <details className="p-4 sm:p-5 rounded-2xl bg-white border border-[#E2E8F0] group cursor-pointer">
-            <summary className="font-['Cairo'] font-bold text-sm sm:text-base text-[#1F2A44] list-none flex items-center justify-between">
-              <span>هل الحصة التجريبية الأولى مجانية فعلاً؟</span>
-              <ChevronDown className="w-4 h-4 text-[#0D4E8B] group-open:rotate-180 transition-transform" />
-            </summary>
-            <p className="text-xs sm:text-sm text-[#535E7B] pt-3 leading-relaxed border-t border-[#F2F3F6] mt-3">
-              نعم، تهدف الحصة التجريبية (مدتها 30 إلى 50 دقيقة حسب المعلم) إلى قياس مدى تفاعل الطفل مع أسلوب الشرح والتأكد من ارتياحه قبل أي التزام مالي.
-            </p>
-          </details>
-
-          <details className="p-4 sm:p-5 rounded-2xl bg-white border border-[#E2E8F0] group cursor-pointer">
-            <summary className="font-['Cairo'] font-bold text-sm sm:text-base text-[#1F2A44] list-none flex items-center justify-between">
-              <span>ماذا يحدث بعد طلب حجز الحصة عبر واتساب؟</span>
-              <ChevronDown className="w-4 h-4 text-[#0D4E8B] group-open:rotate-180 transition-transform" />
-            </summary>
-            <p className="text-xs sm:text-sm text-[#535E7B] pt-3 leading-relaxed border-t border-[#F2F3F6] mt-3">
-              تصل رسالتك مباشرة إلى إدارة شاطر متضمنة اسم المعلم والمادة والمرحلة. يتواصل معك مستشارنا لتحديد موعد الحصة بما يناسب جدولكم. فتح واتساب لا يعني تأكيد الحجز فوراً إلا بعد اتفاقك الكامل.
-            </p>
-          </details>
-
-          <details className="p-4 sm:p-5 rounded-2xl bg-white border border-[#E2E8F0] group cursor-pointer">
-            <summary className="font-['Cairo'] font-bold text-sm sm:text-base text-[#1F2A44] list-none flex items-center justify-between">
-              <span>ماذا إذا لم يناسب أسلوب المعلم طفلي بعد الحصة التجريبية؟</span>
-              <ChevronDown className="w-4 h-4 text-[#0D4E8B] group-open:rotate-180 transition-transform" />
-            </summary>
-            <p className="text-xs sm:text-sm text-[#535E7B] pt-3 leading-relaxed border-t border-[#F2F3F6] mt-3">
-              تساعدك إدارة شاطر على تجربة معلم آخر مجاناً حتى تجد المعلم الأنسب لطفلك دون أي رسوم إضافية.
-            </p>
-          </details>
-        </div>
-      </section>
+          <div className="space-y-2.5 sm:space-y-3">
+            {FAQ_ITEMS.map((faq, idx) => {
+              const isOpen = openFaqIndex === idx;
+              return (
+                <div
+                  key={idx}
+                  className="rounded-xl sm:rounded-2xl bg-white border border-[#E2E8F0] shadow-xs overflow-hidden transition-colors"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setOpenFaqIndex(isOpen ? null : idx)}
+                    aria-expanded={isOpen}
+                    aria-controls={`faq-answer-${idx}`}
+                    id={`faq-question-${idx}`}
+                    className="w-full p-4 sm:p-5 text-right font-['Cairo'] font-bold text-xs sm:text-sm md:text-base text-[#1F2A44] hover:text-[#0D4E8B] flex items-center justify-between gap-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0D4E8B] transition-colors"
+                  >
+                    <span className="leading-snug">{faq.q}</span>
+                    <span
+                      className={`w-7 h-7 rounded-lg bg-[#F8FAFD] border border-[#CBD5E1]/60 flex items-center justify-center shrink-0 text-[#0D4E8B] transition-transform duration-200 ${
+                        isOpen ? 'rotate-180 bg-[#0D4E8B] text-white border-[#0D4E8B]' : ''
+                      }`}
+                      aria-hidden="true"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div
+                      id={`faq-answer-${idx}`}
+                      role="region"
+                      aria-labelledby={`faq-question-${idx}`}
+                      className="px-4 pb-4 sm:px-5 sm:pb-5 text-xs sm:text-sm text-[#535E7B] leading-relaxed border-t border-[#F2F3F6] pt-3 animate-fade-in"
+                    >
+                      <p>{faq.a}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </div>
   );

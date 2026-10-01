@@ -3,7 +3,7 @@ import { Tutor, SearchCriteria } from '../types';
 import { TutorCard } from './TutorCard';
 import { Edit3, RotateCcw, AlertCircle, Search, Sparkles, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SHATIR_CONFIG } from '../config/shatirConfig';
+import { SHATIR_CONFIG, buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
 
 interface SearchResultsProps {
   tutors: Tutor[];
@@ -158,33 +158,43 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
-          className="w-full bg-white rounded-2xl border border-[#E2E8F0] p-10 text-center flex flex-col items-center justify-center gap-4"
+          className="w-full bg-white rounded-2xl border border-[#E2E8F0] p-8 sm:p-10 text-center flex flex-col items-center justify-center gap-4"
         >
-          <Search className="w-10 h-10 text-[#94A3B8]" />
-          <div className="space-y-1 max-w-md">
-            <h3 className="font-['Cairo'] text-lg font-bold text-[#1F2A44]">
-              لم نعثر على معلمين مناسبين لهذه المعايير حالياً
+          <div className="w-12 h-12 rounded-full bg-[#F0F6FD] border border-[#D1DCFE] flex items-center justify-center text-[#0D4E8B]">
+            <Sparkles className="w-6 h-6 text-[#0D4E8B]" />
+          </div>
+          <div className="space-y-1.5 max-w-md">
+            <h3 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
+              نجهّز حالياً قائمة المعلمين لهذا الاختيار
             </h3>
-            <p className="text-xs text-[#64748B] leading-relaxed">
-              يمكنك تعديل الاختيار أو التواصل مع إدارة شاطر عبر واتساب لمساعدتك في ترشيح معلم مناسب.
+            <p className="text-xs sm:text-sm text-[#535E7B] leading-relaxed">
+              تواصل معنا لمعرفة التخصصات المتاحة وتسجيل اهتمامك، وسننسّق معك عند توفر معلم مناسب.
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <a
+              href={buildInterestRegistrationWhatsAppUrl({
+                track: criteria.track,
+                stageName,
+                gradeName,
+                subjectName,
+                curriculumName,
+                quranAgeGroupName: quranAgeName,
+                quranLevelName,
+              })}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>سجّل اهتمامك عبر واتساب</span>
+            </a>
             <button
               onClick={onModifySearch}
-              className="px-5 py-2.5 rounded-xl bg-[#0D4E8B] text-white hover:bg-[#003767] text-xs font-bold shadow-sm transition-all cursor-pointer"
+              className="px-5 py-2.5 rounded-xl border border-[#CBD5E1] text-[#1F2A44] hover:bg-[#F2F3F6] text-xs font-bold transition-all cursor-pointer"
             >
               تعديل معايير البحث
             </button>
-            <a
-              href={`https://wa.me/${SHATIR_CONFIG.adminWhatsAppNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent('السلام عليكم، أود المساعدة في ترشيح معلم مناسب لمواصفات طفلي عبر منصة شاطر.')}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-5 py-2.5 rounded-xl border border-emerald-600 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
-            >
-              <MessageCircle className="w-4 h-4 text-emerald-600" />
-              <span>ترشيح معلم عبر واتساب</span>
-            </a>
           </div>
         </motion.div>
       )}

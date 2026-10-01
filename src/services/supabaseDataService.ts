@@ -8,6 +8,7 @@ import {
   QuranLevel,
   Tutor,
   TutorOffering,
+  TutorAvailableSlot,
 } from '../types';
 
 export interface SupabaseConnectionTestResult {
@@ -495,5 +496,43 @@ export const SupabaseDataService = {
       })),
       offerings,
     };
+  },
+
+  /**
+   * 8. Tutor Available Slots
+   * Queries public.tutor_available_slots with explicit columns (excluding private admin notes)
+   */
+  async getTutorAvailableSlots(tutorId: string): Promise<TutorAvailableSlot[]> {
+    if (!tutorId) return [];
+
+    try {
+      const { data, error } = await supabase
+        .from('tutor_available_slots')
+        .select('id, tutor_id, slot_date, start_time, end_time, timezone, is_available, created_at, updated_at')
+        .eq('tutor_id', tutorId)
+        .eq('is_available', true)
+        .order('slot_date', { ascending: true })
+        .order('start_time', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching tutor available slots:', error);
+        return [];
+      }
+
+      return (data || []).map((row) => ({
+        id: row.id,
+        tutorId: row.tutor_id,
+        slotDate: row.slot_date,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        timezone: row.timezone || 'Africa/Cairo',
+        isAvailable: row.is_available,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+    } catch (err) {
+      console.error('Unexpected error fetching tutor slots:', err);
+      return [];
+    }
   },
 };

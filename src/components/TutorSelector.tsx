@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   TrackType,
   StageId,
@@ -12,13 +12,35 @@ import {
   QuranLevel,
 } from '../types';
 import { DataService } from '../services/dataService';
-import { BookOpen, Sparkles, ChevronDown, Check, ArrowLeft, RotateCcw, Info } from 'lucide-react';
+import { DatabaseSchoolCourseOption } from '../services/supabaseDataService';
+import { buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
+import {
+  BookOpen,
+  Sparkles,
+  ChevronDown,
+  Check,
+  ArrowLeft,
+  RotateCcw,
+  MessageCircle,
+  AlertCircle,
+  Loader2,
+  Info,
+  SlidersHorizontal,
+} from 'lucide-react';
 
 interface TutorSelectorProps {
   onSearch: (criteria: SearchCriteria) => void;
   initialCriteria?: SearchCriteria;
   isSearching?: boolean;
   onCriteriaChange?: () => void;
+  onTaxonomyLoaded?: (taxonomy: {
+    stages: Stage[];
+    grades: Grade[];
+    subjects: Subject[];
+    curricula: CurriculumOption[];
+    quranAges: QuranAgeGroup[];
+    quranLevels: QuranLevel[];
+  }) => void;
 }
 
 export const TutorSelector: React.FC<TutorSelectorProps> = ({
@@ -26,29 +48,88 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   initialCriteria,
   isSearching = false,
   onCriteriaChange,
+  onTaxonomyLoaded,
 }) => {
   // Track toggle
   const [track, setTrack] = useState<TrackType>(initialCriteria?.track || 'school');
 
-  // School track state (starts empty per requirement)
+  // School track state
   const [stageId, setStageId] = useState<StageId | ''>(initialCriteria?.stageId || '');
   const [gradeId, setGradeId] = useState<string>(initialCriteria?.gradeId || '');
-  const [subjectId, setSubjectId] = useState<string>(initialCriteria?.subjectId || '');
   const [curriculumType, setCurriculumType] = useState<CurriculumType | ''>(
     initialCriteria?.curriculumType || ''
   );
+  const [subjectId, setSubjectId] = useState<string>(initialCriteria?.subjectId || '');
 
-  // Quran track state (starts empty)
+  // Quran track state
   const [ageGroupId, setAgeGroupId] = useState<string>(initialCriteria?.ageGroupId || '');
   const [levelId, setLevelId] = useState<string>(initialCriteria?.levelId || '');
 
-  // Options from Data Layer
+  // Live options from Supabase Data Layer
   const [stages, setStages] = useState<Stage[]>([]);
+  const [allGrades, setAllGrades] = useState<Grade[]>([]);
   const [availableGrades, setAvailableGrades] = useState<Grade[]>([]);
-  const [availableSubjects, setAvailableSubjects] = useState<Subject[]>([]);
+  const [allSubjects, setAllSubjects] = useState<Subject[]>([]);
   const [curriculumOptions, setCurriculumOptions] = useState<CurriculumOption[]>([]);
   const [quranAgeGroups, setQuranAgeGroups] = useState<QuranAgeGroup[]>([]);
   const [quranLevels, setQuranLevels] = useState<QuranLevel[]>([]);
+  const [schoolCourseOptions, setSchoolCourseOptions] = useState<DatabaseSchoolCourseOption[]>([]);
+
+  // Loading & error states
+  const [isLoadingTaxonomy, setIsLoadingTaxonomy] = useState(true);
+  const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+
+  const loadTaxonomy = async () => {
+    setIsLoadingTaxonomy(true);
+    setTaxonomyError(null);
+    try {
+      const [
+        loadedStages,
+        loadedCurricula,
+        loadedSubjects,
+        loadedQuranAges,
+        loadedQuranLevels,
+        loadedCourseOptions,
+      ] = await Promise.all([
+        DataService.getStages(),
+        DataService.getCurriculumOptions(),
+        DataService.getSubjects(),
+        DataService.getQuranAgeGroups(),
+        DataService.getQuranLevels(),
+        DataService.getSchoolCourseOptions(),
+      ]);
+
+      setStages(loadedStages);
+      setCurriculumOptions(loadedCurricula);
+      setAllSubjects(loadedSubjects);
+      setQuranAgeGroups(loadedQuranAges);
+      setQuranLevels(loadedQuranLevels);
+      setSchoolCourseOptions(loadedCourseOptions);
+
+      // Pre-fetch all grades for easy lookup
+      const gradesPromises = loadedStages.map((s) => DataService.getGradesByStage(s.id));
+      const gradesResults = await Promise.all(gradesPromises);
+      const flatGrades = gradesResults.flat();
+      setAllGrades(flatGrades);
+
+      onTaxonomyLoaded?.({
+        stages: loadedStages,
+        grades: flatGrades,
+        subjects: loadedSubjects,
+        curricula: loadedCurricula,
+        quranAges: loadedQuranAges,
+        quranLevels: loadedQuranLevels,
+      });
+    } catch (err: any) {
+      setTaxonomyError(err?.message || 'تعذر تحميل الخيارات والتصنيفات حالياً. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsLoadingTaxonomy(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTaxonomy();
+  }, []);
 
   // Sync with initialCriteria when provided or updated
   useEffect(() => {
@@ -56,21 +137,12 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
       setTrack(initialCriteria.track || 'school');
       setStageId(initialCriteria.stageId || '');
       setGradeId(initialCriteria.gradeId || '');
-      setSubjectId(initialCriteria.subjectId || '');
       setCurriculumType(initialCriteria.curriculumType || '');
+      setSubjectId(initialCriteria.subjectId || '');
       setAgeGroupId(initialCriteria.ageGroupId || '');
       setLevelId(initialCriteria.levelId || '');
     }
   }, [initialCriteria]);
-
-  // Load static data
-  useEffect(() => {
-    DataService.getStages().then(setStages);
-    DataService.getCurriculumOptions().then(setCurriculumOptions);
-    DataService.getSubjects().then(setAvailableSubjects);
-    DataService.getQuranAgeGroups().then(setQuranAgeGroups);
-    DataService.getQuranLevels().then(setQuranLevels);
-  }, []);
 
   // Cascading Grade update when stage changes
   useEffect(() => {
@@ -79,108 +151,187 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
         setAvailableGrades(grades);
         if (gradeId && !grades.some((g) => g.id === gradeId)) {
           setGradeId('');
+          setSubjectId('');
         }
       });
     } else {
       setAvailableGrades([]);
       setGradeId('');
+      setSubjectId('');
     }
   }, [stageId]);
 
-  // Adjust subjects visibility based on stage
-  const filteredSubjects = availableSubjects.filter((subj) => {
-    if (stageId === 'elementary') {
-      return !['physics', 'chemistry', 'biology'].includes(subj.id);
-    }
-    if (stageId === 'preparatory') {
-      return !['physics', 'chemistry', 'biology'].includes(subj.id);
-    }
-    if (stageId === 'secondary') {
-      return subj.id !== 'social';
-    }
-    return true;
-  });
+  // Extract available subjects strictly based on active school_course_options in Supabase
+  // Filtered by selected grade and selected curriculum
+  const availableSubjectsForSelection = useMemo(() => {
+    if (!gradeId || !curriculumType) return [];
 
-  // Verify if current subject is still valid after stage change
-  useEffect(() => {
-    if (subjectId && stageId) {
-      const isValid = filteredSubjects.some((s) => s.id === subjectId);
-      if (!isValid) {
-        setSubjectId('');
+    const matchingOptions = schoolCourseOptions.filter((opt) => {
+      if (opt.grade_id !== gradeId) return false;
+      if (opt.curriculum_id !== curriculumType) return false;
+      if (opt.is_active === false) return false;
+      return true;
+    });
+
+    const allowedSubjectIds = new Set(matchingOptions.map((opt) => opt.subject_id));
+    return allSubjects.filter((s) => allowedSubjectIds.has(s.id));
+  }, [gradeId, curriculumType, schoolCourseOptions, allSubjects]);
+
+  // Whether courses are configured for the chosen grade + curriculum
+  const hasCoursesConfigured = useMemo(() => {
+    if (!gradeId || !curriculumType) return true;
+    return availableSubjectsForSelection.length > 0;
+  }, [gradeId, curriculumType, availableSubjectsForSelection]);
+
+  // Helper 1: Abbreviate stage names to «ابتدائي»، «إعدادي / متوسط»، «ثانوي» while keeping Supabase ID
+  const getStageShortName = (stg: Stage): string => {
+    const name = stg.name || '';
+    const id = String(stg.id).toLowerCase();
+    if (id.includes('prim') || name.includes('ابتدائ')) return 'ابتدائي';
+    if (
+      id.includes('mid') ||
+      id.includes('prep') ||
+      name.includes('متوسط') ||
+      name.includes('إعداد')
+    ) {
+      return 'إعدادي / متوسط';
+    }
+    if (id.includes('sec') || id.includes('high') || name.includes('ثانوي')) return 'ثانوي';
+    return name;
+  };
+
+  // Helper 2: Format age range clearly without hyphens that flip in RTL
+  const formatQuranAge = (ag: QuranAgeGroup) => {
+    const name = ag.name || '';
+    const range = (ag.ageRange || '').trim();
+    const id = String(ag.id).toLowerCase();
+
+    let formattedRange = '';
+    if (
+      id.includes('young') ||
+      name.includes('صغار') ||
+      range.includes('4') ||
+      range.includes('٤')
+    ) {
+      formattedRange = 'من ٤ إلى ٧ سنوات';
+    } else if (
+      id.includes('bud') ||
+      name.includes('براعم') ||
+      range.includes('7') ||
+      range.includes('٧') ||
+      range.includes('8') ||
+      range.includes('٨')
+    ) {
+      formattedRange = 'من ٨ إلى ١٢ سنة';
+    } else if (
+      id.includes('youth') ||
+      id.includes('teen') ||
+      name.includes('يافع') ||
+      name.includes('فتيان') ||
+      range.includes('10') ||
+      range.includes('13') ||
+      range.includes('١٣')
+    ) {
+      formattedRange = 'من ١٣ إلى ١٨ سنة';
+    } else {
+      const match = range.match(/([0-9\u0660-\u0669]+)\s*[-–—]\s*([0-9\u0660-\u0669]+)/);
+      if (match) {
+        formattedRange = `من ${match[1]} إلى ${match[2]} سنة`;
+      } else {
+        formattedRange = range;
       }
-    } else if (!stageId && subjectId) {
-      setSubjectId('');
     }
-  }, [stageId, filteredSubjects, subjectId]);
 
-  // Handlers for selection changes (immediately notifying parent to hide outdated results)
+    return { name, formattedRange };
+  };
+
+  // Names for WhatsApp messaging and labels
+  const selectedStage = stages.find((s) => s.id === stageId);
+  const selectedStageShort = selectedStage ? getStageShortName(selectedStage) : '';
+  const selectedGradeName = allGrades.find((g) => g.id === gradeId)?.name;
+  const selectedCurriculumName = curriculumOptions.find((c) => c.id === curriculumType)?.name;
+  const selectedSubjectName = allSubjects.find((s) => s.id === subjectId)?.name;
+
+  const selectedQuranAgeObj = quranAgeGroups.find((a) => a.id === ageGroupId);
+  const selectedQuranAgeFormatted = selectedQuranAgeObj
+    ? `${selectedQuranAgeObj.name} (${formatQuranAge(selectedQuranAgeObj).formattedRange})`
+    : '';
+  const selectedQuranLevelName = quranLevels.find((l) => l.id === levelId)?.name;
+
+  // Handlers with cascading resets and hiding old results
   const handleTrackChange = (newTrack: TrackType) => {
     if (track !== newTrack) {
       setTrack(newTrack);
+      setStageId('');
+      setGradeId('');
+      setCurriculumType('');
+      setSubjectId('');
+      setAgeGroupId('');
+      setLevelId('');
       onCriteriaChange?.();
     }
   };
 
-  const handleStageChange = (newStage: StageId | '') => {
-    setStageId(newStage);
-    setGradeId(''); // Always clear grade when stage changes
-    if (!newStage) {
+  const handleStageSelect = (newStage: StageId) => {
+    if (stageId !== newStage) {
+      setStageId(newStage);
+      setGradeId('');
+      setCurriculumType('');
       setSubjectId('');
-    } else {
-      // Validate subject against new stage
-      const invalidInNewStage =
-        (newStage === 'elementary' || newStage === 'preparatory') &&
-        ['physics', 'chemistry', 'biology'].includes(subjectId);
-      const invalidInSecondary = newStage === 'secondary' && subjectId === 'social';
-      if (invalidInNewStage || invalidInSecondary) {
-        setSubjectId('');
-      }
+      onCriteriaChange?.();
     }
-    onCriteriaChange?.();
   };
 
-  const handleGradeChange = (newGrade: string) => {
-    setGradeId(newGrade);
-    onCriteriaChange?.();
+  const handleGradeSelect = (newGrade: string) => {
+    if (gradeId !== newGrade) {
+      setGradeId(newGrade);
+      setSubjectId('');
+      onCriteriaChange?.();
+    }
   };
 
-  const handleSubjectChange = (newSubject: string) => {
+  const handleCurriculumSelect = (newCurriculum: CurriculumType) => {
+    if (curriculumType !== newCurriculum) {
+      setCurriculumType(newCurriculum);
+      setSubjectId('');
+      onCriteriaChange?.();
+    }
+  };
+
+  const handleSubjectSelect = (newSubject: string) => {
     setSubjectId(newSubject);
     onCriteriaChange?.();
   };
 
-  const handleCurriculumChange = (newCurriculum: CurriculumType | '') => {
-    setCurriculumType(newCurriculum);
-    onCriteriaChange?.();
+  const handleAgeGroupSelect = (newAgeGroup: string) => {
+    if (ageGroupId !== newAgeGroup) {
+      setAgeGroupId(newAgeGroup);
+      setLevelId('');
+      onCriteriaChange?.();
+    }
   };
 
-  const handleAgeGroupChange = (newAgeGroup: string) => {
-    setAgeGroupId(newAgeGroup);
-    onCriteriaChange?.();
-  };
-
-  const handleLevelChange = (newLevel: string) => {
+  const handleLevelSelect = (newLevel: string) => {
     setLevelId(newLevel);
     onCriteriaChange?.();
   };
 
+  const handleReset = () => {
+    setStageId('');
+    setGradeId('');
+    setCurriculumType('');
+    setSubjectId('');
+    setAgeGroupId('');
+    setLevelId('');
+    onCriteriaChange?.();
+  };
+
   // Determine readiness
-  const isSchoolComplete = Boolean(stageId && gradeId && subjectId && curriculumType);
+  const isSchoolComplete = Boolean(
+    stageId && gradeId && curriculumType && subjectId && hasCoursesConfigured
+  );
   const isQuranComplete = Boolean(ageGroupId && levelId);
   const isFormComplete = track === 'school' ? isSchoolComplete : isQuranComplete;
-
-  const getMissingStepMessage = () => {
-    if (track === 'school') {
-      if (!stageId) return 'الخطوة المطلوبة: يرجى تحديد المرحلة الدراسية أولاً.';
-      if (!gradeId) return 'الخطوة المطلوبة: يرجى اختيار الصف الدراسي.';
-      if (!subjectId) return 'الخطوة المطلوبة: يرجى اختيار المادة التعليمية.';
-      if (!curriculumType) return 'الخطوة المطلوبة: يرجى تحديد نوع الدراسة والمنهج.';
-    } else {
-      if (!ageGroupId) return 'الخطوة المطلوبة: يرجى تحديد الفئة العمرية للطفل.';
-      if (!levelId) return 'الخطوة المطلوبة: يرجى اختيار البرنامج أو المستوى المطلوب.';
-    }
-    return null;
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,286 +354,419 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
     }
   };
 
-  const handleReset = () => {
-    setStageId('');
-    setGradeId('');
-    setSubjectId('');
-    setCurriculumType('');
-    setAgeGroupId('');
-    setLevelId('');
-    onCriteriaChange?.();
-  };
+  if (isLoadingTaxonomy) {
+    return (
+      <div className="w-full bg-white rounded-2xl sm:rounded-3xl border border-[#E2E8F0] p-8 text-center flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
+        <p className="text-xs sm:text-sm font-medium text-[#64748B]">
+          جاري تحميل الخيارات التعليمية المتاحة...
+        </p>
+      </div>
+    );
+  }
+
+  if (taxonomyError) {
+    return (
+      <div className="w-full bg-[#FFDAD6]/30 border border-[#BA1A1A]/30 rounded-2xl sm:rounded-3xl p-6 text-center flex flex-col items-center justify-center gap-3">
+        <AlertCircle className="w-8 h-8 text-[#BA1A1A]" />
+        <p className="text-xs sm:text-sm font-medium text-[#BA1A1A]">{taxonomyError}</p>
+        <button
+          onClick={loadTaxonomy}
+          className="px-5 py-2.5 rounded-xl bg-[#BA1A1A] text-white hover:bg-[#93000A] text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>إعادة المحاولة</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
       id="tutor-selector-section"
-      className="w-full bg-white rounded-2xl sm:rounded-3xl shadow-[0_2px_16px_rgba(13,78,139,0.05)] border border-[#E2E8F0] p-5 sm:p-7 md:p-8 transition-all scroll-mt-24"
+      className="w-full bg-white rounded-2xl sm:rounded-3xl shadow-sm border border-[#E2E8F0] p-4 sm:p-5 md:p-6 transition-all scroll-mt-20"
     >
-      {/* Header & Track Selector */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-[#E2E8F0]">
-        <div>
-          <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
-            اختر ما يناسب طفلك
-          </h2>
-          <p className="text-xs sm:text-sm text-[#64748B] mt-0.5">
-            حدد المرحلة والمادة ونوع الدراسة لنعرض لك المعلمين المناسبين لاختياراتك.
-          </p>
-        </div>
+      {/* 1. Header & Title */}
+      <div className="space-y-1 pb-3.5 sm:pb-4 border-b border-[#E2E8F0]/80">
+        <h2 className="font-['Cairo'] text-xl sm:text-2xl font-black text-[#0D4E8B]">
+          ما الذي يحتاجه طفلك؟
+        </h2>
+        <p className="text-xs sm:text-sm text-[#535E7B] font-normal">
+          اختَر المسار، ثم حدّد التفاصيل المناسبة لطفلك.
+        </p>
+      </div>
 
-        {/* Track Switcher (Clean Segmented Control) */}
-        <div className="flex items-center gap-1 p-1 bg-[#F2F3F6] rounded-xl border border-[#E2E8F0] self-start md:self-auto shrink-0">
+      {/* 2. Track Selector (Balanced & Accessible) */}
+      <div className="pt-3 sm:pt-4">
+        <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-[#F1F5F9] rounded-2xl border border-[#E2E8F0]/80 w-full max-w-md mx-auto">
           <button
             type="button"
             onClick={() => handleTrackChange('school')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+            className={`min-h-[46px] sm:min-h-[48px] px-3 py-2 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer text-center select-none ${
               track === 'school'
                 ? 'bg-[#0D4E8B] text-white shadow-sm'
-                : 'text-[#1F2A44] hover:text-[#0D4E8B]'
+                : 'text-[#1F2A44] hover:text-[#0D4E8B] hover:bg-white/60'
             }`}
           >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>المناهج المدرسية</span>
+            <BookOpen
+              className={`w-4 h-4 shrink-0 ${track === 'school' ? 'text-[#FFC629]' : 'text-[#64748B]'}`}
+            />
+            <span className="whitespace-nowrap">المناهج المدرسية</span>
           </button>
           <button
             type="button"
             onClick={() => handleTrackChange('quran')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+            className={`min-h-[46px] sm:min-h-[48px] px-3 py-2 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer text-center select-none ${
               track === 'quran'
                 ? 'bg-[#0D4E8B] text-white shadow-sm'
-                : 'text-[#1F2A44] hover:text-[#0D4E8B]'
+                : 'text-[#1F2A44] hover:text-[#0D4E8B] hover:bg-white/60'
             }`}
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>مسار القرآن والتأسيس</span>
+            <Sparkles
+              className={`w-4 h-4 shrink-0 ${track === 'quran' ? 'text-[#FFC629]' : 'text-[#64748B]'}`}
+            />
+            <span className="whitespace-nowrap">القرآن والتأسيس</span>
           </button>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-6">
-        {/* TRACK A: School Curriculum */}
+      <form onSubmit={handleSubmit} className="mt-4 sm:mt-5 space-y-4 sm:space-y-5">
+        {/* ========================================================= */}
+        {/* TRACK A: School Curriculum (المرحلة ← الصف ← المنهج ← المادة) */}
+        {/* ========================================================= */}
         {track === 'school' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* 1. Stage */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
-                  <span>المرحلة الدراسية <span className="text-red-500">*</span></span>
-                </label>
-                <div className="relative">
-                  <select
-                    value={stageId}
-                    onChange={(e) => handleStageChange(e.target.value as StageId)}
-                    className="w-full h-11 px-3.5 pl-8 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] text-[#1F2A44] font-medium text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] focus:bg-white transition-all appearance-none cursor-pointer"
-                  >
-                    <option value="">اختر المرحلة الدراسية</option>
-                    {stages.map((stg) => (
-                      <option key={stg.id} value={stg.id}>
-                        {stg.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-[#64748B] absolute left-3 top-3.5 pointer-events-none" />
-                </div>
-              </div>
+          <div className="space-y-4 sm:space-y-5">
+            {/* Step 1: المرحلة الدراسية (مختصرة: ابتدائي، إعدادي / متوسط، ثانوي) */}
+            <div className="space-y-2">
+              <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-2 font-['Cairo']">
+                <span className="w-5 h-5 rounded-full bg-[#0D4E8B] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                  ١
+                </span>
+                <span>المرحلة الدراسية</span>
+              </label>
 
-              {/* 2. Grade (Cascades from Stage) */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
-                  <span>الصف الدراسي <span className="text-red-500">*</span></span>
+              <div className="grid grid-cols-3 gap-2 sm:gap-2.5">
+                {stages.map((stg) => {
+                  const isSelected = stageId === stg.id;
+                  const shortName = getStageShortName(stg);
+                  return (
+                    <button
+                      key={stg.id}
+                      type="button"
+                      onClick={() => handleStageSelect(stg.id)}
+                      className={`min-h-[46px] sm:h-[48px] px-2.5 py-2 rounded-xl text-xs sm:text-sm font-['Cairo'] font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center ${
+                        isSelected
+                          ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm'
+                          : 'bg-[#F8FAFD] text-[#1F2A44] border-[#CBD5E1]/70 hover:border-[#0D4E8B]/50 hover:bg-white'
+                      }`}
+                    >
+                      {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-[#FFC629]" />}
+                      <span>{shortName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Step 2: الصف الدراسي (قائمة منسدلة بارتفاع 50px) */}
+            {stageId && (
+              <div className="space-y-2 pt-1 border-t border-[#E2E8F0]/60 animate-fade-in">
+                <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-2 font-['Cairo']">
+                  <span className="w-5 h-5 rounded-full bg-[#0D4E8B] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                    ٢
+                  </span>
+                  <span>الصف الدراسي</span>
                 </label>
+
                 <div className="relative">
                   <select
                     value={gradeId}
-                    onChange={(e) => handleGradeChange(e.target.value)}
-                    disabled={!stageId}
-                    className={`w-full h-11 px-3.5 pl-8 rounded-xl border font-medium text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] transition-all appearance-none ${
-                      !stageId
-                        ? 'bg-[#E2E8F0]/50 border-[#E2E8F0] text-[#94A3B8] cursor-not-allowed'
-                        : 'bg-[#F8F9FC] border-[#CBD5E1] text-[#1F2A44] focus:bg-white cursor-pointer'
-                    }`}
+                    onChange={(e) => handleGradeSelect(e.target.value)}
+                    className="w-full h-[50px] px-4 pl-10 rounded-xl bg-[#F8FAFD] border border-[#CBD5E1]/80 text-[#1F2A44] font-['Cairo'] font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] focus:bg-white transition-all appearance-none cursor-pointer"
                   >
-                    <option value="">
-                      {!stageId ? 'اختر المرحلة الدراسية أولاً لتحديد الصف' : 'اختر الصف الدراسي'}
-                    </option>
+                    <option value="">اختر الصف الدراسي...</option>
                     {availableGrades.map((grd) => (
                       <option key={grd.id} value={grd.id}>
                         {grd.name}
                       </option>
                     ))}
                   </select>
-                  <ChevronDown className="w-4 h-4 text-[#64748B] absolute left-3 top-3.5 pointer-events-none" />
+                  <ChevronDown className="w-4 h-4 text-[#64748B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
+            )}
 
-              {/* 3. Subject (Cascades from Stage) */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
-                  <span>المادة التعليمية <span className="text-red-500">*</span></span>
+            {/* Step 3: نوع الدراسة والمنهج (يظهر بعد اختيار الصف) */}
+            {stageId && gradeId && (
+              <div className="space-y-2 pt-1 border-t border-[#E2E8F0]/60 animate-fade-in">
+                <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-2 font-['Cairo']">
+                  <span className="w-5 h-5 rounded-full bg-[#0D4E8B] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                    ٣
+                  </span>
+                  <span>نوع الدراسة والمنهج</span>
                 </label>
-                <div className="relative">
-                  <select
-                    value={subjectId}
-                    onChange={(e) => handleSubjectChange(e.target.value)}
-                    disabled={!stageId}
-                    className={`w-full h-11 px-3.5 pl-8 rounded-xl border font-medium text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] transition-all appearance-none ${
-                      !stageId
-                        ? 'bg-[#E2E8F0]/50 border-[#E2E8F0] text-[#94A3B8] cursor-not-allowed'
-                        : 'bg-[#F8F9FC] border-[#CBD5E1] text-[#1F2A44] focus:bg-white cursor-pointer'
-                    }`}
-                  >
-                    <option value="">
-                      {!stageId ? 'اختر المرحلة الدراسية أولاً لعرض المواد' : 'اختر المادة المطلوبة'}
-                    </option>
-                    {filteredSubjects.map((sbj) => (
-                      <option key={sbj.id} value={sbj.id}>
-                        {sbj.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-[#64748B] absolute left-3 top-3.5 pointer-events-none" />
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-2.5">
+                  {curriculumOptions.map((opt) => {
+                    const isSelected = curriculumType === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => handleCurriculumSelect(opt.id as CurriculumType)}
+                        className={`min-h-[46px] sm:h-[48px] px-4 py-2 rounded-xl text-xs sm:text-sm font-['Cairo'] font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center ${
+                          isSelected
+                            ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm'
+                            : 'bg-[#F8FAFD] text-[#1F2A44] border-[#CBD5E1]/70 hover:border-[#0D4E8B]/50 hover:bg-white'
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-[#FFC629]" />}
+                        <span>{opt.name}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
+            )}
 
-              {/* 4. Curriculum Type */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
-                  <span>نوع الدراسة والمنهج <span className="text-red-500">*</span></span>
-                </label>
-                <div className="relative">
-                  <select
-                    value={curriculumType}
-                    onChange={(e) => handleCurriculumChange(e.target.value as CurriculumType)}
-                    className="w-full h-11 px-3.5 pl-8 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] text-[#1F2A44] font-medium text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] focus:bg-white transition-all appearance-none cursor-pointer"
-                  >
-                    <option value="">اختر نوع الدراسة والمنهج</option>
-                    {curriculumOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id}>
-                        {opt.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-[#64748B] absolute left-3 top-3.5 pointer-events-none" />
-                </div>
+            {/* Step 4: المادة التعليمية (تستخرج حصراً من school_course_options) */}
+            {stageId && gradeId && curriculumType && (
+              <div className="pt-1 border-t border-[#E2E8F0]/60 animate-fade-in">
+                {availableSubjectsForSelection.length > 0 ? (
+                  <div className="space-y-2">
+                    <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-2 font-['Cairo']">
+                      <span className="w-5 h-5 rounded-full bg-[#0D4E8B] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                        ٤
+                      </span>
+                      <span>المادة التعليمية</span>
+                    </label>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-2.5">
+                      {availableSubjectsForSelection.map((sbj) => {
+                        const isSelected = subjectId === sbj.id;
+                        return (
+                          <button
+                            key={sbj.id}
+                            type="button"
+                            onClick={() => handleSubjectSelect(sbj.id)}
+                            className={`min-h-[46px] sm:h-[48px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-['Cairo'] font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center ${
+                              isSelected
+                                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm'
+                                : 'bg-[#F8FAFD] text-[#1F2A44] border-[#CBD5E1]/70 hover:border-[#0D4E8B]/50 hover:bg-white'
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-[#FFC629]" />}
+                            <span>{sbj.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  /* حالة عدم وجود تركيبات معتمدة لهذا الصف والمنهج */
+                  <div className="p-4 rounded-2xl bg-[#F0F6FD] border border-[#D1DCFE] text-right space-y-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <Info className="w-5 h-5 text-[#0D4E8B] shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <h4 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#0D4E8B]">
+                          نعمل على تجهيز التخصصات المتاحة
+                        </h4>
+                        <p className="text-xs sm:text-sm text-[#535E7B] leading-relaxed">
+                          نعمل على تجهيز التخصصات المتاحة لهذا الاختيار حالياً. تواصل معنا وأخبرنا باحتياجك وسنساعدك في التنسيق فوراً.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="pt-0.5 flex flex-wrap items-center gap-2 justify-start">
+                      <a
+                        href={buildInterestRegistrationWhatsAppUrl({
+                          track: 'school',
+                          stageName: selectedStage?.name,
+                          gradeName: selectedGradeName,
+                          curriculumName: selectedCurriculumName,
+                          subjectName: selectedSubjectName,
+                        })}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[46px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-all inline-flex items-center gap-2 cursor-pointer"
+                      >
+                        <MessageCircle className="w-4 h-4 shrink-0" />
+                        <span>تواصل معنا عبر واتساب لتسجيل طلبك</span>
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-
-            <div className="p-2.5 bg-[#F2F3F6] rounded-xl text-xs text-[#535E7B] flex items-center gap-2">
-              <Info className="w-4 h-4 text-[#0D4E8B] shrink-0" />
-              <span>
-                لمدارس اللغات والتجريبي (Math / Science)، اختر «لغات / تجريبي» لعرض معلمين يشرحون المصطلحات بالإنجليزية.
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* TRACK B: Quran & Foundation Track */}
-        {track === 'quran' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Age Group */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
-                  <span>الفئة العمرية للطفل <span className="text-red-500">*</span></span>
-                </label>
-                <div className="relative">
-                  <select
-                    value={ageGroupId}
-                    onChange={(e) => handleAgeGroupChange(e.target.value)}
-                    className="w-full h-11 px-3.5 pl-8 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] text-[#1F2A44] font-medium text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] focus:bg-white transition-all appearance-none cursor-pointer"
-                  >
-                    <option value="">اختر الفئة العمرية</option>
-                    {quranAgeGroups.map((ag) => (
-                      <option key={ag.id} value={ag.id}>
-                        {ag.name} ({ag.ageRange})
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-[#64748B] absolute left-3 top-3.5 pointer-events-none" />
-                </div>
-              </div>
-
-              {/* Program / Level */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
-                  <span>البرنامج والهدف المطلوب <span className="text-red-500">*</span></span>
-                </label>
-                <div className="relative">
-                  <select
-                    value={levelId}
-                    onChange={(e) => handleLevelChange(e.target.value)}
-                    className="w-full h-11 px-3.5 pl-8 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] text-[#1F2A44] font-medium text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] focus:bg-white transition-all appearance-none cursor-pointer"
-                  >
-                    <option value="">اختر البرنامج أو المستوى</option>
-                    {quranLevels.map((lvl) => (
-                      <option key={lvl.id} value={lvl.id}>
-                        {lvl.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-[#64748B] absolute left-3 top-3.5 pointer-events-none" />
-                </div>
-              </div>
-            </div>
-
-            <div className="p-2.5 bg-[#F2F3F6] rounded-xl text-xs text-[#535E7B] flex items-center gap-2">
-              <Info className="w-4 h-4 text-[#0D4E8B] shrink-0" />
-              <span>
-                معلمات ومعلمون متمرسون في منهج نور البيان التأسيسي وحفظ وتجويد القرآن الكريم للأطفال.
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Actions Bar */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-[#E2E8F0]">
-          <div className="text-xs text-[#64748B] order-2 sm:order-1 text-center sm:text-right">
-            {!isFormComplete ? (
-              <span className="text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 inline-block font-medium">
-                {getMissingStepMessage()}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-emerald-600 font-bold">
-                <Check className="w-4 h-4 text-emerald-600" />
-                <span>جاهز لعرض المعلمين المناسبين لاختياراتك (اضغط زر «اعرض المعلمين المناسبين»).</span>
-              </span>
             )}
           </div>
+        )}
 
-          <div className="flex items-center gap-2.5 w-full sm:w-auto order-1 sm:order-2">
-            {(stageId || gradeId || subjectId || curriculumType || ageGroupId || levelId) && (
+        {/* ========================================================= */}
+        {/* TRACK B: Quran Track (الفئة العمرية ← البرنامج والمستوى) */}
+        {/* ========================================================= */}
+        {track === 'quran' && (
+          <div className="space-y-4 sm:space-y-5">
+            {/* Step 1: الفئة العمرية للطفل (ارتفاع مخفض وصيغة نصية واضحة) */}
+            <div className="space-y-2">
+              <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-2 font-['Cairo']">
+                <span className="w-5 h-5 rounded-full bg-[#0D4E8B] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                  ١
+                </span>
+                <span>الفئة العمرية للطفل</span>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {quranAgeGroups.map((ag) => {
+                  const isSelected = ageGroupId === ag.id;
+                  const { name, formattedRange } = formatQuranAge(ag);
+                  return (
+                    <button
+                      key={ag.id}
+                      type="button"
+                      onClick={() => handleAgeGroupSelect(ag.id)}
+                      className={`min-h-[44px] sm:h-[46px] px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-['Cairo'] font-bold border transition-all flex items-center justify-between gap-2 cursor-pointer text-right ${
+                        isSelected
+                          ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm'
+                          : 'bg-[#F8FAFD] text-[#1F2A44] border-[#CBD5E1]/70 hover:border-[#0D4E8B]/50 hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 truncate">
+                        {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-[#FFC629]" />}
+                        <span className="truncate">{name}</span>
+                      </div>
+                      <span
+                        className={`text-[11px] shrink-0 font-medium ${
+                          isSelected ? 'text-white/90' : 'text-[#64748B]'
+                        }`}
+                      >
+                        {formattedRange}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Step 2: البرنامج والهدف المطلوب (يظهر بعد اختيار الفئة العمرية) */}
+            {ageGroupId && (
+              <div className="space-y-2 pt-1 border-t border-[#E2E8F0]/60 animate-fade-in">
+                <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-2 font-['Cairo']">
+                  <span className="w-5 h-5 rounded-full bg-[#0D4E8B] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                    ٢
+                  </span>
+                  <span>البرنامج والهدف المطلوب</span>
+                </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {quranLevels.map((lvl) => {
+                    const isSelected = levelId === lvl.id;
+                    return (
+                      <button
+                        key={lvl.id}
+                        type="button"
+                        onClick={() => handleLevelSelect(lvl.id)}
+                        className={`min-h-[44px] sm:min-h-[46px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-['Cairo'] font-bold border transition-all flex items-center justify-center gap-2 cursor-pointer text-center ${
+                          isSelected
+                            ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm'
+                            : 'bg-[#F8FAFD] text-[#1F2A44] border-[#CBD5E1]/70 hover:border-[#0D4E8B]/50 hover:bg-white'
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-[#FFC629]" />}
+                        <span>{lvl.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* 5. ملخص مختصر للاختيارات مع إمكانية تعديلها وزر البحث */}
+        {/* ========================================================= */}
+        {isFormComplete && (
+          <div className="pt-3 border-t border-[#E2E8F0] space-y-3 animate-fade-in">
+            {/* ملخص الاختيارات الأنيق والمختصر */}
+            <div className="p-3 bg-[#F0F6FD] border border-[#CBD5E1]/70 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs sm:text-sm">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-['Cairo'] font-bold text-[#0D4E8B] flex items-center gap-1.5 shrink-0">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>ملخص اختيارك:</span>
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5 text-[#1F2A44]">
+                  {track === 'school' ? (
+                    <>
+                      <span className="bg-white px-2 py-0.5 rounded-lg border border-[#E2E8F0] font-bold text-[#0D4E8B]">
+                        {selectedStageShort}
+                      </span>
+                      <span>•</span>
+                      <span className="bg-white px-2 py-0.5 rounded-lg border border-[#E2E8F0] font-bold text-[#0D4E8B]">
+                        {selectedGradeName}
+                      </span>
+                      <span>•</span>
+                      <span className="bg-white px-2 py-0.5 rounded-lg border border-[#E2E8F0] font-bold text-[#0D4E8B]">
+                        {selectedCurriculumName}
+                      </span>
+                      <span>•</span>
+                      <span className="bg-white px-2 py-0.5 rounded-lg border border-[#E2E8F0] font-bold text-[#0D4E8B]">
+                        {selectedSubjectName}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="bg-white px-2 py-0.5 rounded-lg border border-[#E2E8F0] font-bold text-[#0D4E8B]">
+                        {selectedQuranAgeFormatted}
+                      </span>
+                      <span>•</span>
+                      <span className="bg-white px-2 py-0.5 rounded-lg border border-[#E2E8F0] font-bold text-[#0D4E8B]">
+                        {selectedQuranLevelName}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={handleReset}
-                className="px-3.5 py-2.5 rounded-xl border border-[#CBD5E1] text-[#64748B] hover:text-[#1F2A44] hover:bg-[#F2F3F6] text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                className="text-xs font-bold text-[#64748B] hover:text-[#0D4E8B] flex items-center gap-1 underline underline-offset-2 transition-colors cursor-pointer self-start sm:self-auto shrink-0"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>تعديل الاختيارات</span>
+              </button>
+            </div>
+
+            {/* أزرار الإجراء: عرض المعلمين المناسبين */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+              <button
+                type="button"
+                onClick={handleReset}
+                className="text-xs text-[#64748B] hover:text-[#0D4E8B] font-['Cairo'] font-bold flex items-center gap-1.5 order-2 sm:order-1 transition-colors cursor-pointer py-1.5"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>إعادة ضبط</span>
+                <span>إعادة ضبط الاختيارات</span>
               </button>
-            )}
 
-            <button
-              type="submit"
-              disabled={!isFormComplete || isSearching}
-              className={`flex-1 sm:flex-initial px-7 py-3 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer ${
-                !isFormComplete || isSearching
-                  ? 'bg-[#E2E8F0] text-[#94A3B8] cursor-not-allowed shadow-none'
-                  : 'bg-[#0D4E8B] hover:bg-[#003767] text-white hover:shadow-md active:scale-[0.99]'
-              }`}
-            >
-              {isSearching ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  <span>جاري البحث...</span>
-                </>
-              ) : (
-                <>
-                  <span>اعرض المعلمين المناسبين</span>
-                  <ArrowLeft className="w-4 h-4" />
-                </>
-              )}
-            </button>
+              <button
+                type="submit"
+                disabled={isSearching}
+                className="w-full sm:w-auto min-h-[48px] sm:min-h-[50px] px-8 py-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] active:scale-[0.99] text-white font-['Cairo'] font-extrabold text-sm sm:text-base shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer order-1 sm:order-2"
+              >
+                {isSearching ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                    <span>جاري البحث عن المعلمين...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>اعرض المعلمين المناسبين</span>
+                    <ArrowLeft className="w-4 h-4 text-[#FFC629]" />
+                  </>
+                )}
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </form>
     </div>
   );

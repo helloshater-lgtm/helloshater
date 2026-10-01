@@ -4,13 +4,24 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { SearchCriteria, Tutor } from './types';
-import { DataService, STAGES_DATA, GRADES_DATA, SUBJECTS_DATA, CURRICULUM_OPTIONS, QURAN_AGE_GROUPS, QURAN_LEVELS } from './services/dataService';
+import {
+  SearchCriteria,
+  Tutor,
+  Stage,
+  Grade,
+  Subject,
+  CurriculumOption,
+  QuranAgeGroup,
+  QuranLevel,
+} from './types';
+import { DataService } from './services/dataService';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
+import { WhatsAppFloatingButton } from './components/WhatsAppFloatingButton';
 import { HomeView } from './components/HomeView';
 import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
+import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 
 type AppView = 'home' | 'tutor-profile' | 'join-as-tutor';
 
@@ -18,9 +29,35 @@ export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
   const [selectedTutorId, setSelectedTutorId] = useState<string | null>(null);
   const [currentTutor, setCurrentTutor] = useState<Tutor | null>(null);
+  const [isTutorLoading, setIsTutorLoading] = useState<boolean>(false);
+  const [tutorNotFound, setTutorNotFound] = useState<boolean>(false);
+
   const [savedCriteria, setSavedCriteria] = useState<SearchCriteria | null>(null);
   const [savedResults, setSavedResults] = useState<Tutor[]>([]);
   const [savedScrollPosition, setSavedScrollPosition] = useState<number>(0);
+
+  // Taxonomy for profile breadcrumbs
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [curricula, setCurricula] = useState<CurriculumOption[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [quranAges, setQuranAges] = useState<QuranAgeGroup[]>([]);
+  const [quranLevels, setQuranLevels] = useState<QuranLevel[]>([]);
+
+  useEffect(() => {
+    Promise.all([
+      DataService.getStages().catch(() => []),
+      DataService.getCurriculumOptions().catch(() => []),
+      DataService.getSubjects().catch(() => []),
+      DataService.getQuranAgeGroups().catch(() => []),
+      DataService.getQuranLevels().catch(() => []),
+    ]).then(([stgs, currs, subjs, qAges, qLvls]) => {
+      setStages(stgs);
+      setCurricula(currs);
+      setSubjects(subjs);
+      setQuranAges(qAges);
+      setQuranLevels(qLvls);
+    });
+  }, []);
 
   // Sync with window.location.hash for shareable links & browser back navigation
   useEffect(() => {
@@ -34,7 +71,6 @@ export default function App() {
         setCurrentView('join-as-tutor');
       } else {
         setCurrentView('home');
-        // Restore scroll position when returning to home view via browser back
         if (savedScrollPosition > 0) {
           setTimeout(() => {
             window.scrollTo({ top: savedScrollPosition, behavior: 'smooth' });
@@ -43,24 +79,33 @@ export default function App() {
       }
     };
 
-    // Initial check on load
     handleHashChange();
-
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [savedScrollPosition]);
 
-  // Fetch tutor data whenever selectedTutorId changes
+  // Requirement 9: Fetch tutor from Supabase. If old mock tutor or unpublished, show "ملف المعلم غير متاح"
   useEffect(() => {
     if (selectedTutorId) {
-      DataService.getTutorById(selectedTutorId).then((tutor) => {
-        if (tutor) {
-          setCurrentTutor(tutor);
-        } else {
-          // Default to first tutor (Nada El-Minshawy) if invalid ID
-          DataService.getTutorById('nada-elminshawy').then(setCurrentTutor);
-        }
-      });
+      setIsTutorLoading(true);
+      setTutorNotFound(false);
+      DataService.getTutorById(selectedTutorId)
+        .then((tutor) => {
+          if (tutor) {
+            setCurrentTutor(tutor);
+            setTutorNotFound(false);
+          } else {
+            setCurrentTutor(null);
+            setTutorNotFound(true);
+          }
+        })
+        .catch(() => {
+          setCurrentTutor(null);
+          setTutorNotFound(true);
+        })
+        .finally(() => {
+          setIsTutorLoading(false);
+        });
     }
   }, [selectedTutorId]);
 
@@ -77,7 +122,10 @@ export default function App() {
   const handleBackToResults = () => {
     setCurrentView('home');
     window.location.hash = '';
-    // Restore scroll position
+    setSelectedTutorId(null);
+    setCurrentTutor(null);
+    setTutorNotFound(false);
+
     setTimeout(() => {
       if (savedCriteria && savedScrollPosition > 0) {
         window.scrollTo({ top: savedScrollPosition, behavior: 'smooth' });
@@ -107,13 +155,13 @@ export default function App() {
     setSavedResults(results);
   };
 
-  // Human readable label helpers for Profile View Breadcrumbs (authentic labels, no fake fallback defaults)
-  const stageName = STAGES_DATA.find((s) => s.id === savedCriteria?.stageId)?.name;
-  const gradeName = GRADES_DATA.find((g) => g.id === savedCriteria?.gradeId)?.name;
-  const subjectName = SUBJECTS_DATA.find((s) => s.id === savedCriteria?.subjectId)?.name;
-  const curriculumName = CURRICULUM_OPTIONS.find((c) => c.id === savedCriteria?.curriculumType)?.name;
-  const quranAgeName = QURAN_AGE_GROUPS.find((a) => a.id === savedCriteria?.ageGroupId)?.name;
-  const quranLevelName = QURAN_LEVELS.find((l) => l.id === savedCriteria?.levelId)?.name;
+  // Labels for Profile View Breadcrumbs
+  const stageName = stages.find((s) => s.id === savedCriteria?.stageId)?.name;
+  const gradeName = savedCriteria?.gradeId;
+  const subjectName = subjects.find((s) => s.id === savedCriteria?.subjectId)?.name;
+  const curriculumName = curricula.find((c) => c.id === savedCriteria?.curriculumType)?.name;
+  const quranAgeName = quranAges.find((a) => a.id === savedCriteria?.ageGroupId)?.name;
+  const quranLevelName = quranLevels.find((l) => l.id === savedCriteria?.levelId)?.name;
 
   return (
     <div className="min-h-screen bg-[#F8F9FC] text-[#1F2A44] flex flex-col font-['Tajawal'] antialiased selection:bg-[#0D4E8B]/15 selection:text-[#0D4E8B]">
@@ -136,27 +184,60 @@ export default function App() {
           />
         )}
 
-        {currentView === 'tutor-profile' && currentTutor && (
-          <TutorProfileView
-            tutor={currentTutor}
-            criteria={savedCriteria || undefined}
-            onBack={handleBackToResults}
-            stageName={stageName}
-            gradeName={gradeName}
-            subjectName={subjectName}
-            curriculumName={curriculumName}
-            quranAgeName={quranAgeName}
-            quranLevelName={quranLevelName}
-          />
+        {currentView === 'tutor-profile' && (
+          <div className="w-full">
+            {isTutorLoading ? (
+              <div className="max-w-md mx-auto my-20 p-10 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
+                <p className="text-sm font-medium text-[#64748B]">جاري تحميل ملف المعلم...</p>
+              </div>
+            ) : currentTutor ? (
+              <TutorProfileView
+                tutor={currentTutor}
+                criteria={savedCriteria || undefined}
+                onBack={handleBackToResults}
+                stageName={stageName}
+                gradeName={gradeName}
+                subjectName={subjectName}
+                curriculumName={curriculumName}
+                quranAgeName={quranAgeName}
+                quranLevelName={quranLevelName}
+              />
+            ) : tutorNotFound ? (
+              <div className="max-w-md mx-auto my-16 px-6 py-10 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center space-y-4">
+                <div className="w-14 h-14 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
+                  <AlertCircle className="w-7 h-7 text-slate-500" />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="font-['Cairo'] text-xl font-bold text-[#1F2A44]">
+                    ملف المعلم غير متاح
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed">
+                    هذا الملف غير متوفر حالياً أو لم يتم نشره بعد. يمكنك العودة للصفحة الرئيسية واستعراض التخصصات المتاحة.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <button
+                    onClick={handleBackToResults}
+                    className="px-6 py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold shadow-sm transition-all inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <span>العودة إلى الصفحة الرئيسية</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         )}
 
-        {currentView === 'join-as-tutor' && (
-          <TutorRegistrationView />
-        )}
+        {currentView === 'join-as-tutor' && <TutorRegistrationView />}
       </main>
 
-      {/* Educational Trust Footer */}
+      {/* Global Footer */}
       <Footer onNavigate={handleNavigate} />
+
+      {/* Persistent Floating WhatsApp Action Button */}
+      <WhatsAppFloatingButton />
     </div>
   );
 }

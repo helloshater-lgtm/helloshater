@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Tutor, SearchCriteria } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Tutor, SearchCriteria, TutorAvailableSlot } from '../types';
+import { DataService } from '../services/dataService';
 import { VideoModal } from './VideoModal';
 import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
 import {
@@ -11,11 +12,14 @@ import {
   Check,
   BookOpen,
   Calendar,
+  CalendarDays,
+  CalendarX,
   CreditCard,
   ShieldCheck,
   MessageCircle,
   CheckCircle2,
   Bookmark,
+  Info,
 } from 'lucide-react';
 
 interface TutorProfileViewProps {
@@ -44,6 +48,88 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
 
+  // Available appointment slots state
+  const [availableSlots, setAvailableSlots] = useState<TutorAvailableSlot[]>([]);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(true);
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingSlots(true);
+    DataService.getTutorAvailableSlots(tutor.id)
+      .then((slots) => {
+        if (isMounted) {
+          setAvailableSlots(slots);
+          setIsLoadingSlots(false);
+          if (slots.length > 0) {
+            setSelectedSlotId(slots[0].id);
+          }
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setAvailableSlots([]);
+          setIsLoadingSlots(false);
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [tutor.id]);
+
+  // Helpers for slot formatting in natural Arabic
+  const formatSlotDay = (dateStr: string): string => {
+    try {
+      const d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString('ar-EG', { weekday: 'long' });
+    } catch {
+      return 'موعد محدد';
+    }
+  };
+
+  const formatSlotDate = (dateStr: string): string => {
+    try {
+      const d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const formatSlotTime = (start: string, end: string): string => {
+    try {
+      const parseTime = (t: string) => {
+        const parts = t.split(':');
+        const h = Number(parts[0]);
+        const m = Number(parts[1] || 0);
+        const period = h >= 12 ? 'م' : 'ص';
+        const adjustedHour = h % 12 === 0 ? 12 : h % 12;
+        const formattedMinute = String(m).padStart(2, '0');
+        return `${adjustedHour}:${formattedMinute} ${period}`;
+      };
+      return `${parseTime(start)} – ${parseTime(end)}`;
+    } catch {
+      return `${start} – ${end}`;
+    }
+  };
+
+  const formatTimezone = (tz: string): string => {
+    if (!tz) return 'بتوقيت القاهرة';
+    if (tz.includes('Cairo') || tz.includes('Egypt')) return 'بتوقيت القاهرة';
+    if (tz.includes('Riyadh') || tz.includes('Saudi') || tz.includes('Mecca')) return 'بتوقيت مكة المكرمة';
+    return tz;
+  };
+
+  const selectedSlot = availableSlots.find((s) => s.id === selectedSlotId);
+  const selectedSlotPayload = selectedSlot
+    ? {
+        date: formatSlotDate(selectedSlot.slotDate),
+        dayName: formatSlotDay(selectedSlot.slotDate),
+        timeRange: formatSlotTime(selectedSlot.startTime, selectedSlot.endTime),
+        timezone: formatTimezone(selectedSlot.timezone),
+      }
+    : undefined;
+
   // If criteria exists, use its track. Otherwise detect from tutor's offerings.
   const hasCriteria = Boolean(criteria);
   const detectedTrack = criteria?.track || (tutor.offerings.some((o) => o.track === 'school') ? 'school' : 'quran');
@@ -69,6 +155,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     curriculumName: isSchool ? (curriculumName || (hasCriteria ? undefined : defaultCurriculumName)) : undefined,
     quranAgeGroupName: !isSchool ? quranAgeName : undefined,
     quranLevelName: !isSchool ? quranLevelName : undefined,
+    selectedSlot: selectedSlotPayload,
   };
 
   const handleStartBooking = () => {
@@ -392,6 +479,122 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
               </div>
             </div>
 
+            {/* Section: مواعيد الحصة التجريبية المتاحة */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-5 h-5 text-[#0D4E8B]" />
+                  <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                    المواعيد المتاحة للحصة التجريبية
+                  </h2>
+                </div>
+                <span className="text-xs text-[#535E7B] bg-[#F2F3F6] px-3 py-1 rounded-full font-medium">
+                  اختر موعداً يناسبك
+                </span>
+              </div>
+
+              {isLoadingSlots ? (
+                <div className="p-6 text-center text-xs text-[#64748B] flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-[#0D4E8B]/30 border-t-[#0D4E8B] rounded-full animate-spin"></span>
+                  <span>جاري التحقق من المواعيد المتاحة...</span>
+                </div>
+              ) : availableSlots.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-[#535E7B]">
+                    اضغط على الموعد الأنسب لطفلك قبل إرسال الطلب:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {availableSlots.map((slot) => {
+                      const isSelected = selectedSlotId === slot.id;
+                      const dayName = formatSlotDay(slot.slotDate);
+                      const fullDate = formatSlotDate(slot.slotDate);
+                      const timeRange = formatSlotTime(slot.startTime, slot.endTime);
+                      const tz = formatTimezone(slot.timezone);
+
+                      return (
+                        <button
+                          key={slot.id}
+                          type="button"
+                          onClick={() => setSelectedSlotId(slot.id)}
+                          className={`p-3.5 rounded-2xl border text-right transition-all flex items-start justify-between gap-3 cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
+                              : 'bg-[#F8FAFD] text-[#1F2A44] border-[#CBD5E1]/70 hover:border-[#0D4E8B]/40 hover:bg-white'
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-['Cairo'] font-bold text-sm">
+                                {dayName}
+                              </span>
+                              <span className={`text-xs ${isSelected ? 'text-white/80' : 'text-[#64748B]'}`}>
+                                {fullDate}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className={`font-semibold ${isSelected ? 'text-white' : 'text-[#0D4E8B]'}`}>
+                                {timeRange}
+                              </span>
+                              <span className={`text-[11px] px-2 py-0.5 rounded-md ${
+                                isSelected ? 'bg-white/20 text-white' : 'bg-slate-200/70 text-slate-700'
+                              }`}>
+                                {tz}
+                              </span>
+                            </div>
+                          </div>
+                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                            isSelected
+                              ? 'border-white bg-white text-[#0D4E8B]'
+                              : 'border-[#CBD5E1] bg-white'
+                          }`}>
+                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200/80 text-amber-900 text-xs space-y-1">
+                    <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                      <Info className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>يُؤكَّد الموعد بعد مراجعة طلبك:</span>
+                    </div>
+                    <p className="leading-relaxed text-[11px] sm:text-xs text-amber-900/90">
+                      إرسال الطلب عبر واتساب لا يؤكد الحجز تلقائيًا؛ بل يبدأ التنسيق المباشر مع إدارة شاطر لمراجعة الموعد وتأكيده يدويًا بموافقتكم التامة.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                /* Fallback when no slots published currently */
+                <div className="p-5 rounded-2xl bg-[#F8FAFD] border border-[#CBD5E1]/80 text-center space-y-3">
+                  <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 text-slate-500 mx-auto flex items-center justify-center">
+                    <CalendarX className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                      لا توجد مواعيد منشورة حاليًا
+                    </h3>
+                    <p className="text-xs text-[#64748B] max-w-md mx-auto leading-relaxed">
+                      يتم تحديث المواعيد دورياً عبر إدارة شاطر. يمكنك التواصل معنا وسننسّق لك موعداً مناسباً مع المعلم.
+                    </p>
+                  </div>
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={handleStartBooking}
+                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm transition-all inline-flex items-center gap-2 cursor-pointer"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>تواصل للاستفسار عن المواعيد المتاحة عبر واتساب</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-[#64748B] pt-0.5">
+                    يُؤكَّد الموعد بعد مراجعة طلبك والتنسيق المباشر معك دون أي التزام مالي.
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Section: تفاصيل التسعير والمتابعة بعد الحصة المجانية */}
             <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
               <div className="flex items-center justify-between flex-wrap gap-2">
@@ -481,6 +684,25 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                 </div>
               </div>
 
+              {/* Selected Slot Information */}
+              {selectedSlotPayload && (
+                <div className="p-3 rounded-2xl bg-[#F0F6FD] border border-[#D1DCFE] space-y-1 text-xs">
+                  <div className="flex items-center gap-1.5 text-[#0D4E8B] font-bold">
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>الموعد المحدد للحصة:</span>
+                  </div>
+                  <div className="font-bold text-[#1F2A44] pt-0.5">
+                    {selectedSlotPayload.dayName} {selectedSlotPayload.date}
+                  </div>
+                  <div className="text-[11px] text-[#535E7B]">
+                    {selectedSlotPayload.timeRange} ({selectedSlotPayload.timezone})
+                  </div>
+                  <span className="text-[10px] font-medium text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/80 inline-block mt-0.5">
+                    يُؤكَّد الموعد بعد مراجعة طلبك
+                  </span>
+                </div>
+              )}
+
               {/* Pricing breakdown */}
               <div className="space-y-2.5 pt-1">
                 <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between text-xs">
@@ -513,7 +735,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
               </button>
 
               <p className="text-[11px] text-center text-[#64748B] leading-tight">
-                سيُفتح واتساب للتنسيق مع مستشار شاطر. الموعد يتأكد بموافقتك الكاملة.
+                إرسال الطلب لا يؤكد الحجز تلقائيًا؛ يُؤكَّد الموعد بعد مراجعة طلبكم والتنسيق المباشر معكم دون أي التزام.
               </p>
 
               {/* Ready Message Preview */}
@@ -553,9 +775,14 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] p-3.5 shadow-2xl flex items-center justify-between gap-3">
         <div className="flex flex-col">
           <span className="text-[11px] text-[#64748B]">الحصة التجريبية</span>
-          <span className="font-['Cairo'] font-extrabold text-sm sm:text-base text-emerald-600">
+          <span className="font-['Cairo'] font-extrabold text-xs sm:text-sm text-emerald-600">
             مجاناً / {tutor.trialDurationMinutes} دقيقة
           </span>
+          {selectedSlotPayload && (
+            <span className="text-[10px] text-[#0D4E8B] font-bold truncate max-w-[140px]">
+              {selectedSlotPayload.dayName} {selectedSlotPayload.timeRange.split('–')[0]}
+            </span>
+          )}
         </div>
 
         <button

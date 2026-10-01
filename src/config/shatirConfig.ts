@@ -39,6 +39,23 @@ export interface BookingWhatsAppPayload {
   curriculumName?: string;
   quranAgeGroupName?: string;
   quranLevelName?: string;
+  selectedSlot?: {
+    date: string;
+    dayName: string;
+    timeRange: string;
+    timezone: string;
+  };
+}
+
+export interface InterestWhatsAppPayload {
+  track: 'school' | 'quran';
+  stageName?: string;
+  gradeName?: string;
+  subjectName?: string;
+  curriculumName?: string;
+  quranAgeGroupName?: string;
+  quranLevelName?: string;
+  customNote?: string;
 }
 
 /**
@@ -48,33 +65,39 @@ export function buildTrialBookingWhatsAppUrl(payload: BookingWhatsAppPayload, cu
   const number = (customNumber || SHATIR_CONFIG.adminWhatsAppNumber).replace(/[^0-9]/g, '');
 
   let detailsText = '';
+  const lines: string[] = [
+    `• المعلم المطلوب: ${payload.tutorHonorific} ${payload.tutorName}`,
+  ];
+
   if (payload.track === 'school') {
-    const lines: string[] = [
-      `• المعلم: ${payload.tutorHonorific} ${payload.tutorName}`,
-      `• المادة: ${payload.subjectName || 'غير محدد'}`,
-    ];
+    lines.push(`• المسار: المناهج المدرسية`);
+    lines.push(`• المادة: ${payload.subjectName || 'غير محدد'}`);
 
     if (payload.stageName || payload.gradeName) {
       const stageGrade = [payload.stageName, payload.gradeName].filter(Boolean).join(' - ');
       lines.push(`• المرحلة والصف: ${stageGrade}`);
     } else {
-      lines.push(`• المرحلة والصف: (سيتم تحديدها معكم أثناء التنسيق)`);
+      lines.push(`• المرحلة والصف: (سيتم تحديدها أثناء التنسيق)`);
     }
 
     if (payload.curriculumName) {
       lines.push(`• نوع المنهج: ${payload.curriculumName}`);
     }
-
-    detailsText = lines.join('\n');
   } else {
-    const lines: string[] = [
-      `• المعلم: ${payload.tutorHonorific} ${payload.tutorName}`,
-      `• المسار: مسار القرآن الكريم والتأسيس`,
-      `• الفئة العمرية للطفل: ${payload.quranAgeGroupName || 'سيتم تحديدها معكم أثناء التنسيق'}`,
-      `• البرنامج المطلوب: ${payload.quranLevelName || 'تأسيس وحفظ القرآن الكريم'}`,
-    ];
-    detailsText = lines.join('\n');
+    lines.push(`• المسار: مسار القرآن الكريم والتأسيس`);
+    lines.push(`• الفئة العمرية للطفل: ${payload.quranAgeGroupName || 'سيتم تحديدها أثناء التنسيق'}`);
+    lines.push(`• البرنامج المطلوب: ${payload.quranLevelName || 'تأسيس وحفظ القرآن الكريم'}`);
   }
+
+  // Appointment Slot Information
+  if (payload.selectedSlot) {
+    lines.push(`• الموعد المختار للحصة التجريبية: ${payload.selectedSlot.dayName} ${payload.selectedSlot.date} (من ${payload.selectedSlot.timeRange} - ${payload.selectedSlot.timezone})`);
+    lines.push(`• ملاحظة الموعد: طلب مبدئي (يُؤكَّد الموعد بعد مراجعة طلبكم مع المعلم)`);
+  } else {
+    lines.push(`• الموعد: (أرجو التنسيق معي لاختيار الموعد الأنسب)`);
+  }
+
+  detailsText = lines.join('\n');
 
   const message = [
     `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
@@ -82,7 +105,50 @@ export function buildTrialBookingWhatsAppUrl(payload: BookingWhatsAppPayload, cu
     ``,
     detailsText,
     ``,
-    `أرجو التنسيق معي لتحديد الموعد المناسب والتواصل مع المعلم. شكراً لكم!`,
+    `تنبيه: أعلم أن فتح واتساب لا يعتبر حجزاً تلقائياً، وأنتظر تواصلكم لإتمام التأكيد والتنسيق. شكراً لكم!`,
+  ].join('\n');
+
+  return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
+}
+
+/**
+ * Builds WhatsApp interest registration URL with current user selections
+ * Used when search results are empty or school course options are pending
+ */
+export function buildInterestRegistrationWhatsAppUrl(payload: InterestWhatsAppPayload, customNumber?: string): string {
+  const number = (customNumber || SHATIR_CONFIG.adminWhatsAppNumber).replace(/[^0-9]/g, '');
+
+  let detailsText = '';
+  if (payload.track === 'school') {
+    const lines: string[] = ['• المسار: المناهج المدرسية'];
+    if (payload.stageName || payload.gradeName) {
+      lines.push(`• المرحلة والصف: ${[payload.stageName, payload.gradeName].filter(Boolean).join(' - ')}`);
+    }
+    if (payload.subjectName) {
+      lines.push(`• المادة: ${payload.subjectName}`);
+    }
+    if (payload.curriculumName) {
+      lines.push(`• نوع المنهج: ${payload.curriculumName}`);
+    }
+    detailsText = lines.join('\n');
+  } else {
+    const lines: string[] = ['• المسار: مسار القرآن والتأسيس'];
+    if (payload.quranAgeGroupName) {
+      lines.push(`• الفئة العمرية: ${payload.quranAgeGroupName}`);
+    }
+    if (payload.quranLevelName) {
+      lines.push(`• البرنامج / المستوى: ${payload.quranLevelName}`);
+    }
+    detailsText = lines.join('\n');
+  }
+
+  const message = [
+    `السلام عليكم ورحمة الله وبركاته، فريق شاطر كلاسيز 👋`,
+    `أود تسجيل اهتمامي بالدروس ومعرفة التخصصات والمعلمين المتاحين للاختيارات التالية:`,
+    ``,
+    detailsText,
+    ``,
+    `أرجو التنسيق معي وإفادتي عند توفر معلم مناسب. شكراً لكم!`,
   ].join('\n');
 
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
@@ -93,6 +159,6 @@ export function buildTrialBookingWhatsAppUrl(payload: BookingWhatsAppPayload, cu
  */
 export function buildTutorFollowUpWhatsAppUrl(referenceCode: string, applicantName: string, customNumber?: string): string {
   const number = (customNumber || SHATIR_CONFIG.adminWhatsAppNumber).replace(/[^0-9]/g, '');
-  const message = `مرحباً فريق شاطر كلاسيز، أود متابعة طلب الانضمام رقم ${referenceCode} المسجل باسم ${applicantName} لاستكمال المقابلة التعريفية.`;
+  const message = `مرحباً فريق شاطر كلاسيز، أود تقديم بيانات ومؤهلات التدريس للانضمام كمعلم عبر منصة شاطر. الاسم: ${applicantName}.`;
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
