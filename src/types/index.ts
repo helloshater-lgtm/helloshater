@@ -151,6 +151,7 @@ export interface TutorApplicationFormData {
   academicDegree: string;
   portfolioUrl: string;
   termsAccepted: boolean;
+  termsPolicyVersion?: string;
 }
 
 export interface TutorApplicationRecord extends TutorApplicationFormData {

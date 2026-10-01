@@ -20,7 +20,7 @@ export const SHATIR_CONFIG = {
     price: 0,
     priceLabel: 'مجاناً (100%)',
     regularDurationMinutes: 50,
-    trialDurationMinutes: 30,
+    trialDurationMinutes: 20,
     satisfactionGuarantee: 'ضمان شاطر لراحة ولي الأمر: لم يناسب طفلك المعلم بعد الحصة التجريبية؟ نساعدك على تجربة معلم آخر مجاناً فوراً دون أي رسوم إضافية.',
     bookingNotice: 'فتح واتساب يبدأ التنسيق المباشر مع مستشار شاطر التعليمي، ولا يعني تأكيد الحجز الفوري. يتم تثبيت الموعد بموافقتك الكاملة بعد مطابقة جدولك وجدول المعلم.',
   },

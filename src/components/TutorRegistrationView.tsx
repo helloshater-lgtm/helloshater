@@ -13,6 +13,10 @@ import {
 import { DataService } from '../services/dataService';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import {
+  TutorCooperationPolicyModal,
+  TUTOR_COOPERATION_POLICY_VERSION,
+} from './TutorCooperationPolicyModal';
+import {
   Loader2,
   Info,
   BookOpen,
@@ -23,6 +27,8 @@ import {
   CreditCard,
   Users,
   ShieldCheck,
+  FileText,
+  AlertCircle,
 } from 'lucide-react';
 
 const INITIAL_FORM: TutorApplicationFormData = {
@@ -39,6 +45,7 @@ const INITIAL_FORM: TutorApplicationFormData = {
   academicDegree: '',
   portfolioUrl: '',
   termsAccepted: false,
+  termsPolicyVersion: TUTOR_COOPERATION_POLICY_VERSION,
 };
 
 const DRAFT_KEY = 'shatir_tutor_app_draft_v2';
@@ -47,6 +54,7 @@ export const TutorRegistrationView: React.FC = () => {
   const [formData, setFormData] = useState<TutorApplicationFormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showNoticeScreen, setShowNoticeScreen] = useState<boolean>(false);
+  const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(false);
 
   // Live options loaded from Supabase
   const [stages, setStages] = useState<Stage[]>([]);
@@ -72,11 +80,16 @@ export const TutorRegistrationView: React.FC = () => {
   }, []);
 
   // Restore saved input draft if available
+  // Requirement 5: Retain consent within form data during navigation, and re-request if policy version changed
   useEffect(() => {
     try {
       const saved = localStorage.getItem(DRAFT_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
+        if (parsed.termsPolicyVersion !== TUTOR_COOPERATION_POLICY_VERSION) {
+          parsed.termsAccepted = false;
+          parsed.termsPolicyVersion = TUTOR_COOPERATION_POLICY_VERSION;
+        }
         setFormData((prev) => ({ ...prev, ...parsed }));
       }
     } catch (e) {
@@ -94,15 +107,22 @@ export const TutorRegistrationView: React.FC = () => {
 
   const handleInputChange = (field: keyof TutorApplicationFormData, value: any) => {
     setFormData((prev) => {
-      const updated = { ...prev, [field]: value };
+      const updated = {
+        ...prev,
+        [field]: value,
+        ...(field === 'termsAccepted'
+          ? { termsPolicyVersion: value ? TUTOR_COOPERATION_POLICY_VERSION : '' }
+          : {}),
+      };
       saveDraft(updated);
       return updated;
     });
 
-    if (errors[field]) {
+    if (errors[field] || (field === 'termsAccepted' && errors.terms)) {
       setErrors((prev) => {
         const copy = { ...prev };
         delete copy[field];
+        if (field === 'termsAccepted') delete copy.terms;
         return copy;
       });
     }
@@ -176,15 +196,13 @@ export const TutorRegistrationView: React.FC = () => {
     }
 
     if (!formData.termsAccepted) {
-      newErrors.terms = 'يرجى الموافقة على شروط التواصل وتدقيق المؤهلات للمتابعة';
+      newErrors.terms = 'يجب قراءة سياسة التعاون مع شاطر والموافقة عليها لمتابعة تقديم الطلب';
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  // Requirement 11: Do NOT claim the application was saved to the database.
-  // Instead, explain that the automated receiving endpoint is being prepared and provide direct WhatsApp coordination.
   const handleSubmitAction = (e: React.FormEvent) => {
     e.preventDefault();
     const isValid = validateForm();
@@ -198,7 +216,7 @@ export const TutorRegistrationView: React.FC = () => {
     
     const lines = [
       `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
-      `أود التقديم للانضمام كمعلم معتمد في منصة شاطر، وإليكم بياناتي الأولية:`,
+      `أود التقديم للانضمام كمعلم في منصة شاطر، وإليكم بياناتي الأولية:`,
       ``,
       `• الاسم: ${formData.fullName}`,
       `• هاتف الواتساب: ${formData.countryCode} ${formData.phone}`,
@@ -211,6 +229,8 @@ export const TutorRegistrationView: React.FC = () => {
       lines.push(`• نموذج تدريس / سيرة: ${formData.portfolioUrl}`);
     }
 
+    lines.push(``);
+    lines.push(`• إقرار السياسة: أقرّ بقراءة سياسة التعاون مع شاطر والموافقة عليها — الإصدار 1.0`);
     lines.push(``);
     lines.push(`أرجو مراجعة بياناتي والتنسيق معي للمقابلة التعريفية. شكراً لكم!`);
 
@@ -496,29 +516,60 @@ export const TutorRegistrationView: React.FC = () => {
               </div>
             </div>
 
-            {/* 4. Terms */}
-            <div className="pt-2">
-              <label className="flex items-start gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.termsAccepted}
-                  onChange={(e) => handleInputChange('termsAccepted', e.target.checked)}
-                  className="w-4 h-4 rounded text-[#0D4E8B] accent-[#0D4E8B] mt-0.5 shrink-0"
-                />
-                <div className="text-xs text-[#1F2A44] leading-relaxed">
-                  أوافق على قيام فريق شاطر بمراجعة مؤهلاتي والتواصل معي عبر واتساب لتنسيق المقابلة واختبار التدريس.
+            {/* 4. Review Notice & Mandatory Policy Acceptance */}
+            <div className="space-y-4 pt-2">
+              {/* Notice Banner: submission is subject to review and does not mean acceptance */}
+              <div className="p-3.5 sm:p-4 rounded-2xl bg-amber-50/90 border border-amber-200/90 text-right space-y-1">
+                <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-amber-900">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>تنويه قبل تقديم الطلب</span>
                 </div>
-              </label>
-              {errors.terms && (
-                <p className="text-[11px] text-red-600 font-bold mt-1 px-1">{errors.terms}</p>
-              )}
+                <p className="text-xs text-amber-800 leading-relaxed font-normal">
+                  تقديم هذا الطلب يخضع للمراجعة وتدقيق المؤهلات الأكاديمية والمقابلة التعريفية من قِبل إدارة شاطر، ولا يعني قبول المعلم أو اعتماده تلقائيًا.
+                </p>
+              </div>
+
+              {/* Mandatory Checkbox and Policy Link */}
+              <div className="p-4 rounded-2xl bg-[#F8FAFD] border border-[#CBD5E1] space-y-2">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="tutor-policy-checkbox"
+                    checked={formData.termsAccepted}
+                    onChange={(e) => handleInputChange('termsAccepted', e.target.checked)}
+                    className="w-4 h-4 rounded text-[#0D4E8B] accent-[#0D4E8B] mt-0.5 shrink-0 cursor-pointer"
+                  />
+                  <div className="text-xs sm:text-sm text-[#1F2A44] leading-relaxed">
+                    <label htmlFor="tutor-policy-checkbox" className="font-bold cursor-pointer">
+                      قرأت سياسة التعاون مع شاطر وأوافق عليها
+                    </label>
+                    <div className="mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsPolicyModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0D4E8B] hover:text-[#003767] underline underline-offset-4 decoration-[#0D4E8B]/40 hover:decoration-[#0D4E8B] transition-colors cursor-pointer"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-[#0D4E8B] shrink-0" />
+                        <span>اضغط هنا لقراءة وثيقة «سياسة التعاون مع المعلمين — منصة شاطر» (الإصدار 1.0)</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {errors.terms && (
+                  <p className="text-xs text-red-600 font-bold pr-7 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{errors.terms}</span>
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Submit Button */}
             <div className="pt-2 flex flex-col items-center gap-3">
               <button
                 type="submit"
-                className="w-full sm:w-auto px-10 py-3.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-sm shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full sm:w-auto px-10 py-3.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-sm shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
               >
                 <span>متابعة تقديم الطلب</span>
                 <ArrowLeft className="w-4 h-4" />
@@ -531,7 +582,7 @@ export const TutorRegistrationView: React.FC = () => {
           </form>
         </div>
       ) : (
-        /* Requirement 11: Transparent screen - point of automated receipt is in progress, direct WhatsApp coordination available */
+        /* Transparent screen - direct WhatsApp coordination available */
         <div className="bg-white rounded-3xl shadow-sm border border-[#E2E8F0] p-8 text-center transition-all animate-fade-in space-y-6">
           <div className="w-16 h-16 mx-auto rounded-full bg-[#F0F6FD] border border-[#D1DCFE] text-[#0D4E8B] flex items-center justify-center text-3xl">
             <Info className="w-8 h-8 text-[#0D4E8B]" />
@@ -551,32 +602,56 @@ export const TutorRegistrationView: React.FC = () => {
 
           <div className="max-w-md mx-auto p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] text-right space-y-2 text-xs text-[#535E7B]">
             <h4 className="font-['Cairo'] font-bold text-[#0D4E8B]">بياناتك الجاهزة للمشاركة مع الإدارة:</h4>
-            <ul className="space-y-1 text-slate-700">
+            <ul className="space-y-1.5 text-slate-700">
               <li>• <strong>المتقدم:</strong> {formData.fullName}</li>
               <li>• <strong>الهاتف:</strong> {formData.countryCode} {formData.phone}</li>
               <li>• <strong>المؤهل:</strong> {formData.academicDegree}</li>
               <li>• <strong>المسار:</strong> {formData.track === 'school' ? 'المناهج المدرسية' : 'القرآن والتأسيس'}</li>
+              <li className="text-emerald-700 font-bold">
+                • <strong>إقرار السياسة:</strong> أقرّ بقراءة سياسة التعاون مع شاطر والموافقة عليها — الإصدار 1.0
+              </li>
             </ul>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-            <a
-              href={buildApplicationWhatsAppMessage()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full sm:w-auto px-7 py-3 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
-            >
-              <MessageCircle className="w-4 h-4" />
-              <span>إرسال البيانات ومتابعة الانضمام عبر واتساب</span>
-            </a>
+          <div className="space-y-3 pt-2">
+            {!formData.termsAccepted ? (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs text-center font-bold">
+                يجب الموافقة على سياسة التعاون لمتابعة إرسال الطلب عبر واتساب.
+              </div>
+            ) : null}
 
-            <button
-              type="button"
-              onClick={() => setShowNoticeScreen(false)}
-              className="w-full sm:w-auto px-5 py-3 rounded-xl text-xs font-bold bg-[#F2F3F6] text-[#1F2A44] hover:bg-[#E2E8F0] transition-colors cursor-pointer"
-            >
-              تعديل بيانات النموذج
-            </button>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <a
+                href={formData.termsAccepted ? buildApplicationWhatsAppMessage() : undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (!formData.termsAccepted) {
+                    e.preventDefault();
+                  }
+                }}
+                className={`w-full sm:w-auto px-7 py-3 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  formData.termsAccepted
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    : 'bg-slate-300 text-slate-500 cursor-not-allowed pointer-events-none'
+                }`}
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>إرسال البيانات ومتابعة الانضمام عبر واتساب</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => setShowNoticeScreen(false)}
+                className="w-full sm:w-auto px-5 py-3 rounded-xl text-xs font-bold bg-[#F2F3F6] text-[#1F2A44] hover:bg-[#E2E8F0] transition-colors cursor-pointer"
+              >
+                تعديل بيانات النموذج
+              </button>
+            </div>
+
+            <p className="text-[11px] sm:text-xs text-[#64748B] text-center max-w-md mx-auto leading-relaxed">
+              فتح واتساب يجهّز رسالة طلب الانضمام؛ إرسال الطلب يتم عبر واتساب، ولا يُعد فتح التطبيق إرسالاً تلقائياً أو تسجيلاً للموافقة في قاعدة البيانات.
+            </p>
           </div>
         </div>
       )}
@@ -619,6 +694,14 @@ export const TutorRegistrationView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Tutor Cooperation Policy Modal */}
+      <TutorCooperationPolicyModal
+        isOpen={isPolicyModalOpen}
+        onClose={() => setIsPolicyModalOpen(false)}
+        onAccept={() => handleInputChange('termsAccepted', true)}
+        isAccepted={formData.termsAccepted}
+      />
     </div>
   );
 };

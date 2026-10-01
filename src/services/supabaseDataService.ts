@@ -456,7 +456,7 @@ export const SupabaseDataService = {
       hourlyRateMax: row.hourly_rate_max || 0,
       currency: row.currency || 'ج.م',
       sessionDurationMinutes: row.session_duration_minutes || 50,
-      trialDurationMinutes: row.trial_duration_minutes || 30,
+      trialDurationMinutes: row.trial_duration_minutes || 20,
       rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : 5.0,
       reviewsCount: row.reviews_count || 0,
       totalStudentsTaught: row.total_students_taught || 0,
