@@ -486,12 +486,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   >
                     <span className="leading-snug">{faq.q}</span>
                     <span
-                      className={`w-7 h-7 rounded-lg bg-[#F8FAFD] border border-[#CBD5E1]/60 flex items-center justify-center shrink-0 text-[#0D4E8B] transition-transform duration-200 ${
-                        isOpen ? 'rotate-180 bg-[#0D4E8B] text-white border-[#0D4E8B]' : ''
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-[#0D4E8B] transition-transform duration-200 ${
+                        isOpen
+                          ? 'rotate-180 bg-[#F0F6FD] border border-[#CBD5E1] text-[#0D4E8B]'
+                          : 'bg-[#F8FAFD] border border-[#CBD5E1]/60 text-[#0D4E8B]'
                       }`}
                       aria-hidden="true"
                     >
-                      <ChevronDown className="w-4 h-4" />
+                      <ChevronDown className="w-4 h-4 text-[#0D4E8B]" />
                     </span>
                   </button>
                   {isOpen && (
