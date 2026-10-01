@@ -11,9 +11,9 @@ export const SHATIR_CONFIG = {
   platformEnglishName: 'Shatir Classes',
   tagline: 'منصة أولياء الأمور لاختيار المعلمين الخصوصيين المعتمدين',
   
-  // Central WhatsApp number for Shatir Administration
-  adminWhatsAppNumber: RAW_ADMIN_WHATSAPP || '+201023456789', // Configurable test number
-  isRealWhatsAppConfigured: Boolean(RAW_ADMIN_WHATSAPP),
+  // Central Unified WhatsApp number for Shatir Administration
+  adminWhatsAppNumber: RAW_ADMIN_WHATSAPP || '201107889984',
+  isRealWhatsAppConfigured: true,
 
   // Platform Guarantee & Trust messaging
   trialSession: {

@@ -9,13 +9,11 @@ interface WhatsAppNoticeModalProps {
 }
 
 export const WhatsAppNoticeModal: React.FC<WhatsAppNoticeModalProps> = ({ payload, isOpen, onClose }) => {
-  const [customNumber, setCustomNumber] = useState(SHATIR_CONFIG.adminWhatsAppNumber);
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
 
-  const generatedUrl = buildTrialBookingWhatsAppUrl(payload, customNumber);
-  const isRealConfigured = SHATIR_CONFIG.isRealWhatsAppConfigured;
+  const generatedUrl = buildTrialBookingWhatsAppUrl(payload);
   const rawMessageText = decodeURIComponent(generatedUrl.split('text=')[1] || '');
 
   const handleCopyMessage = () => {
@@ -69,25 +67,11 @@ export const WhatsAppNoticeModal: React.FC<WhatsAppNoticeModalProps> = ({ payloa
           </div>
 
           {/* Admin WhatsApp status */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-[#1F2A44]">رقم واتساب إدارة شاطر:</span>
-              {!isRealConfigured && (
-                <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                  إعداد تجريبي للمعاينة
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2" dir="ltr">
-              <input
-                type="tel"
-                value={customNumber}
-                onChange={(e) => setCustomNumber(e.target.value)}
-                placeholder="+2010..."
-                className="flex-1 h-10 px-3 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] text-[#1F2A44] font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[#0D4E8B]"
-              />
-            </div>
+          <div className="p-3.5 rounded-xl bg-[#F8FAFD] border border-[#E2E8F0] flex items-center justify-between text-xs">
+            <span className="font-bold text-[#1F2A44]">رقم واتساب إدارة شاطر الموحد:</span>
+            <span className="font-mono text-[#0D4E8B] font-bold text-sm tracking-wide" dir="ltr">
+              +20 110 788 9984
+            </span>
           </div>
 
           {/* Formatted Message Preview */}
