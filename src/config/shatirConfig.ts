@@ -15,6 +15,9 @@ export const SHATIR_CONFIG = {
   adminWhatsAppNumber: RAW_ADMIN_WHATSAPP || '201107889984',
   isRealWhatsAppConfigured: true,
 
+  // Central Google Analytics 4 Measurement ID
+  gaMeasurementId: 'G-CGL8XBRE0J',
+
   // Platform Guarantee & Trust messaging
   trialSession: {
     price: 0,

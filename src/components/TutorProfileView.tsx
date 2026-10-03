@@ -3,6 +3,7 @@ import { Tutor, SearchCriteria, TutorAvailableSlot } from '../types';
 import { DataService } from '../services/dataService';
 import { VideoModal } from './VideoModal';
 import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
+import { trackTrialSlotSelected } from '../services/analytics';
 import {
   ArrowRight,
   GraduationCap,
@@ -515,7 +516,10 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                         <button
                           key={slot.id}
                           type="button"
-                          onClick={() => setSelectedSlotId(slot.id)}
+                          onClick={() => {
+                            setSelectedSlotId(slot.id);
+                            trackTrialSlotSelected(tutor.id, slot.id);
+                          }}
                           className={`p-3.5 rounded-2xl border text-right transition-all flex items-start justify-between gap-3 cursor-pointer ${
                             isSelected
                               ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'

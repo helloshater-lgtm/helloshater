@@ -15,6 +15,13 @@ import { DataService } from '../services/dataService';
 import { DatabaseSchoolCourseOption } from '../services/supabaseDataService';
 import { buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
 import {
+  trackParentSelectorStarted,
+  resetSelectorStartedTracking,
+  trackParentSearchSubmitted,
+  trackNoCourseOptionsShown,
+  trackWhatsAppClicked,
+} from '../services/analytics';
+import {
   BookOpen,
   Sparkles,
   ChevronDown,
@@ -183,6 +190,13 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
     return availableSubjectsForSelection.length > 0;
   }, [gradeId, curriculumType, availableSubjectsForSelection]);
 
+  // Track no_course_options_shown when grade + curriculum have no active configured subjects
+  useEffect(() => {
+    if (track === 'school' && gradeId && curriculumType && !hasCoursesConfigured) {
+      trackNoCourseOptionsShown(stageId, gradeId, curriculumType);
+    }
+  }, [track, stageId, gradeId, curriculumType, hasCoursesConfigured]);
+
   // Helper 1: Abbreviate stage names to «ابتدائي»، «إعدادي / متوسط»، «ثانوي» while keeping Supabase ID
   const getStageShortName = (stg: Stage): string => {
     const name = stg.name || '';
@@ -260,6 +274,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
 
   // Handlers with cascading resets and hiding old results
   const handleTrackChange = (newTrack: TrackType) => {
+    trackParentSelectorStarted(newTrack);
     if (track !== newTrack) {
       setTrack(newTrack);
       setStageId('');
@@ -273,6 +288,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   };
 
   const handleStageSelect = (newStage: StageId) => {
+    trackParentSelectorStarted(track);
     if (stageId !== newStage) {
       setStageId(newStage);
       setGradeId('');
@@ -283,6 +299,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   };
 
   const handleGradeSelect = (newGrade: string) => {
+    trackParentSelectorStarted(track);
     if (gradeId !== newGrade) {
       setGradeId(newGrade);
       setSubjectId('');
@@ -291,6 +308,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   };
 
   const handleCurriculumSelect = (newCurriculum: CurriculumType) => {
+    trackParentSelectorStarted(track);
     if (curriculumType !== newCurriculum) {
       setCurriculumType(newCurriculum);
       setSubjectId('');
@@ -299,11 +317,13 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   };
 
   const handleSubjectSelect = (newSubject: string) => {
+    trackParentSelectorStarted(track);
     setSubjectId(newSubject);
     onCriteriaChange?.();
   };
 
   const handleAgeGroupSelect = (newAgeGroup: string) => {
+    trackParentSelectorStarted(track);
     if (ageGroupId !== newAgeGroup) {
       setAgeGroupId(newAgeGroup);
       setLevelId('');
@@ -312,11 +332,13 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   };
 
   const handleLevelSelect = (newLevel: string) => {
+    trackParentSelectorStarted(track);
     setLevelId(newLevel);
     onCriteriaChange?.();
   };
 
   const handleReset = () => {
+    resetSelectorStartedTracking();
     setStageId('');
     setGradeId('');
     setCurriculumType('');
@@ -338,19 +360,23 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
     if (!isFormComplete) return;
 
     if (track === 'school') {
-      onSearch({
+      const criteria: SearchCriteria = {
         track: 'school',
         stageId,
         gradeId,
         subjectId,
         curriculumType,
-      });
+      };
+      trackParentSearchSubmitted(criteria);
+      onSearch(criteria);
     } else {
-      onSearch({
+      const criteria: SearchCriteria = {
         track: 'quran',
         ageGroupId,
         levelId,
-      });
+      };
+      trackParentSearchSubmitted(criteria);
+      onSearch(criteria);
     }
   };
 
@@ -587,6 +613,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
                         })}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => trackWhatsAppClicked('no_courses_interest')}
                         className="min-h-[46px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-all inline-flex items-center gap-2 cursor-pointer"
                       >
                         <MessageCircle className="w-4 h-4 shrink-0" />

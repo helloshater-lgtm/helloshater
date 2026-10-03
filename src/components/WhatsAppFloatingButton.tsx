@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
+import { trackWhatsAppClicked } from '../services/analytics';
 
 export const WhatsAppFloatingButton: React.FC = () => {
   const [isHidden, setIsHidden] = useState(false);
@@ -75,6 +76,7 @@ export const WhatsAppFloatingButton: React.FC = () => {
         href={whatsappUrl}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={() => trackWhatsAppClicked('floating_button')}
         className="w-12 h-12 sm:w-auto sm:h-auto sm:px-4 sm:py-2.5 bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-full shadow-md hover:shadow-lg transition-colors duration-150 active:scale-95 cursor-pointer flex items-center justify-center sm:gap-2 focus:outline-none focus:ring-2 focus:ring-[#25D366]/60 focus:ring-offset-2"
         aria-label="تواصل مع إدارة شاطر عبر واتساب"
         title="تواصل معنا عبر واتساب"

@@ -1,5 +1,6 @@
 import React from 'react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
+import { trackWhatsAppClicked } from '../services/analytics';
 import { MessageCircle } from 'lucide-react';
 
 interface FooterProps {
@@ -47,6 +48,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                 href={whatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackWhatsAppClicked('footer')}
                 className="inline-flex items-center gap-2 text-xs sm:text-sm text-[#C2C6D1] hover:text-[#FFC629] transition-colors py-0.5"
               >
                 <MessageCircle className="w-4 h-4 text-emerald-400 shrink-0" />

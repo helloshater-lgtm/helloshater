@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SHATIR_CONFIG, BookingWhatsAppPayload, buildTrialBookingWhatsAppUrl } from '../config/shatirConfig';
 import { MessageCircle, Check, Copy, AlertTriangle, X } from 'lucide-react';
+import { trackWhatsAppClicked } from '../services/analytics';
 
 interface WhatsAppNoticeModalProps {
   payload: BookingWhatsAppPayload;
@@ -23,6 +24,7 @@ export const WhatsAppNoticeModal: React.FC<WhatsAppNoticeModalProps> = ({ payloa
   };
 
   const handleOpenWhatsApp = () => {
+    trackWhatsAppClicked('trial_booking_modal');
     window.open(generatedUrl, '_blank', 'noopener,noreferrer');
     onClose();
   };

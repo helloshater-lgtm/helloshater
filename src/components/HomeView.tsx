@@ -24,6 +24,7 @@ import {
   ArrowDown,
 } from 'lucide-react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
+import { trackNoTutorsShown, trackWhatsAppClicked } from '../services/analytics';
 
 interface HomeViewProps {
   onSelectTutor: (tutorId: string) => void;
@@ -141,6 +142,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
       const results = await DataService.searchTutors(criteria, simulateError);
       setSearchResults(results);
       onSaveCriteria?.(criteria, results);
+
+      // Track no_tutors_shown if search returned 0 results
+      if (results.length === 0) {
+        trackNoTutorsShown(criteria);
+      }
+
       setTimeout(() => {
         document.getElementById('search-results-section')?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
@@ -233,6 +240,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               href={whatsappDirectUrl}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => trackWhatsAppClicked('hero_cta')}
               className="inline-flex items-center gap-2 text-sm sm:text-base font-['Cairo'] font-bold text-[#0D4E8B] hover:text-[#003767] underline underline-offset-4 decoration-[#0D4E8B]/30 hover:decoration-[#0D4E8B] transition-colors py-1"
             >
               <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />

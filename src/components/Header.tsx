@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
+import { trackWhatsAppClicked } from '../services/analytics';
 import { Menu, X, MessageCircle } from 'lucide-react';
 
 interface HeaderProps {
@@ -118,6 +119,7 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
             href={whatsappContactUrl}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => trackWhatsAppClicked('header')}
             className="inline-flex items-center gap-1.5 text-[#0D4E8B] hover:text-[#003767] bg-[#F0F6FD] hover:bg-[#E3EFFD] px-3.5 py-1.5 rounded-xl transition-all font-bold"
           >
             <MessageCircle className="w-4 h-4 text-emerald-600" />
@@ -166,7 +168,10 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
             href={whatsappContactUrl}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={() => setIsMobileMenuOpen(false)}
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              trackWhatsAppClicked('header');
+            }}
             className="flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-['Cairo'] font-bold text-[#0D4E8B] bg-[#F0F6FD] hover:bg-[#E3EFFD] transition-colors"
           >
             <span>تواصل معنا</span>

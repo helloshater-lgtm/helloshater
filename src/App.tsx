@@ -22,6 +22,11 @@ import { HomeView } from './components/HomeView';
 import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
+import {
+  trackPageView,
+  trackTutorProfileOpened,
+  resetTutorProfileTracking,
+} from './services/analytics';
 
 type AppView = 'home' | 'tutor-profile' | 'join-as-tutor';
 
@@ -83,6 +88,20 @@ export default function App() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [savedScrollPosition]);
+
+  // Central Google Analytics 4 page_view and profile opened tracking
+  useEffect(() => {
+    if (currentView === 'home') {
+      trackPageView('/', 'شاطر كلاسيز — منصة أولياء الأمور لاختيار أفضل المعلمين الخصوصيين');
+      resetTutorProfileTracking();
+    } else if (currentView === 'join-as-tutor') {
+      trackPageView('/#join-as-tutor', 'انضم كمعلم | شاطر كلاسيز');
+      resetTutorProfileTracking();
+    } else if (currentView === 'tutor-profile' && selectedTutorId) {
+      trackPageView(`/#tutor/${selectedTutorId}`, 'ملف المعلم | شاطر كلاسيز');
+      trackTutorProfileOpened(selectedTutorId);
+    }
+  }, [currentView, selectedTutorId]);
 
   // Requirement 9: Fetch tutor from Supabase. If old mock tutor or unpublished, show "ملف المعلم غير متاح"
   useEffect(() => {

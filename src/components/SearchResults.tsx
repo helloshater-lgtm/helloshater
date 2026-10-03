@@ -4,6 +4,7 @@ import { TutorCard } from './TutorCard';
 import { Edit3, RotateCcw, AlertCircle, Search, Sparkles, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SHATIR_CONFIG, buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
+import { trackWhatsAppClicked } from '../services/analytics';
 
 interface SearchResultsProps {
   tutors: Tutor[];
@@ -184,6 +185,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
               })}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => trackWhatsAppClicked('empty_search_interest')}
               className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-all flex items-center gap-2 cursor-pointer"
             >
               <MessageCircle className="w-4 h-4" />

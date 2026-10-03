@@ -18,6 +18,7 @@ import {
   TutorCooperationPolicyModal,
   TUTOR_COOPERATION_POLICY_VERSION,
 } from './TutorCooperationPolicyModal';
+import { trackTeacherApplicationWhatsAppClicked } from '../services/analytics';
 import {
   Info,
   Clock,
@@ -1672,7 +1673,11 @@ export const TutorRegistrationView: React.FC = () => {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => {
-                  if (!formData.termsAccepted) e.preventDefault();
+                  if (!formData.termsAccepted) {
+                    e.preventDefault();
+                    return;
+                  }
+                  trackTeacherApplicationWhatsAppClicked();
                 }}
                 className={`w-full sm:w-auto px-8 py-3.5 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
                   formData.termsAccepted
