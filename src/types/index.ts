@@ -137,19 +137,46 @@ export interface SearchCriteria {
   levelId?: string;
 }
 
+export interface SchoolSpecializationItem {
+  id: string;
+  subjectId: string;
+  teachingLanguage: 'arabic' | 'english';
+  curriculumType: CurriculumType;
+  stageId: StageId;
+  gradeIds: string[];
+}
+
 export interface TutorApplicationFormData {
   fullName: string;
   countryCode: string;
   phone: string;
   track: TrackType;
+  // School Track Specializations
+  schoolSpecializations: SchoolSpecializationItem[];
+  // Quran & Foundation Track
+  quranAgeGroups: string[];
+  quranLevels: string[];
+  quranNotes?: string;
+  // Legacy arrays kept for compatibility
   subjects: string[];
   stages: StageId[];
   curricula: CurriculumType[];
-  quranAgeGroups: string[];
-  quranLevels: string[];
-  experienceYears: string;
+  // Qualifications & Experience
   academicDegree: string;
+  experienceYears: string;
+  hasOnlineExperience: 'yes' | 'no' | '';
+  onlineExperienceDetails: string;
+  bioAndMethodology: string;
   portfolioUrl: string;
+  // Pricing & Availability
+  suggestedHourlyRate: string;
+  currency: string;
+  sessionDurationMinutes: number;
+  availableDays: string[];
+  preferredTimes: string[];
+  timezone: string;
+  interviewAvailability: string;
+  // Policy Agreement
   termsAccepted: boolean;
   termsPolicyVersion?: string;
 }

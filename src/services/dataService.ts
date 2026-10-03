@@ -27,6 +27,10 @@ export const DataService = {
     return SupabaseDataService.getGrades(stageId);
   },
 
+  async getAllGrades(): Promise<Grade[]> {
+    return SupabaseDataService.getGrades();
+  },
+
   async getCurriculumOptions(): Promise<CurriculumOption[]> {
     return SupabaseDataService.getCurriculumTypes();
   },
