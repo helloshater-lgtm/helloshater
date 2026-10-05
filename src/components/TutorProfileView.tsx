@@ -3,6 +3,7 @@ import { Tutor, SearchCriteria, TutorAvailableSlot } from '../types';
 import { DataService } from '../services/dataService';
 import { VideoModal } from './VideoModal';
 import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
+import { TutorTrialCalendar, SelectedTrialSlotData } from './TutorTrialCalendar';
 import { trackTrialSlotSelected } from '../services/analytics';
 import {
   ArrowRight,
@@ -52,31 +53,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   // Available appointment slots state
   const [availableSlots, setAvailableSlots] = useState<TutorAvailableSlot[]>([]);
   const [isLoadingSlots, setIsLoadingSlots] = useState(true);
-  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let isMounted = true;
-    setIsLoadingSlots(true);
-    DataService.getTutorAvailableSlots(tutor.id)
-      .then((slots) => {
-        if (isMounted) {
-          setAvailableSlots(slots);
-          setIsLoadingSlots(false);
-          if (slots.length > 0) {
-            setSelectedSlotId(slots[0].id);
-          }
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          setAvailableSlots([]);
-          setIsLoadingSlots(false);
-        }
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [tutor.id]);
+  const [selectedSlotData, setSelectedSlotData] = useState<SelectedTrialSlotData | null>(null);
 
   // Helpers for slot formatting in natural Arabic
   const formatSlotDay = (dateStr: string): string => {
@@ -114,20 +91,95 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     }
   };
 
-  const formatTimezone = (tz: string): string => {
+  const formatTimezone = (tz?: string): string => {
     if (!tz) return 'بتوقيت القاهرة';
     if (tz.includes('Cairo') || tz.includes('Egypt')) return 'بتوقيت القاهرة';
     if (tz.includes('Riyadh') || tz.includes('Saudi') || tz.includes('Mecca')) return 'بتوقيت مكة المكرمة';
     return tz;
   };
 
-  const selectedSlot = availableSlots.find((s) => s.id === selectedSlotId);
-  const selectedSlotPayload = selectedSlot
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingSlots(true);
+    DataService.getTutorAvailableSlots(tutor.id)
+      .then((slots) => {
+        if (isMounted) {
+          setAvailableSlots(slots);
+          setIsLoadingSlots(false);
+          if (slots.length > 0) {
+            const first = slots[0];
+            setSelectedSlotData({
+              id: first.id,
+              dateStr: first.slotDate,
+              dayName: formatSlotDay(first.slotDate),
+              formattedDate: formatSlotDate(first.slotDate),
+              startTime: first.startTime,
+              endTime: first.endTime,
+              timeRange: formatSlotTime(first.startTime, first.endTime),
+              timezone: formatTimezone(first.timezone),
+              isPublishedSlot: true,
+            });
+          } else {
+            // Default to tomorrow 4:00 PM for instant convenience
+            const tmrw = new Date();
+            tmrw.setDate(tmrw.getDate() + 1);
+            const y = tmrw.getFullYear();
+            const m = String(tmrw.getMonth() + 1).padStart(2, '0');
+            const d = String(tmrw.getDate()).padStart(2, '0');
+            const dStr = `${y}-${m}-${d}`;
+            setSelectedSlotData({
+              id: `suggested-${dStr}-16:00`,
+              dateStr: dStr,
+              dayName: formatSlotDay(dStr),
+              formattedDate: formatSlotDate(dStr),
+              startTime: '16:00',
+              endTime: '16:20',
+              timeRange: '٠٤:٠٠ م – ٠٤:٢٠ م',
+              timezone: 'بتوقيت القاهرة',
+              isPublishedSlot: false,
+            });
+          }
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setAvailableSlots([]);
+          setIsLoadingSlots(false);
+          const tmrw = new Date();
+          tmrw.setDate(tmrw.getDate() + 1);
+          const y = tmrw.getFullYear();
+          const m = String(tmrw.getMonth() + 1).padStart(2, '0');
+          const d = String(tmrw.getDate()).padStart(2, '0');
+          const dStr = `${y}-${m}-${d}`;
+          setSelectedSlotData({
+            id: `suggested-${dStr}-16:00`,
+            dateStr: dStr,
+            dayName: formatSlotDay(dStr),
+            formattedDate: formatSlotDate(dStr),
+            startTime: '16:00',
+            endTime: '16:20',
+            timeRange: '٠٤:٠٠ م – ٠٤:٢٠ م',
+            timezone: 'بتوقيت القاهرة',
+            isPublishedSlot: false,
+          });
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [tutor.id]);
+
+  const handleSelectCalendarSlot = (slot: SelectedTrialSlotData) => {
+    setSelectedSlotData(slot);
+    trackTrialSlotSelected(tutor.id, slot.id);
+  };
+
+  const selectedSlotPayload = selectedSlotData
     ? {
-        date: formatSlotDate(selectedSlot.slotDate),
-        dayName: formatSlotDay(selectedSlot.slotDate),
-        timeRange: formatSlotTime(selectedSlot.startTime, selectedSlot.endTime),
-        timezone: formatTimezone(selectedSlot.timezone),
+        date: selectedSlotData.formattedDate,
+        dayName: selectedSlotData.dayName,
+        timeRange: selectedSlotData.timeRange,
+        timezone: selectedSlotData.timezone,
       }
     : undefined;
 
@@ -480,123 +532,15 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
               </div>
             </div>
 
-            {/* Section: مواعيد الحصة التجريبية المتاحة */}
-            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="w-5 h-5 text-[#0D4E8B]" />
-                  <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
-                    المواعيد المتاحة للحصة التجريبية
-                  </h2>
-                </div>
-                <span className="text-xs text-[#535E7B] bg-[#F2F3F6] px-3 py-1 rounded-full font-medium">
-                  اختر موعداً يناسبك
-                </span>
-              </div>
-
-              {isLoadingSlots ? (
-                <div className="p-6 text-center text-xs text-[#64748B] flex items-center justify-center gap-2">
-                  <span className="w-4 h-4 border-2 border-[#0D4E8B]/30 border-t-[#0D4E8B] rounded-full animate-spin"></span>
-                  <span>جاري التحقق من المواعيد المتاحة...</span>
-                </div>
-              ) : availableSlots.length > 0 ? (
-                <div className="space-y-3">
-                  <p className="text-xs text-[#535E7B]">
-                    اضغط على الموعد الأنسب لطفلك قبل إرسال الطلب:
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {availableSlots.map((slot) => {
-                      const isSelected = selectedSlotId === slot.id;
-                      const dayName = formatSlotDay(slot.slotDate);
-                      const fullDate = formatSlotDate(slot.slotDate);
-                      const timeRange = formatSlotTime(slot.startTime, slot.endTime);
-                      const tz = formatTimezone(slot.timezone);
-
-                      return (
-                        <button
-                          key={slot.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedSlotId(slot.id);
-                            trackTrialSlotSelected(tutor.id, slot.id);
-                          }}
-                          className={`p-3.5 rounded-2xl border text-right transition-all flex items-start justify-between gap-3 cursor-pointer ${
-                            isSelected
-                              ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
-                              : 'bg-[#F8FAFD] text-[#1F2A44] border-[#CBD5E1]/70 hover:border-[#0D4E8B]/40 hover:bg-white'
-                          }`}
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-['Cairo'] font-bold text-sm">
-                                {dayName}
-                              </span>
-                              <span className={`text-xs ${isSelected ? 'text-white/80' : 'text-[#64748B]'}`}>
-                                {fullDate}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 text-xs">
-                              <span className={`font-semibold ${isSelected ? 'text-white' : 'text-[#0D4E8B]'}`}>
-                                {timeRange}
-                              </span>
-                              <span className={`text-[11px] px-2 py-0.5 rounded-md ${
-                                isSelected ? 'bg-white/20 text-white' : 'bg-slate-200/70 text-slate-700'
-                              }`}>
-                                {tz}
-                              </span>
-                            </div>
-                          </div>
-                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
-                            isSelected
-                              ? 'border-white bg-white text-[#0D4E8B]'
-                              : 'border-[#CBD5E1] bg-white'
-                          }`}>
-                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200/80 text-amber-900 text-xs space-y-1">
-                    <div className="font-bold flex items-center gap-1.5 text-amber-800">
-                      <Info className="w-4 h-4 text-amber-700 shrink-0" />
-                      <span>يُؤكَّد الموعد بعد مراجعة طلبك:</span>
-                    </div>
-                    <p className="leading-relaxed text-[11px] sm:text-xs text-amber-900/90">
-                      إرسال الطلب عبر واتساب لا يؤكد الحجز تلقائيًا؛ بل يبدأ التنسيق المباشر مع إدارة شاطر لمراجعة الموعد وتأكيده يدويًا بموافقتكم التامة.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                /* Fallback when no slots published currently */
-                <div className="p-5 rounded-2xl bg-[#F8FAFD] border border-[#CBD5E1]/80 text-center space-y-3">
-                  <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 text-slate-500 mx-auto flex items-center justify-center">
-                    <CalendarX className="w-5 h-5" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-                      لا توجد مواعيد منشورة حاليًا
-                    </h3>
-                    <p className="text-xs text-[#64748B] max-w-md mx-auto leading-relaxed">
-                      يتم تحديث المواعيد دورياً عبر إدارة شاطر. يمكنك التواصل معنا وسننسّق لك موعداً مناسباً مع المعلم.
-                    </p>
-                  </div>
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={handleStartBooking}
-                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm transition-all inline-flex items-center gap-2 cursor-pointer"
-                    >
-                      <MessageCircle className="w-4 h-4" />
-                      <span>تواصل للاستفسار عن المواعيد المتاحة عبر واتساب</span>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-[#64748B] pt-0.5">
-                    يُؤكَّد الموعد بعد مراجعة طلبك والتنسيق المباشر معك دون أي التزام مالي.
-                  </p>
-                </div>
-              )}
+            {/* Section: التقويم التفاعلي لمواعيد الحصة التجريبية */}
+            <div className="bg-white rounded-3xl p-5 sm:p-7 border border-[#E2E8F0] shadow-sm">
+              <TutorTrialCalendar
+                tutor={tutor}
+                availableSlots={availableSlots}
+                isLoadingSlots={isLoadingSlots}
+                selectedSlot={selectedSlotData}
+                onSelectSlot={handleSelectCalendarSlot}
+              />
             </div>
 
             {/* Section: تفاصيل التسعير والمتابعة بعد الحصة المجانية */}

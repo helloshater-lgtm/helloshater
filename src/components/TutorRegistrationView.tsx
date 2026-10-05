@@ -658,10 +658,6 @@ export const TutorRegistrationView: React.FC = () => {
     lines.push(`  (سعر مقترح خاضع للمراجعة والتوافق — الحصة التجريبية مجانية مدتها ٢٠ دقيقة)`);
     lines.push(`• أيام التفرغ: ${formData.availableDays.join('، ') || 'مرن'}`);
     lines.push(`• الفترات المفضلة: ${formData.preferredTimes.join('، ') || 'مرن'}`);
-    lines.push(`• المنطقة الزمنية: ${formData.timezone}`);
-    if (formData.interviewAvailability?.trim()) {
-      lines.push(`• الأوقات الأنسب للمقابلة: ${formData.interviewAvailability.trim()}`);
-    }
 
     lines.push(``);
     lines.push(`⚖️ *٥. الإقرار والسياسة:*`);
@@ -1444,38 +1440,6 @@ export const TutorRegistrationView: React.FC = () => {
               )}
             </div>
 
-            {/* Timezone & Interview availability */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] block">المنطقة الزمنية:</label>
-                <select
-                  value={formData.timezone}
-                  onChange={(e) => handleInputChange('timezone', e.target.value)}
-                  className="w-full h-11 px-3 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] text-xs font-bold text-[#1F2A44] focus:outline-none focus:ring-2 focus:ring-[#0D4E8B]"
-                >
-                  {TIMEZONE_OPTIONS.map((tz) => (
-                    <option key={tz} value={tz}>
-                      {tz}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
-                  <span>الأوقات المناسبة للمقابلة التعريفية:</span>
-                  <span className="text-[11px] text-[#64748B] font-normal">(اختياري)</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.interviewAvailability}
-                  onChange={(e) => handleInputChange('interviewAvailability', e.target.value)}
-                  placeholder="مثال: أيام الأحد والثلاثاء بعد ٦ مساءً"
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] focus:bg-white transition-all"
-                />
-              </div>
-            </div>
-
             <p className="text-[11px] text-[#64748B] leading-relaxed pt-1">
               * هذه بيانات تفرغ أولية للتقييم والتنسيق، وليست مواعيد منشورة أو حجوزات نهائية في الجدول.
             </p>
@@ -1601,7 +1565,6 @@ export const TutorRegistrationView: React.FC = () => {
                 <li>• <strong>السعر المقترح:</strong> {formData.suggestedHourlyRate} {formData.currency} / {formData.sessionDurationMinutes} دقيقة</li>
                 <li>• <strong>الحصة التجريبية:</strong> مجانية تماماً (٢٠ دقيقة)</li>
                 <li>• <strong>أيام التفرغ:</strong> {formData.availableDays.join('، ')}</li>
-                <li>• <strong>المنطقة الزمنية:</strong> {formData.timezone}</li>
               </ul>
             </div>
 
