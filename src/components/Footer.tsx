@@ -4,7 +4,7 @@ import { trackWhatsAppClicked } from '../services/analytics';
 import { MessageCircle } from 'lucide-react';
 
 interface FooterProps {
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor') => void;
+  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin') => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
@@ -98,6 +98,13 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         {/* Bottom Bar: Copyright with auto-updating year */}
         <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#C2C6D1]">
           <span>© {new Date().getFullYear()} شاطر (Shatir Classes). جميع الحقوق محفوظة.</span>
+          <button
+            type="button"
+            onClick={() => onNavigate('admin')}
+            className="text-slate-400 hover:text-white transition-colors cursor-pointer text-[11px]"
+          >
+            لوحة الإدارة
+          </button>
         </div>
       </div>
     </footer>

@@ -103,6 +103,7 @@ export interface Tutor {
   rating: number;
   reviewsCount: number;
   totalStudentsTaught: number;
+  isPublished?: boolean;
   videoPreview?: {
     available: boolean;
     title: string;
@@ -196,6 +197,115 @@ export interface TutorAvailableSlot {
   endTime: string;
   timezone: string;
   isAvailable: boolean;
+  isBooked?: boolean;
+  bookedAt?: string | null;
+  notes?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
+
+export interface AdminUser {
+  userId: string;
+  email: string;
+  role: 'super_admin' | 'admin';
+  isActive: boolean;
+  createdAt?: string;
+}
+
+export interface TutorPrivateInfo {
+  tutorId: string;
+  fullLegalName?: string | null;
+  nationalIdNumber?: string | null;
+  countryCode: string;
+  phoneNumber: string;
+  whatsappNumber?: string | null;
+  email?: string | null;
+  payoutMethod?: string | null;
+  payoutDetails?: string | null;
+  internalNotes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SchoolCourseOptionDetail {
+  id: string; // UUID of school_course_options
+  gradeId: string;
+  gradeName: string;
+  stageId: string;
+  stageName: string;
+  subjectId: string;
+  subjectName: string;
+  curriculumId: string;
+  curriculumName: string;
+  isActive: boolean;
+}
+
+export interface AdminTutorFullDetail {
+  tutor: Tutor;
+  privateInfo?: TutorPrivateInfo | null;
+  qualifications: TutorQualification[];
+  methodologyPillars: MethodologyPillar[];
+  trialSteps: TrialStep[];
+  schoolOfferingOptionIds: string[]; // course_option_id UUIDs
+  quranOfferings: Array<{ ageGroupId: string; levelId: string }>;
+  slots: TutorAvailableSlot[];
+}
+
+export interface AdminTutorSavePayload {
+  // Basics
+  id: string;
+  isNew?: boolean;
+  name: string;
+  honorific: string;
+  headline: string;
+  avatarUrl: string;
+  yearsOfExperience: number;
+  experienceBadgeText: string;
+  verifiedCredentials: boolean;
+  helpChildQuote: string;
+  helpChildSummary: string;
+  targetStudentCases: string[];
+  curriculumTags: string[];
+  isPublished: boolean;
+  // Rates & duration (displayed as session rate in UI)
+  hourlyRateMin: number;
+  hourlyRateMax: number;
+  currency: string;
+  sessionDurationMinutes: number;
+  trialDurationMinutes: number;
+  // Sub-entities
+  qualifications: Array<{
+    id?: string;
+    title: string;
+    institution: string;
+    verified: boolean;
+    notes?: string;
+    displayOrder?: number;
+  }>;
+  methodologyPillars: Array<{
+    id?: string;
+    title: string;
+    description: string;
+    iconName?: string;
+    displayOrder?: number;
+  }>;
+  trialSteps: Array<{
+    id?: string;
+    stepNumber: number;
+    title: string;
+    description: string;
+  }>;
+  schoolOfferingOptionIds: string[]; // array of course_option_id UUIDs
+  quranOfferings?: Array<{ ageGroupId: string; levelId: string }>;
+  privateInfo?: {
+    fullLegalName?: string;
+    nationalIdNumber?: string;
+    countryCode: string;
+    phoneNumber: string;
+    whatsappNumber?: string;
+    email?: string;
+    internalNotes?: string;
+  };
+}
+
+

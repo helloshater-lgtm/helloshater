@@ -21,6 +21,7 @@ import { WhatsAppFloatingButton } from './components/WhatsAppFloatingButton';
 import { HomeView } from './components/HomeView';
 import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
+import { AdminDashboardView } from './components/admin/AdminDashboardView';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import {
   trackPageView,
@@ -28,7 +29,7 @@ import {
   resetTutorProfileTracking,
 } from './services/analytics';
 
-type AppView = 'home' | 'tutor-profile' | 'join-as-tutor';
+type AppView = 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
@@ -74,6 +75,8 @@ export default function App() {
         setCurrentView('tutor-profile');
       } else if (hash === '#join-as-tutor') {
         setCurrentView('join-as-tutor');
+      } else if (hash.startsWith('#admin')) {
+        setCurrentView('admin');
       } else {
         setCurrentView('home');
         if (savedScrollPosition > 0) {
@@ -97,13 +100,16 @@ export default function App() {
     } else if (currentView === 'join-as-tutor') {
       trackPageView('/#join-as-tutor', 'انضم كمعلم | شاطر كلاسيز');
       resetTutorProfileTracking();
+    } else if (currentView === 'admin') {
+      trackPageView('/#admin', 'لوحة إدارة شاطر كلاسيز');
+      resetTutorProfileTracking();
     } else if (currentView === 'tutor-profile' && selectedTutorId) {
       trackPageView(`/#tutor/${selectedTutorId}`, 'ملف المعلم | شاطر كلاسيز');
       trackTutorProfileOpened(selectedTutorId);
     }
   }, [currentView, selectedTutorId]);
 
-  // Requirement 9: Fetch tutor from Supabase. If old mock tutor or unpublished, show "ملف المعلم غير متاح"
+  // Fetch tutor from Supabase. If old mock tutor or unpublished, show "ملف المعلم غير متاح"
   useEffect(() => {
     if (selectedTutorId) {
       setIsTutorLoading(true);
@@ -112,7 +118,6 @@ export default function App() {
         .then((tutor) => {
           if (tutor) {
             setCurrentTutor(tutor);
-            setTutorNotFound(false);
           } else {
             setCurrentTutor(null);
             setTutorNotFound(true);
@@ -125,10 +130,14 @@ export default function App() {
         .finally(() => {
           setIsTutorLoading(false);
         });
+    } else {
+      setCurrentTutor(null);
+      setIsTutorLoading(false);
+      setTutorNotFound(false);
     }
   }, [selectedTutorId]);
 
-  // Navigate to Tutor Profile
+  // Handle Tutor Card Click from Search Results
   const handleSelectTutor = (tutorId: string) => {
     setSavedScrollPosition(window.scrollY);
     setSelectedTutorId(tutorId);
@@ -137,19 +146,21 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Back from profile to search results
+  // Back button in Tutor Profile View returns to preserved search state
   const handleBackToResults = () => {
-    setCurrentView('home');
-    window.location.hash = '';
     setSelectedTutorId(null);
     setCurrentTutor(null);
-    setTutorNotFound(false);
+    setCurrentView('home');
+    window.location.hash = '';
 
     setTimeout(() => {
-      if (savedCriteria && savedScrollPosition > 0) {
+      if (savedScrollPosition > 0) {
         window.scrollTo({ top: savedScrollPosition, behavior: 'smooth' });
       } else {
-        document.getElementById('tutor-selector-section')?.scrollIntoView({ behavior: 'smooth' });
+        const resultsEl = document.getElementById('results-section');
+        if (resultsEl) {
+          resultsEl.scrollIntoView({ behavior: 'smooth' });
+        }
       }
     }, 50);
   };
@@ -161,6 +172,9 @@ export default function App() {
       window.location.hash = '';
     } else if (view === 'join-as-tutor') {
       window.location.hash = '#join-as-tutor';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (view === 'admin') {
+      window.location.hash = '#admin';
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -250,6 +264,10 @@ export default function App() {
         )}
 
         {currentView === 'join-as-tutor' && <TutorRegistrationView />}
+
+        {currentView === 'admin' && (
+          <AdminDashboardView onNavigateHome={() => handleNavigate('home')} />
+        )}
       </main>
 
       {/* Global Footer */}

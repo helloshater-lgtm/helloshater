@@ -4,8 +4,8 @@ import { trackWhatsAppClicked } from '../services/analytics';
 import { Menu, X, MessageCircle } from 'lucide-react';
 
 interface HeaderProps {
-  currentView: 'home' | 'tutor-profile' | 'join-as-tutor';
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor') => void;
+  currentView: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin';
+  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin') => void;
   onScrollToSelector?: () => void;
 }
 

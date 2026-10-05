@@ -43,8 +43,9 @@ export const getSupabaseClient = (): SupabaseClient => {
     key || 'placeholder-anon-key',
     {
       auth: {
-        persistSession: false,
-        autoRefreshToken: false,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
       },
     }
   );
