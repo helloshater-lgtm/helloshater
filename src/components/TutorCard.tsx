@@ -50,8 +50,14 @@ export const TutorCard: React.FC<TutorCardProps> = ({ tutor, onSelect }) => {
               {/* Rating */}
               <div className="flex items-center gap-1 text-xs font-bold text-[#1F2A44] bg-[#FFF8E7] px-2 py-0.5 rounded-full border border-[#FFE7A3]">
                 <Star className="w-3.5 h-3.5 text-[#FFC629] fill-[#FFC629]" />
-                <span>{tutor.rating.toFixed(1)}</span>
-                <span className="text-[#64748B] font-normal">({tutor.reviewsCount})</span>
+                {tutor.rating !== null && tutor.rating !== undefined ? (
+                  <>
+                    <span>{Number(tutor.rating).toFixed(1)}</span>
+                    <span className="text-[#64748B] font-normal">({tutor.reviewsCount})</span>
+                  </>
+                ) : (
+                  <span className="text-[#64748B] font-normal">جديد</span>
+                )}
               </div>
             </div>
 

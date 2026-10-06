@@ -457,7 +457,7 @@ export const SupabaseDataService = {
       currency: row.currency || 'ج.م',
       sessionDurationMinutes: row.session_duration_minutes || 50,
       trialDurationMinutes: row.trial_duration_minutes || 20,
-      rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : 5.0,
+      rating: row.rating !== null && row.rating !== undefined ? Number(row.rating) : null,
       reviewsCount: row.reviews_count || 0,
       totalStudentsTaught: row.total_students_taught || 0,
       videoPreview: row.video_available

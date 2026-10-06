@@ -100,7 +100,7 @@ export interface Tutor {
   currency: string;
   sessionDurationMinutes: number;
   trialDurationMinutes: number;
-  rating: number;
+  rating: number | null;
   reviewsCount: number;
   totalStudentsTaught: number;
   isPublished?: boolean;
@@ -154,9 +154,11 @@ export interface TutorApplicationFormData {
   track: TrackType;
   // School Track Specializations
   schoolSpecializations: SchoolSpecializationItem[];
+  schoolCourseOptionIds?: string[];
   // Quran & Foundation Track
   quranAgeGroups: string[];
   quranLevels: string[];
+  quranOfferings?: Array<{ ageGroupId: string; levelId: string }>;
   quranNotes?: string;
   // Legacy arrays kept for compatibility
   subjects: string[];
@@ -164,6 +166,7 @@ export interface TutorApplicationFormData {
   curricula: CurriculumType[];
   // Qualifications & Experience
   academicDegree: string;
+  institution?: string;
   experienceYears: string;
   hasOnlineExperience: 'yes' | 'no' | '';
   onlineExperienceDetails: string;
@@ -180,13 +183,37 @@ export interface TutorApplicationFormData {
   // Policy Agreement
   termsAccepted: boolean;
   termsPolicyVersion?: string;
+  policyAcceptedAt?: string;
 }
+
+export type TutorApplicationStatus =
+  | 'draft'
+  | 'submitted'
+  | 'needs_info'
+  | 'approved'
+  | 'rejected'
+  | 'pending_review'
+  | 'interview_scheduled';
 
 export interface TutorApplicationRecord extends TutorApplicationFormData {
   id: string;
+  userId?: string;
   referenceCode: string;
+  whatsappNumber?: string;
+  email?: string;
+  institution?: string;
+  schoolCourseOptionIds?: string[];
+  quranOfferings?: Array<{ ageGroupId: string; levelId: string }>;
+  suggestedHourlyRateNum?: number;
+  policyVersion?: string;
+  policyAcceptedAt?: string;
+  status: TutorApplicationStatus;
+  adminNotes?: string | null;
+  reviewedAt?: string | null;
+  reviewedBy?: string | null;
+  applicantTutorId?: string | null;
   createdAt: string;
-  status: 'pending_review' | 'interview_scheduled' | 'approved' | 'rejected';
+  updatedAt?: string;
 }
 
 export interface TutorAvailableSlot {

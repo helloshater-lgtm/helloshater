@@ -5,6 +5,8 @@ import { AdminService, AdminTutorListItem } from '../../services/adminService';
 import { AdminLoginView } from './AdminLoginView';
 import { AdminTutorsListView } from './AdminTutorsListView';
 import { AdminTutorEditorView } from './AdminTutorEditorView';
+import { AdminApplicationsListView } from './AdminApplicationsListView';
+import { AdminApplicationDetailView } from './AdminApplicationDetailView';
 import { TutorProfileView } from '../TutorProfileView';
 import {
   ShieldCheck,
@@ -14,6 +16,8 @@ import {
   AlertCircle,
   Eye,
   ArrowRight,
+  Users,
+  FileCheck2,
 } from 'lucide-react';
 
 interface AdminDashboardViewProps {
@@ -24,9 +28,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Dashboard Sub-Views: 'list' | 'edit' | 'new' | 'preview'
-  const [currentMode, setCurrentMode] = useState<'list' | 'edit' | 'new' | 'preview'>('list');
+  // Top Nav Tab: 'tutors' | 'applications'
+  const [activeTab, setActiveTab] = useState<'tutors' | 'applications'>('tutors');
+  const [pendingApplicationsCount, setPendingApplicationsCount] = useState<number>(0);
+
+  // Sub-Views: 'list' | 'edit' | 'new' | 'preview' | 'app-detail'
+  const [currentMode, setCurrentMode] = useState<'list' | 'edit' | 'new' | 'preview' | 'app-detail'>('list');
   const [selectedTutorId, setSelectedTutorId] = useState<string | null>(null);
+  const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
 
   // Data states
   const [tutorsList, setTutorsList] = useState<AdminTutorListItem[]>([]);
@@ -227,6 +236,46 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
         </div>
       </header>
 
+      {/* Main Section Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-[#E2E8F0] pb-2">
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('tutors');
+            setCurrentMode('list');
+          }}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'tutors'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>إدارة المعلمين ({tutorsList.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('applications');
+            setCurrentMode('list');
+          }}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'applications'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
+          }`}
+        >
+          <FileCheck2 className="w-4 h-4" />
+          <span>طلبات الانضمام</span>
+          {pendingApplicationsCount > 0 && (
+            <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+              {pendingApplicationsCount}
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Global Error Banner */}
       {globalError && (
         <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5">
@@ -244,6 +293,28 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
           <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
           <p className="text-xs sm:text-sm text-[#64748B] font-medium">جاري تحميل بيانات المعلم بالكامل...</p>
         </div>
+      ) : activeTab === 'applications' ? (
+        currentMode === 'app-detail' && selectedApplicationId ? (
+          <AdminApplicationDetailView
+            applicationId={selectedApplicationId}
+            onBack={() => {
+              setCurrentMode('list');
+              setSelectedApplicationId(null);
+            }}
+            onNavigateToTutorEdit={(tutorId) => {
+              setActiveTab('tutors');
+              handleEditTutor(tutorId);
+            }}
+          />
+        ) : (
+          <AdminApplicationsListView
+            onSelectApplication={(appId) => {
+              setSelectedApplicationId(appId);
+              setCurrentMode('app-detail');
+            }}
+            onUpdatePendingCount={(count) => setPendingApplicationsCount(count)}
+          />
+        )
       ) : currentMode === 'list' ? (
         <AdminTutorsListView
           tutors={tutorsList}

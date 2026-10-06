@@ -9,6 +9,7 @@ import {
   SchoolCourseOptionDetail,
   AdminTutorFullDetail,
   AdminTutorSavePayload,
+  TutorApplicationRecord,
 } from '../types';
 
 export interface AdminTutorListItem {
@@ -519,5 +520,288 @@ export const AdminService = {
     if (error) {
       throw new Error(`تعذر حذف الموعد: ${error.message}`);
     }
+  },
+
+  /**
+   * 11. Applications: Get all tutor applications with filters and search
+   */
+  async getApplications(statusFilter?: string, searchQuery?: string): Promise<TutorApplicationRecord[]> {
+    let query = supabase
+      .from('tutor_applications')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (statusFilter && statusFilter !== 'all') {
+      if (statusFilter === 'submitted') {
+        query = query.in('status', ['submitted', 'pending_review', 'interview_scheduled']);
+      } else {
+        query = query.eq('status', statusFilter);
+      }
+    }
+
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.trim();
+      query = query.or(`full_name.ilike.%${q}%,phone.ilike.%${q}%,reference_code.ilike.%${q}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`فشل جلب طلبات الانضمام: ${error.message}`);
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      referenceCode: row.reference_code,
+      fullName: row.full_name || '',
+      countryCode: row.country_code || '+20',
+      phone: row.phone || '',
+      whatsappNumber: row.whatsapp_number || row.phone || '',
+      email: row.email || '',
+      track: row.track || 'school',
+      schoolSpecializations: row.school_specializations || [],
+      schoolCourseOptionIds: row.school_course_option_ids || [],
+      quranAgeGroups: row.quran_age_groups || [],
+      quranLevels: row.quran_levels || [],
+      quranOfferings: row.quran_offerings || [],
+      quranNotes: row.quran_notes || '',
+      subjects: row.subjects || [],
+      stages: row.stages || [],
+      curricula: row.curricula || [],
+      academicDegree: row.academic_degree || '',
+      institution: row.institution || '',
+      experienceYears: row.experience_years || '',
+      hasOnlineExperience: row.has_online_experience || '',
+      onlineExperienceDetails: row.online_experience_details || '',
+      bioAndMethodology: row.bio_and_methodology || '',
+      portfolioUrl: row.portfolio_url || '',
+      suggestedHourlyRate: String(row.suggested_hourly_rate || 120),
+      suggestedHourlyRateNum: row.suggested_hourly_rate || 120,
+      currency: row.currency || 'ج.م',
+      sessionDurationMinutes: row.session_duration_minutes || 50,
+      availableDays: row.available_days || [],
+      preferredTimes: row.preferred_times || [],
+      timezone: row.timezone || 'Africa/Cairo',
+      interviewAvailability: '',
+      termsAccepted: Boolean(row.terms_accepted),
+      termsPolicyVersion: row.policy_version || 'v1.0',
+      policyVersion: row.policy_version || 'v1.0',
+      policyAcceptedAt: row.policy_accepted_at || row.created_at,
+      status: row.status,
+      adminNotes: row.admin_notes || null,
+      reviewedAt: row.reviewed_at || null,
+      reviewedBy: row.reviewed_by || null,
+      applicantTutorId: row.applicant_tutor_id || null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  },
+
+  /**
+   * 12. Applications: Get single application by ID
+   */
+  async getApplicationById(id: string): Promise<TutorApplicationRecord | null> {
+    const { data, error } = await supabase
+      .from('tutor_applications')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !data) {
+      return null;
+    }
+
+    return {
+      id: data.id,
+      userId: data.user_id,
+      referenceCode: data.reference_code,
+      fullName: data.full_name || '',
+      countryCode: data.country_code || '+20',
+      phone: data.phone || '',
+      whatsappNumber: data.whatsapp_number || data.phone || '',
+      email: data.email || '',
+      track: data.track || 'school',
+      schoolSpecializations: data.school_specializations || [],
+      schoolCourseOptionIds: data.school_course_option_ids || [],
+      quranAgeGroups: data.quran_age_groups || [],
+      quranLevels: data.quran_levels || [],
+      quranOfferings: data.quran_offerings || [],
+      quranNotes: data.quran_notes || '',
+      subjects: data.subjects || [],
+      stages: data.stages || [],
+      curricula: data.curricula || [],
+      academicDegree: data.academic_degree || '',
+      institution: data.institution || '',
+      experienceYears: data.experience_years || '',
+      hasOnlineExperience: data.has_online_experience || '',
+      onlineExperienceDetails: data.online_experience_details || '',
+      bioAndMethodology: data.bio_and_methodology || '',
+      portfolioUrl: data.portfolio_url || '',
+      suggestedHourlyRate: String(data.suggested_hourly_rate || 120),
+      suggestedHourlyRateNum: data.suggested_hourly_rate || 120,
+      currency: data.currency || 'ج.م',
+      sessionDurationMinutes: data.session_duration_minutes || 50,
+      availableDays: data.available_days || [],
+      preferredTimes: data.preferred_times || [],
+      timezone: data.timezone || 'Africa/Cairo',
+      interviewAvailability: '',
+      termsAccepted: Boolean(data.terms_accepted),
+      termsPolicyVersion: data.policy_version || 'v1.0',
+      policyVersion: data.policy_version || 'v1.0',
+      policyAcceptedAt: data.policy_accepted_at || data.created_at,
+      status: data.status,
+      adminNotes: data.admin_notes || null,
+      reviewedAt: data.reviewed_at || null,
+      reviewedBy: data.reviewed_by || null,
+      applicantTutorId: data.applicant_tutor_id || null,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  },
+
+  /**
+   * 13. Applications: Review action (Needs Info or Reject)
+   */
+  async reviewApplication(
+    applicationId: string,
+    status: 'needs_info' | 'rejected',
+    adminNotes: string
+  ): Promise<void> {
+    if (!adminNotes || !adminNotes.trim()) {
+      throw new Error('يرجى تدوين الملاحظات والتوجيهات للمعلم.');
+    }
+
+    // Try RPC first
+    const { error: rpcError } = await supabase.rpc('admin_review_tutor_application', {
+      p_application_id: applicationId,
+      p_status: status,
+      p_admin_notes: adminNotes.trim(),
+    });
+
+    if (rpcError) {
+      // Fallback direct update with RLS (if RPC is not yet executed in DB)
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error: updateError } = await supabase
+        .from('tutor_applications')
+        .update({
+          status,
+          admin_notes: adminNotes.trim(),
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: user?.id || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', applicationId);
+
+      if (updateError) {
+        throw new Error(`تعذر تحديث حالة الطلب: ${updateError.message}`);
+      }
+    }
+  },
+
+  /**
+   * 14. Applications: Approve Application and Create Unpublished Tutor Profile
+   * Always creates tutor with is_published = false. Publishing is a separate explicit decision.
+   */
+  async approveApplication(
+    applicationId: string,
+    tutorSlug: string,
+    adminNotes?: string
+  ): Promise<{ tutorId: string }> {
+    const cleanSlug = tutorSlug.trim().toLowerCase();
+    if (!cleanSlug || !/^[a-z0-9-]+$/.test(cleanSlug)) {
+      throw new Error('معرف المعلم (Slug) غير صالح: يجب أن يتكون من أحرف إنجليزية وأرقام وشرطات فقط بدون مسافات (مثال: mohamed-ali).');
+    }
+
+    // 1. Try RPC atomic transaction
+    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_approve_tutor_application', {
+      p_application_id: applicationId,
+      p_tutor_slug: cleanSlug,
+      p_admin_notes: adminNotes?.trim() || null,
+    });
+
+    if (!rpcError && rpcData?.success) {
+      return { tutorId: rpcData.tutorId || cleanSlug };
+    }
+
+    // 2. Resilient fallback if RPC 005 not yet applied in Supabase:
+    // Fetch application details and use AdminService.saveTutor with isPublished: false
+    const app = await this.getApplicationById(applicationId);
+    if (!app) {
+      throw new Error('تعذر العثور على بيانات الطلب للاعتماد.');
+    }
+
+    if (app.status !== 'submitted' && app.status !== 'needs_info') {
+      throw new Error(`حالة الطلب الحالية (${app.status}) لا تسمح بالقبول.`);
+    }
+
+    // Parse experience years accurately without replacing all digits into merged number
+    const parseExpYears = (exp: string): number => {
+      if (!exp) return 1;
+      if (exp.includes('أكثر') || exp.includes('10') || exp.includes('١٠')) return 10;
+      if (exp.includes('٧') || exp.includes('7')) return 7;
+      if (exp.includes('٤') || exp.includes('4')) return 4;
+      if (exp.includes('سنتين') || exp.includes('٣') || exp.includes('3') || exp.includes('2') || exp.includes('٢')) return 2;
+      if (exp.includes('أقل')) return 1;
+      const match = exp.match(/\d+/);
+      return match ? parseInt(match[0], 10) : 1;
+    };
+
+    // Create tutor record (Unpublished, rating: null, reviewsCount: 0, no fake pillars)
+    await this.saveTutor({
+      id: cleanSlug,
+      isNew: true,
+      name: app.fullName,
+      honorific: 'أ.',
+      headline: app.academicDegree || 'معلم في منصة شاطر',
+      avatarUrl: '',
+      yearsOfExperience: parseExpYears(app.experienceYears),
+      experienceBadgeText: app.experienceYears,
+      verifiedCredentials: false, // Rule 1: No auto verified_credentials
+      helpChildQuote: app.bioAndMethodology,
+      helpChildSummary: app.bioAndMethodology,
+      targetStudentCases: [], // Rule 2: No fake student cases
+      curriculumTags: [], // Rule 2: No fake curriculum tags
+      isPublished: false, // Rule 6: Strictly unpublished upon approval
+      hourlyRateMin: app.suggestedHourlyRateNum || 120,
+      hourlyRateMax: app.suggestedHourlyRateNum || 120,
+      currency: app.currency || 'ج.م',
+      sessionDurationMinutes: app.sessionDurationMinutes || 50,
+      trialDurationMinutes: 20,
+      qualifications: app.academicDegree ? [{
+        title: app.academicDegree,
+        institution: app.institution?.trim() || '', // Rule 1: No fake "جامعة معتمدة" or "غير محدد"
+        verified: false, // Rule 1: No auto verified qualification
+        notes: 'تم تسجيله عبر طلب الانضمام ويحتاج مراجعة الشهادة',
+        displayOrder: 1,
+      }] : [],
+      methodologyPillars: [], // Rule 2: Leave empty for admin review; no fake pillars
+      trialSteps: [], // Rule 2: Leave empty for admin review; no fake trial steps
+      schoolOfferingOptionIds: app.schoolCourseOptionIds || [],
+      quranOfferings: app.quranOfferings || [],
+      privateInfo: {
+        fullLegalName: app.fullName,
+        countryCode: app.countryCode,
+        phoneNumber: app.phone,
+        whatsappNumber: app.whatsappNumber || app.phone,
+        email: app.email,
+        internalNotes: adminNotes?.trim() || undefined,
+      },
+    }, true);
+
+    // Update application record status
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase
+      .from('tutor_applications')
+      .update({
+        status: 'approved',
+        applicant_tutor_id: cleanSlug,
+        admin_notes: adminNotes?.trim() || app.adminNotes,
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: user?.id || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', applicationId);
+
+    return { tutorId: cleanSlug };
   },
 };

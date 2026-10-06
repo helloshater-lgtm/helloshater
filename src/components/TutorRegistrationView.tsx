@@ -14,6 +14,8 @@ import {
 } from '../types';
 import { DataService } from '../services/dataService';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
+import { TutorApplicationService } from '../services/tutorApplicationService';
+import { TutorAuthModal } from './tutor/TutorAuthModal';
 import {
   TutorCooperationPolicyModal,
   TUTOR_COOPERATION_POLICY_VERSION,
@@ -42,6 +44,11 @@ import {
   Square,
   BookOpen,
   Sparkles,
+  LogIn,
+  LogOut,
+  Save,
+  Send,
+  Loader2,
 } from 'lucide-react';
 
 export const COUNTRY_OPTIONS = [
@@ -307,12 +314,130 @@ export const TutorRegistrationView: React.FC = () => {
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(false);
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
 
+  // Teacher Supabase Auth & Application Database State
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signup');
+  const [dbApplication, setDbApplication] = useState<any>(null);
+  const [isSavingDb, setIsSavingDb] = useState<boolean>(false);
+  const [saveStatusMessage, setSaveStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // Live options loaded from Supabase Data Layer with fallbacks
   const [stages, setStages] = useState<Stage[]>(FALLBACK_STAGES);
   const [allGrades, setAllGrades] = useState<Grade[]>(FALLBACK_GRADES);
   const [curricula, setCurricula] = useState<CurriculumOption[]>(FALLBACK_CURRICULA);
   const [quranAgeGroups, setQuranAgeGroups] = useState<QuranAgeGroup[]>(FALLBACK_QURAN_AGES);
   const [quranLevels, setQuranLevels] = useState<QuranLevel[]>(FALLBACK_QURAN_LEVELS);
+
+  // Initialize Auth & listen to changes
+  useEffect(() => {
+    TutorApplicationService.getCurrentUser().then((user) => {
+      setCurrentUser(user);
+      if (user) {
+        loadMyApplication();
+      }
+    });
+
+    const unsubscribe = TutorApplicationService.onAuthStateChange((user) => {
+      setCurrentUser(user);
+      if (user) {
+        loadMyApplication();
+      } else {
+        setDbApplication(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const loadMyApplication = async () => {
+    try {
+      const app = await TutorApplicationService.getMyApplication();
+      if (app) {
+        setDbApplication(app);
+        // Fill form data from DB record
+        setFormData((prev) => ({
+          ...prev,
+          fullName: app.fullName || prev.fullName,
+          countryCode: app.countryCode || prev.countryCode,
+          phone: app.phone || prev.phone,
+          track: app.track || prev.track,
+          schoolSpecializations: app.schoolSpecializations?.length ? app.schoolSpecializations : prev.schoolSpecializations,
+          quranAgeGroups: app.quranAgeGroups?.length ? app.quranAgeGroups : prev.quranAgeGroups,
+          quranLevels: app.quranLevels?.length ? app.quranLevels : prev.quranLevels,
+          quranNotes: app.quranNotes || '',
+          academicDegree: app.academicDegree || prev.academicDegree,
+          experienceYears: app.experienceYears || prev.experienceYears,
+          hasOnlineExperience: app.hasOnlineExperience || prev.hasOnlineExperience,
+          onlineExperienceDetails: app.onlineExperienceDetails || prev.onlineExperienceDetails,
+          bioAndMethodology: app.bioAndMethodology || prev.bioAndMethodology,
+          portfolioUrl: app.portfolioUrl || prev.portfolioUrl,
+          suggestedHourlyRate: String(app.suggestedHourlyRate || prev.suggestedHourlyRate),
+          currency: app.currency || prev.currency,
+          sessionDurationMinutes: app.sessionDurationMinutes || prev.sessionDurationMinutes,
+          availableDays: app.availableDays?.length ? app.availableDays : prev.availableDays,
+          preferredTimes: app.preferredTimes?.length ? app.preferredTimes : prev.preferredTimes,
+          timezone: app.timezone || prev.timezone,
+          termsAccepted: Boolean(app.termsAccepted),
+          termsPolicyVersion: app.policyVersion || TUTOR_COOPERATION_POLICY_VERSION,
+        }));
+      }
+    } catch (err) {
+      console.error('Error loading my tutor application:', err);
+    }
+  };
+
+  const handleTeacherSignOut = async () => {
+    await TutorApplicationService.signOut();
+    setCurrentUser(null);
+    setDbApplication(null);
+  };
+
+  // Save draft to Supabase DB
+  const handleSaveDraftToDb = async () => {
+    if (!currentUser) {
+      setAuthModalMode('signin');
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    setIsSavingDb(true);
+    setSaveStatusMessage(null);
+    try {
+      const saved = await TutorApplicationService.saveApplication(formData, false, dbApplication?.id);
+      setDbApplication(saved);
+      setSaveStatusMessage({ type: 'success', text: 'تم حفظ مسودة طلبك بنجاح في حسابك!' });
+      setTimeout(() => setSaveStatusMessage(null), 4000);
+    } catch (err: any) {
+      setSaveStatusMessage({ type: 'error', text: err?.message || 'تعذر حفظ المسودة.' });
+    } finally {
+      setIsSavingDb(false);
+    }
+  };
+
+  // Submit final application to DB
+  const handleSubmitFinalToDb = async () => {
+    if (!validateForm()) return;
+
+    if (!currentUser) {
+      setAuthModalMode('signup');
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    setIsSavingDb(true);
+    setSaveStatusMessage(null);
+    try {
+      const submitted = await TutorApplicationService.saveApplication(formData, true, dbApplication?.id);
+      setDbApplication(submitted);
+      setShowNoticeScreen(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err: any) {
+      setSaveStatusMessage({ type: 'error', text: err?.message || 'تعذر إرسال الطلب.' });
+    } finally {
+      setIsSavingDb(false);
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -684,6 +809,158 @@ export const TutorRegistrationView: React.FC = () => {
 
   return (
     <div className="w-full max-w-4xl mx-auto py-6 sm:py-10 px-4 sm:px-6 animate-fade-in" dir="rtl">
+      {/* Teacher Account Header & Status Card */}
+      <div className="mb-6 bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#EBF3FC] text-[#0D4E8B] flex items-center justify-center shrink-0">
+            <GraduationCap className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                {currentUser ? (currentUser.user_metadata?.full_name || currentUser.email) : 'بوابة المعلمين والتقديم'}
+              </h3>
+              {currentUser && (
+                <span className="text-[11px] text-[#0D4E8B] bg-[#EBF3FC] px-2 py-0.5 rounded font-bold">
+                  حساب معلم
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-[#64748B]">
+              {currentUser
+                ? `مسجل بالبريد: ${currentUser.email}`
+                : 'أنشئ حسابك كمعلم لحفظ مسودة طلبك ومتابعة المراجعة والتعديل.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          {currentUser ? (
+            <button
+              type="button"
+              onClick={handleTeacherSignOut}
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>تسجيل الخروج</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModalMode('signin');
+                  setIsAuthModalOpen(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>تسجيل الدخول</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModalMode('signup');
+                  setIsAuthModalOpen(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>إنشاء حساب كمعلم</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Save Notification / Status Messages */}
+      {saveStatusMessage && (
+        <div
+          className={`mb-6 p-4 rounded-xl border text-xs sm:text-sm flex items-start gap-2.5 ${
+            saveStatusMessage.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}
+        >
+          {saveStatusMessage.type === 'success' ? (
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+          ) : (
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          )}
+          <span className="font-bold">{saveStatusMessage.text}</span>
+        </div>
+      )}
+
+      {/* Database Application Status Card (if exists) */}
+      {dbApplication && (
+        <div className="mb-6 p-4 sm:p-5 rounded-2xl bg-white border border-[#CBD5E1] shadow-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#F1F5F9]">
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-[#0D4E8B]" />
+              <span className="font-bold text-xs sm:text-sm text-[#1F2A44]">
+                حالة طلب الانضمام:
+              </span>
+              {dbApplication.status === 'draft' && (
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-bold">
+                  مسودة (غير مرسل بعد)
+                </span>
+              )}
+              {(dbApplication.status === 'submitted' || dbApplication.status === 'pending_review') && (
+                <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-[#0D4E8B] border border-blue-200 text-xs font-bold flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  قيد المراجعة لدى الإدارة
+                </span>
+              )}
+              {dbApplication.status === 'needs_info' && (
+                <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  مطلوب استكمال بيانات
+                </span>
+              )}
+              {dbApplication.status === 'approved' && (
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  تم قبول طلبك واعتمادك
+                </span>
+              )}
+              {dbApplication.status === 'rejected' && (
+                <span className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 text-xs font-bold">
+                  مرفوض
+                </span>
+              )}
+            </div>
+
+            <span className="text-xs font-mono text-[#64748B]">
+              كود المرجع: <strong>{dbApplication.referenceCode}</strong>
+            </span>
+          </div>
+
+          {/* Admin Feedback Box if needs_info or decision notes */}
+          {dbApplication.adminNotes && (
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>ملاحظات وتوجيهات فريق الإدارة:</span>
+              </div>
+              <p className="leading-relaxed whitespace-pre-wrap">{dbApplication.adminNotes}</p>
+            </div>
+          )}
+
+          {dbApplication.status === 'submitted' && (
+            <p className="text-xs text-[#64748B] leading-relaxed">
+              طلبك مسجل ومُرسل للإدارة للمراجعة وتدقيق المؤهلات. لا يمكنك تعديل البيانات حالياً إلا إذا طلبت الإدارة استكمال بيانات.
+            </p>
+          )}
+
+          {dbApplication.status === 'approved' && (
+            <p className="text-xs text-emerald-800 leading-relaxed font-bold">
+              تهانينا! تم اعتماد ملفك التدريسي في منصة شاطر. يمكنك التواصل مع الإدارة لضبط جدول حصصك.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Page Header */}
       <div className="text-center space-y-2.5 mb-8">
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EBF3FC] text-[#0D4E8B] text-xs font-bold border border-[#D1DCFE]">
@@ -1509,13 +1786,38 @@ export const TutorRegistrationView: React.FC = () => {
 
             {/* Action Buttons */}
             <div className="pt-2 flex flex-col items-center gap-3">
-              <button
-                type="submit"
-                className="w-full sm:w-auto px-10 py-3.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-sm shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
-              >
-                <span>مراجعة بيانات الطلب والمتابعة</span>
-                <ArrowLeft className="w-4 h-4" />
-              </button>
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                {/* Save Draft Button */}
+                <button
+                  type="button"
+                  onClick={handleSaveDraftToDb}
+                  disabled={isSavingDb}
+                  className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] font-['Cairo'] font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingDb ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-[#0D4E8B]" />
+                  ) : (
+                    <Save className="w-4 h-4 text-[#0D4E8B]" />
+                  )}
+                  <span>حفظ كمسودة في حسابي</span>
+                </button>
+
+                {/* Submit Final Button */}
+                <button
+                  type="button"
+                  onClick={handleSubmitFinalToDb}
+                  disabled={isSavingDb}
+                  className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] disabled:opacity-50"
+                >
+                  {isSavingDb ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  ) : (
+                    <Send className="w-4 h-4 text-white" />
+                  )}
+                  <span>إرسال الطلب للمراجعة والاعتماد</span>
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              </div>
 
               <span className="text-center text-[#64748B] text-xs">
                 لا نطلب أي رسوم تقديم أو بيانات دفع في هذه المرحلة التمهيدية.
@@ -1725,6 +2027,17 @@ export const TutorRegistrationView: React.FC = () => {
         onClose={() => setIsPolicyModalOpen(false)}
         onAccept={() => handleInputChange('termsAccepted', true)}
         isAccepted={formData.termsAccepted}
+      />
+
+      {/* Tutor Auth Modal (Sign Up / Sign In / Password Reset) */}
+      <TutorAuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        initialMode={authModalMode}
+        onSuccess={(user) => {
+          setCurrentUser(user);
+          loadMyApplication();
+        }}
       />
     </div>
   );
