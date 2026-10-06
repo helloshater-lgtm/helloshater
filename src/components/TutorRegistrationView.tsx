@@ -34,6 +34,7 @@ import {
   Plus,
   Trash2,
   CheckCircle2,
+  XCircle,
   Copy,
   Check,
   GraduationCap,
@@ -381,6 +382,16 @@ export const TutorRegistrationView: React.FC = () => {
           termsAccepted: Boolean(app.termsAccepted),
           termsPolicyVersion: app.policyVersion || TUTOR_COOPERATION_POLICY_VERSION,
         }));
+
+        // إذا كان الطلب مُرسلاً أو معتمداً أو مرفوضاً، اعرض شاشة الملخص للقراءة فقط افتراضياً
+        if (
+          app.status === 'submitted' ||
+          app.status === 'pending_review' ||
+          app.status === 'approved' ||
+          app.status === 'rejected'
+        ) {
+          setShowNoticeScreen(true);
+        }
       }
     } catch (err) {
       console.error('Error loading my tutor application:', err);
@@ -709,16 +720,48 @@ export const TutorRegistrationView: React.FC = () => {
 
   // WhatsApp Message Generator
   const buildApplicationWhatsAppMessageText = (): string => {
+    const isSubmittedOrUnderReview =
+      dbApplication &&
+      (dbApplication.status === 'submitted' ||
+        dbApplication.status === 'pending_review' ||
+        dbApplication.status === 'interview_scheduled' ||
+        dbApplication.status === 'needs_info');
+
+    if (isSubmittedOrUnderReview) {
+      const refCode = dbApplication.referenceCode ? ` (رقم المرجع: ${dbApplication.referenceCode})` : '';
+      const lines: string[] = [
+        `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
+        `أتواصل معكم بخصوص طلب الانضمام كمعلم${refCode}:`,
+        ``,
+        `• الاسم: ${formData.fullName.trim()}`,
+        `• رقم المرجع: ${dbApplication.referenceCode || 'غير محدد'}`,
+        `• حالة الطلب الحالية: ${
+          dbApplication.status === 'needs_info'
+            ? 'مطلوب استكمال بيانات'
+            : 'تم الإرسال قيد المراجعة'
+        }`,
+      ];
+
+      if (dbApplication.adminNotes) {
+        lines.push(`• ملاحظات الإدارة المستلمة: ${dbApplication.adminNotes}`);
+      }
+
+      lines.push(``);
+      lines.push(`أرجو التكرم بمتابعة الطلب وتزويدي بأي متطلبات إضافية. شكراً لكم!`);
+      return lines.join('\n');
+    }
+
     const trackTitle = formData.track === 'school' ? 'المناهج المدرسية' : 'مسار القرآن والتأسيس';
     const countryObj = COUNTRY_OPTIONS.find((c) => c.code === formData.countryCode);
     const cleanPhone = normalizePhone(formData.phone, formData.countryCode);
+    const refLine = dbApplication?.referenceCode ? `\n• رقم المرجع: ${dbApplication.referenceCode}` : '';
 
     const lines: string[] = [
       `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
       `أود التقديم للانضمام كمعلم في منصة شاطر، وإليكم بيانات طلبي الكاملة للمراجعة:`,
       ``,
       `📋 *١. البيانات الأساسية:*`,
-      `• الاسم الكامل: ${formData.fullName.trim()}`,
+      `• الاسم الكامل: ${formData.fullName.trim()}${refLine}`,
       `• الدولة ورقم الواتساب: ${countryObj ? countryObj.name : formData.countryCode} (${formData.countryCode} ${cleanPhone})`,
       ``,
       `📚 *٢. المسار التدريسي والتخصصات:*`,
@@ -955,7 +998,7 @@ export const TutorRegistrationView: React.FC = () => {
 
           {dbApplication.status === 'approved' && (
             <p className="text-xs text-emerald-800 leading-relaxed font-bold">
-              تهانينا! تم اعتماد ملفك التدريسي في منصة شاطر. يمكنك التواصل مع الإدارة لضبط جدول حصصك.
+              تهانينا! تم قبول طلبك واعتمادك كمعلم في شاطر. يرجى العلم بأن نشر الملف للجمهور يتم كإجراء إداري منفصل بعد استكمال مراجعة الإدارة وتأكيد الجداول.
             </p>
           )}
         </div>
@@ -1827,20 +1870,126 @@ export const TutorRegistrationView: React.FC = () => {
         </form>
       ) : (
         /* ========================================================================= */
-        /* شاشة مراجعة البيانات قبل فتح واتساب مع إمكانية التعديل */
+        /* شاشة ملخص الطلب حسب الحالة الحقيقية المحمّلة من Supabase */
         /* ========================================================================= */
         <div className="bg-white rounded-3xl shadow-sm border border-[#E2E8F0] p-6 sm:p-8 space-y-6 animate-fade-in text-right">
-          <div className="text-center space-y-2 pb-4 border-b border-[#E2E8F0]">
-            <div className="w-14 h-14 mx-auto rounded-full bg-[#EBF3FC] text-[#0D4E8B] flex items-center justify-center">
-              <CheckCircle2 className="w-8 h-8 text-[#0D4E8B]" />
-            </div>
-            <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
-              ملخص طلب الانضمام الجاهز للإرسال
-            </h2>
-            <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
-              راجع بياناتك بعناية قبل التوجيه إلى واتساب إدارة شاطر. يمكنك تعديل أي بيان في أي وقت.
-            </p>
+          {/* Status Header */}
+          <div className="text-center space-y-2.5 pb-5 border-b border-[#E2E8F0]">
+            {/* Status-specific icon & badge */}
+            {dbApplication?.status === 'submitted' || dbApplication?.status === 'pending_review' ? (
+              <>
+                <div className="w-14 h-14 mx-auto rounded-full bg-blue-50 text-[#0D4E8B] flex items-center justify-center">
+                  <Clock className="w-8 h-8 text-[#0D4E8B]" />
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-[#0D4E8B] text-xs font-bold border border-blue-200 mx-auto">
+                  <span>طلب مُرسل قيد مراجعة الإدارة</span>
+                </div>
+                <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
+                  تم إرسال طلبك للمراجعة
+                </h2>
+                {dbApplication.referenceCode && (
+                  <div className="inline-block px-3.5 py-1.5 rounded-xl bg-[#F8FAFD] border border-[#CBD5E1] text-xs font-mono text-[#0D4E8B] font-bold">
+                    رقم المرجع: <span className="text-base font-black tracking-wider">{dbApplication.referenceCode}</span>
+                  </div>
+                )}
+                <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
+                  تم استلام طلبك بنجاح في قاعدة بيانات شاطر وهو الآن قيد التدقيق وفحص المؤهلات من قِبل فريق الإدارة. البيانات أدناه معروضة للقراءة فقط.
+                </p>
+              </>
+            ) : dbApplication?.status === 'needs_info' ? (
+              <>
+                <div className="w-14 h-14 mx-auto rounded-full bg-amber-50 text-amber-700 flex items-center justify-center">
+                  <AlertCircle className="w-8 h-8 text-amber-600" />
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-800 text-xs font-bold border border-amber-200 mx-auto">
+                  <span>مطلوب استكمال بيانات</span>
+                </div>
+                <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-amber-800">
+                  ملاحظات من الإدارة لاستكمال طلبك
+                </h2>
+                {dbApplication.referenceCode && (
+                  <div className="inline-block px-3.5 py-1.5 rounded-xl bg-amber-50/50 border border-amber-200 text-xs font-mono text-amber-900 font-bold">
+                    رقم المرجع: <span className="text-base font-black tracking-wider">{dbApplication.referenceCode}</span>
+                  </div>
+                )}
+                <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
+                  راجعت الإدارة طلبك وطلبت توضيح أو استكمال بعض البيانات. يمكنك تعديل نموذج الطلب وإعادة إرساله للمراجعة مباشرة.
+                </p>
+              </>
+            ) : dbApplication?.status === 'approved' ? (
+              <>
+                <div className="w-14 h-14 mx-auto rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-600" />
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200 mx-auto">
+                  <span>تم اعتماد وقبول الطلب</span>
+                </div>
+                <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-emerald-800">
+                  تهانينا! تم قبول طلبك واعتمادك كمعلم في شاطر
+                </h2>
+                {dbApplication.referenceCode && (
+                  <div className="inline-block px-3.5 py-1.5 rounded-xl bg-emerald-50/50 border border-emerald-200 text-xs font-mono text-emerald-900 font-bold">
+                    رقم المرجع: <span className="text-base font-black tracking-wider">{dbApplication.referenceCode}</span>
+                  </div>
+                )}
+                <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
+                  تمت الموافقة على انضمامك. يرجى العلم بأن نشر ملف المعلم للجمهور يتم كإجراء إداري منفصل بعد استكمال مراجعة الإدارة وتأكيد الجداول.
+                </p>
+              </>
+            ) : dbApplication?.status === 'rejected' ? (
+              <>
+                <div className="w-14 h-14 mx-auto rounded-full bg-rose-50 text-rose-700 flex items-center justify-center">
+                  <AlertCircle className="w-8 h-8 text-rose-600" />
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 text-rose-800 text-xs font-bold border border-rose-200 mx-auto">
+                  <span>حالة الطلب: مرفوض</span>
+                </div>
+                <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-rose-800">
+                  حالة طلب الانضمام
+                </h2>
+                {dbApplication.referenceCode && (
+                  <div className="inline-block px-3.5 py-1.5 rounded-xl bg-rose-50/50 border border-rose-200 text-xs font-mono text-rose-900 font-bold">
+                    رقم المرجع: <span className="text-base font-black tracking-wider">{dbApplication.referenceCode}</span>
+                  </div>
+                )}
+                <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
+                  نعتذر، لم يتم قبول الطلب في هذه الدورة وفق معايير التوزيع والاختصاص الحالية. نشكر لك اهتمامك بالانضمام إلى شاطر.
+                </p>
+              </>
+            ) : (
+              /* Draft or New Application */
+              <>
+                <div className="w-14 h-14 mx-auto rounded-full bg-[#EBF3FC] text-[#0D4E8B] flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8 text-[#0D4E8B]" />
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 mx-auto">
+                  <span>مسودة طلب جاهزة للمراجعة</span>
+                </div>
+                <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
+                  ملخص مسودة طلب الانضمام
+                </h2>
+                {dbApplication?.referenceCode && (
+                  <div className="inline-block px-3.5 py-1.5 rounded-xl bg-[#F8FAFD] border border-[#CBD5E1] text-xs font-mono text-[#0D4E8B] font-bold">
+                    رقم المرجع: <span className="text-base font-black tracking-wider">{dbApplication.referenceCode}</span>
+                  </div>
+                )}
+                <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
+                  راجع بياناتك بعناية. يمكنك حفظ المسودة أو تعديل النموذج أو إرسال الطلب نهائياً لمراجعة الإدارة.
+                </p>
+              </>
+            )}
           </div>
+
+          {/* Admin Feedback Box in Summary (Highlighted if needs_info or notes exist) */}
+          {dbApplication?.adminNotes && (
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-950 space-y-1.5 shadow-xs">
+              <div className="font-bold flex items-center gap-2 text-amber-900 text-sm">
+                <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>ملاحظات وتوجيهات فريق الإدارة:</span>
+              </div>
+              <p className="leading-relaxed whitespace-pre-wrap text-slate-800 pr-6">{dbApplication.adminNotes}</p>
+            </div>
+          )}
 
           {/* Review Details Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
@@ -1933,6 +2082,7 @@ export const TutorRegistrationView: React.FC = () => {
           {/* Submission and Action Buttons */}
           <div className="pt-2 space-y-3.5">
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              {/* WhatsApp Button: Dynamic Label and Behavior */}
               <a
                 href={formData.termsAccepted ? getApplicationWhatsAppUrl() : undefined}
                 target="_blank"
@@ -1951,9 +2101,19 @@ export const TutorRegistrationView: React.FC = () => {
                 }`}
               >
                 <MessageCircle className="w-4 h-4" />
-                <span>متابعة التقديم عبر واتساب</span>
+                <span>
+                  {dbApplication &&
+                  (dbApplication.status === 'submitted' ||
+                    dbApplication.status === 'pending_review' ||
+                    dbApplication.status === 'interview_scheduled' ||
+                    dbApplication.status === 'needs_info' ||
+                    dbApplication.status === 'approved')
+                    ? 'تواصل مع الإدارة بشأن طلبك'
+                    : 'متابعة التقديم عبر واتساب'}
+                </span>
               </a>
 
+              {/* Copy Data Button */}
               <button
                 type="button"
                 onClick={handleCopyApplicationData}
@@ -1963,21 +2123,44 @@ export const TutorRegistrationView: React.FC = () => {
                 <span>{copiedMessage ? 'تم نسخ بيانات الطلب بنجاح' : 'نسخ بيانات الطلب'}</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setShowNoticeScreen(false);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-xl text-xs sm:text-sm font-bold bg-[#F2F3F6] text-[#1F2A44] hover:bg-[#E2E8F0] transition-colors cursor-pointer"
-              >
-                تعديل بيانات النموذج
-              </button>
+              {/* Edit Form Button: Only shown if status permits editing (draft, needs_info, or not submitted) */}
+              {(!dbApplication || dbApplication.status === 'draft' || dbApplication.status === 'needs_info') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNoticeScreen(false);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="w-full sm:w-auto px-6 py-3.5 rounded-xl text-xs sm:text-sm font-bold bg-[#F2F3F6] text-[#1F2A44] hover:bg-[#E2E8F0] transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>تعديل بيانات النموذج</span>
+                </button>
+              )}
             </div>
 
-            <p className="text-[11px] sm:text-xs text-[#64748B] text-center max-w-lg mx-auto leading-relaxed">
-              فتح واتساب يجهّز رسالة طلب الانضمام المسبقة إلى رقم المنصة <strong>201107889984</strong>؛ إرسال الطلب يتم عبر واتساب، ولا يُعد فتح التطبيق إرسالاً تلقائياً أو تسجيلاً للموافقة في قاعدة البيانات ما دامت نقطة الاستقبال الآلي قيد التجهيز.
-            </p>
+            {/* Explanatory Note */}
+            {dbApplication?.status === 'submitted' || dbApplication?.status === 'pending_review' ? (
+              <p className="text-[11px] sm:text-xs text-[#64748B] text-center max-w-lg mx-auto leading-relaxed">
+                طلبك محفوظ ومُرسل للإدارة برقم المرجع <strong>{dbApplication.referenceCode}</strong>. يمكنك استخدام زر واتساب أعلاه للتواصل المباشر مع فريق الإدارة ومتابعة طلبك.
+              </p>
+            ) : dbApplication?.status === 'needs_info' ? (
+              <p className="text-[11px] sm:text-xs text-amber-800 text-center max-w-lg mx-auto leading-relaxed">
+                يمكنك الضغط على «تعديل بيانات النموذج» لتعديل واستكمال البيانات المطلوبة ثم إعادة إرسالها، أو التواصل عبر واتساب برقم مرجعك <strong>{dbApplication.referenceCode}</strong>.
+              </p>
+            ) : dbApplication?.status === 'approved' ? (
+              <p className="text-[11px] sm:text-xs text-emerald-800 text-center max-w-lg mx-auto leading-relaxed">
+                تم اعتماد وقبول طلبك برقم المرجع <strong>{dbApplication.referenceCode}</strong>. تواصل مع الإدارة عبر واتساب لترتيب الخطوات التالية وجدول الحصص.
+              </p>
+            ) : dbApplication?.status === 'rejected' ? (
+              <p className="text-[11px] sm:text-xs text-rose-800 text-center max-w-lg mx-auto leading-relaxed">
+                رقم مرجع ملفك: <strong>{dbApplication.referenceCode}</strong>. يمكنك التواصل مع الإدارة للاستفسار.
+              </p>
+            ) : (
+              <p className="text-[11px] sm:text-xs text-[#64748B] text-center max-w-lg mx-auto leading-relaxed">
+                فتح واتساب يجهّز رسالة طلب الانضمام إلى رقم المنصة <strong>201107889984</strong>؛ يمكنك أيضاً حفظ مسودة في حسابك وإرسالها للمراجعة في أي وقت.
+              </p>
+            )}
           </div>
         </div>
       )}
