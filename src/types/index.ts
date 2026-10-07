@@ -338,4 +338,51 @@ export interface AdminTutorSavePayload {
   };
 }
 
+export interface TutorProfileDraft {
+  id: string;
+  tutorId: string;
+  headline: string;
+  avatarUrl?: string | null;
+  helpChildQuote?: string | null;
+  helpChildSummary?: string | null;
+  status: 'draft' | 'pending_review' | 'approved' | 'rejected' | 'needs_revision';
+  adminNotes?: string | null;
+  submittedAt?: string;
+  reviewedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TutorPortalContext {
+  tutor: {
+    id: string;
+    name: string;
+    honorific?: string;
+    headline: string;
+    avatarUrl: string;
+    helpChildQuote?: string;
+    helpChildSummary?: string;
+    isPublished: boolean;
+    yearsOfExperience: number;
+    experienceBadgeText?: string;
+    verifiedCredentials: boolean;
+    hourlyRateMin: number;
+    hourlyRateMax: number;
+    currency: string;
+    sessionDurationMinutes: number;
+    trialDurationMinutes: number;
+    rating?: number;
+    reviewsCount?: number;
+    curriculumTags?: string[];
+  };
+  pendingDraft: TutorProfileDraft | null;
+  application: {
+    id: string;
+    referenceCode: string;
+    status: string;
+    adminNotes?: string | null;
+    approvedAt?: string;
+  } | null;
+}
+
 

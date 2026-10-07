@@ -22,6 +22,7 @@ import { HomeView } from './components/HomeView';
 import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
 import { AdminDashboardView } from './components/admin/AdminDashboardView';
+import { TutorDashboardView } from './components/tutor/TutorDashboardView';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import {
   trackPageView,
@@ -29,7 +30,7 @@ import {
   resetTutorProfileTracking,
 } from './services/analytics';
 
-type AppView = 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin';
+type AppView = 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
@@ -75,6 +76,8 @@ export default function App() {
         setCurrentView('tutor-profile');
       } else if (hash === '#join-as-tutor') {
         setCurrentView('join-as-tutor');
+      } else if (hash === '#tutor-dashboard') {
+        setCurrentView('tutor-dashboard');
       } else if (hash.startsWith('#admin')) {
         setCurrentView('admin');
       } else {
@@ -99,6 +102,9 @@ export default function App() {
       resetTutorProfileTracking();
     } else if (currentView === 'join-as-tutor') {
       trackPageView('/#join-as-tutor', 'انضم كمعلم | شاطر كلاسيز');
+      resetTutorProfileTracking();
+    } else if (currentView === 'tutor-dashboard') {
+      trackPageView('/#tutor-dashboard', 'لوحة المعلم | شاطر كلاسيز');
       resetTutorProfileTracking();
     } else if (currentView === 'admin') {
       trackPageView('/#admin', 'لوحة إدارة شاطر كلاسيز');
@@ -172,6 +178,9 @@ export default function App() {
       window.location.hash = '';
     } else if (view === 'join-as-tutor') {
       window.location.hash = '#join-as-tutor';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (view === 'tutor-dashboard') {
+      window.location.hash = '#tutor-dashboard';
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (view === 'admin') {
       window.location.hash = '#admin';
@@ -263,7 +272,19 @@ export default function App() {
           </div>
         )}
 
-        {currentView === 'join-as-tutor' && <TutorRegistrationView />}
+        {currentView === 'join-as-tutor' && (
+          <TutorRegistrationView
+            onNavigateToDashboard={() => handleNavigate('tutor-dashboard')}
+            onNavigateToPublicProfile={(tutorId) => handleSelectTutor(tutorId)}
+          />
+        )}
+
+        {currentView === 'tutor-dashboard' && (
+          <TutorDashboardView
+            onNavigateHome={() => handleNavigate('home')}
+            onNavigateToPublicProfile={(tutorId) => handleSelectTutor(tutorId)}
+          />
+        )}
 
         {currentView === 'admin' && (
           <AdminDashboardView onNavigateHome={() => handleNavigate('home')} />

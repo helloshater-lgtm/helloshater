@@ -4,8 +4,8 @@ import { trackWhatsAppClicked } from '../services/analytics';
 import { Menu, X, MessageCircle } from 'lucide-react';
 
 interface HeaderProps {
-  currentView: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin';
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin') => void;
+  currentView: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard';
+  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard') => void;
   onScrollToSelector?: () => void;
 }
 
@@ -115,6 +115,21 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
             انضم كمعلم
           </button>
 
+          <button
+            type="button"
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              onNavigate('tutor-dashboard');
+            }}
+            className={`transition-colors py-1 cursor-pointer ${
+              currentView === 'tutor-dashboard'
+                ? 'text-[#0D4E8B] border-b-2 border-[#0D4E8B]'
+                : 'text-[#1F2A44] hover:text-[#0D4E8B]'
+            }`}
+          >
+            لوحة المعلم
+          </button>
+
           <a
             href={whatsappContactUrl}
             target="_blank"
@@ -162,6 +177,21 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
             }`}
           >
             انضم كمعلم
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              onNavigate('tutor-dashboard');
+            }}
+            className={`w-full text-right block px-3 py-2.5 rounded-xl text-sm font-['Cairo'] font-bold transition-colors cursor-pointer ${
+              currentView === 'tutor-dashboard'
+                ? 'bg-[#F0F6FD] text-[#0D4E8B]'
+                : 'text-[#1F2A44] hover:bg-[#F0F6FD] hover:text-[#0D4E8B]'
+            }`}
+          >
+            لوحة المعلم
           </button>
 
           <a

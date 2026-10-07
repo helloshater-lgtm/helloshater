@@ -4,7 +4,7 @@ import { trackWhatsAppClicked } from '../services/analytics';
 import { MessageCircle } from 'lucide-react';
 
 interface FooterProps {
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin') => void;
+  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard') => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {

@@ -12,6 +12,7 @@ import {
   QuranAgeGroup,
   QuranLevel,
 } from '../types';
+import { supabase } from '../lib/supabase';
 import { DataService } from '../services/dataService';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { TutorApplicationService } from '../services/tutorApplicationService';
@@ -48,6 +49,8 @@ import {
   LogIn,
   LogOut,
   Save,
+  Clock3,
+  ExternalLink,
   Send,
   Loader2,
   Camera,
@@ -311,7 +314,15 @@ const INITIAL_FORM: TutorApplicationFormData = {
 
 const DRAFT_KEY = 'shatir_tutor_app_draft_v3';
 
-export const TutorRegistrationView: React.FC = () => {
+interface TutorRegistrationViewProps {
+  onNavigateToDashboard?: () => void;
+  onNavigateToPublicProfile?: (tutorId: string) => void;
+}
+
+export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
+  onNavigateToDashboard,
+  onNavigateToPublicProfile,
+}) => {
   const [formData, setFormData] = useState<TutorApplicationFormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showNoticeScreen, setShowNoticeScreen] = useState<boolean>(false);
@@ -325,6 +336,10 @@ export const TutorRegistrationView: React.FC = () => {
   const [dbApplication, setDbApplication] = useState<any>(null);
   const [isSavingDb, setIsSavingDb] = useState<boolean>(false);
   const [saveStatusMessage, setSaveStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Tutor profile & publication state (when approved)
+  const [isTutorPublished, setIsTutorPublished] = useState<boolean | null>(null);
+  const [applicantTutorId, setApplicantTutorId] = useState<string | null>(null);
 
   // Avatar Upload State
   const [isUploadingAvatar, setIsUploadingAvatar] = useState<boolean>(false);
@@ -400,6 +415,24 @@ export const TutorRegistrationView: React.FC = () => {
           });
         }
 
+        // Check real-time tutor publication status if approved and linked to tutor record
+        if (app.applicantTutorId) {
+          setApplicantTutorId(app.applicantTutorId);
+          supabase
+            .from('tutors')
+            .select('id, is_published')
+            .eq('id', app.applicantTutorId)
+            .maybeSingle()
+            .then(
+              (res: { data: any }) => {
+                if (res.data) {
+                  setIsTutorPublished(Boolean(res.data.is_published));
+                }
+              },
+              () => {}
+            );
+        }
+
         // إذا كان الطلب مُرسلاً أو معتمداً أو مرفوضاً، اعرض شاشة الملخص للقراءة فقط افتراضياً
         if (
           app.status === 'submitted' ||
@@ -419,6 +452,8 @@ export const TutorRegistrationView: React.FC = () => {
     await TutorApplicationService.signOut();
     setCurrentUser(null);
     setDbApplication(null);
+    setIsTutorPublished(null);
+    setApplicantTutorId(null);
   };
 
   // Save draft to Supabase DB
@@ -1060,7 +1095,7 @@ export const TutorRegistrationView: React.FC = () => {
       {dbApplication && (
         <div className="mb-6 p-4 sm:p-5 rounded-2xl bg-white border border-[#CBD5E1] shadow-xs space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#F1F5F9]">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <FileText className="w-4 h-4 text-[#0D4E8B]" />
               <span className="font-bold text-xs sm:text-sm text-[#1F2A44]">
                 حالة طلب الانضمام:
@@ -1083,10 +1118,23 @@ export const TutorRegistrationView: React.FC = () => {
                 </span>
               )}
               {dbApplication.status === 'approved' && (
-                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  تم قبول طلبك واعتمادك
-                </span>
+                <>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    تم اعتماد وقبول طلبك
+                  </span>
+                  {isTutorPublished ? (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-bold flex items-center gap-1 shadow-2xs">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      الملف منشور للجمهور
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1">
+                      <Clock3 className="w-3.5 h-3.5 text-amber-600" />
+                      مسودة جاهزة قبل النشر
+                    </span>
+                  )}
+                </>
               )}
               {dbApplication.status === 'rejected' && (
                 <span className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 text-xs font-bold">
@@ -1100,15 +1148,25 @@ export const TutorRegistrationView: React.FC = () => {
             </span>
           </div>
 
-          {/* Admin Feedback Box if needs_info or decision notes */}
+          {/* Admin Feedback Box: Warning if needs_info, or Historical Archive if approved */}
           {dbApplication.adminNotes && (
-            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
-              <div className="font-bold flex items-center gap-1.5 text-amber-800">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>ملاحظات وتوجيهات فريق الإدارة:</span>
+            dbApplication.status === 'approved' ? (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-[#0D4E8B]">
+                  <Info className="w-3.5 h-3.5" />
+                  <span>سجل الملاحظات الإدارية السابقة أثناء مرحلة المراجعة (أرشيف):</span>
+                </div>
+                <p className="leading-relaxed whitespace-pre-wrap text-slate-600">{dbApplication.adminNotes}</p>
               </div>
-              <p className="leading-relaxed whitespace-pre-wrap">{dbApplication.adminNotes}</p>
-            </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>ملاحظات وتوجيهات فريق الإدارة:</span>
+                </div>
+                <p className="leading-relaxed whitespace-pre-wrap">{dbApplication.adminNotes}</p>
+              </div>
+            )
           )}
 
           {dbApplication.status === 'submitted' && (
@@ -1118,9 +1176,27 @@ export const TutorRegistrationView: React.FC = () => {
           )}
 
           {dbApplication.status === 'approved' && (
-            <p className="text-xs text-emerald-800 leading-relaxed font-bold">
-              تهانينا! تم قبول طلبك واعتمادك كمعلم في شاطر. يرجى العلم بأن نشر الملف للجمهور يتم كإجراء إداري منفصل بعد استكمال مراجعة الإدارة وتأكيد الجداول.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+              <p className="text-xs text-emerald-900 leading-relaxed font-bold">
+                {isTutorPublished
+                  ? 'ملفك منشور حالياً ومتاح لأولياء الأمور للبحث والحجز.'
+                  : 'تم اعتماد وقبول طلبك! يمكنك إدارة مواعيدك وتجهيز ملفك عبر لوحة المعلم قبل نشره للجمهور.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onNavigateToDashboard) {
+                    onNavigateToDashboard();
+                  } else {
+                    window.location.hash = '#tutor-dashboard';
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap self-start sm:self-auto"
+              >
+                <GraduationCap className="w-4 h-4" />
+                <span>لوحة المعلم</span>
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -2142,10 +2218,16 @@ export const TutorRegistrationView: React.FC = () => {
                   <CheckCircle2 className="w-8 h-8 text-emerald-600" />
                 </div>
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200 mx-auto">
-                  <span>تم اعتماد وقبول الطلب</span>
+                  {isTutorPublished ? (
+                    <span>تم اعتماد ونشر الملف للجمهور</span>
+                  ) : (
+                    <span>تم اعتماد وقبول الطلب</span>
+                  )}
                 </div>
                 <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-emerald-800">
-                  تهانينا! تم قبول طلبك واعتمادك كمعلم في شاطر
+                  {isTutorPublished
+                    ? 'تهانينا! تم نشر ملفك كمعلم في منصة شاطر'
+                    : 'تهانينا! تم قبول طلبك واعتمادك كمعلم في شاطر'}
                 </h2>
                 {dbApplication.referenceCode && (
                   <div className="inline-block px-3.5 py-1.5 rounded-xl bg-emerald-50/50 border border-emerald-200 text-xs font-mono text-emerald-900 font-bold">
@@ -2153,7 +2235,9 @@ export const TutorRegistrationView: React.FC = () => {
                   </div>
                 )}
                 <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
-                  تمت الموافقة على انضمامك. يرجى العلم بأن نشر ملف المعلم للجمهور يتم كإجراء إداري منفصل بعد استكمال مراجعة الإدارة وتأكيد الجداول.
+                  {isTutorPublished
+                    ? 'ملفك منشور حالياً ومتاح لأولياء الأمور لحجز الحصص التجريبية والتواصل. يمكنك إدارة مواعيدك واقتراح أي تعديلات عبر لوحة المعلم.'
+                    : 'تمت الموافقة على انضمامك وتوثيق حسابك. ملفك حالياً مسودة جاهزة قبل النشر، وتستطيع من خلال لوحة المعلم إضافة مواعيدك وتجهيز ملفك قبل إطلاقه للجمهور.'}
                 </p>
               </>
             ) : dbApplication?.status === 'rejected' ? (
@@ -2200,15 +2284,25 @@ export const TutorRegistrationView: React.FC = () => {
             )}
           </div>
 
-          {/* Admin Feedback Box in Summary (Highlighted if needs_info or notes exist) */}
+          {/* Admin Feedback Box in Summary: Warning if needs_info, or Historical Archive if approved */}
           {dbApplication?.adminNotes && (
-            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-950 space-y-1.5 shadow-xs">
-              <div className="font-bold flex items-center gap-2 text-amber-900 text-sm">
-                <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
-                <span>ملاحظات وتوجيهات فريق الإدارة:</span>
+            dbApplication.status === 'approved' ? (
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1.5 shadow-2xs">
+                <div className="font-bold flex items-center gap-2 text-[#0D4E8B] text-xs sm:text-sm">
+                  <Info className="w-4 h-4 text-[#0D4E8B] shrink-0" />
+                  <span>سجل الملاحظات والتوجيهات الإدارية السابقة أثناء مرحلة المراجعة (أرشيف):</span>
+                </div>
+                <p className="leading-relaxed whitespace-pre-wrap text-slate-600 pr-6">{dbApplication.adminNotes}</p>
               </div>
-              <p className="leading-relaxed whitespace-pre-wrap text-slate-800 pr-6">{dbApplication.adminNotes}</p>
-            </div>
+            ) : (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-950 space-y-1.5 shadow-xs">
+                <div className="font-bold flex items-center gap-2 text-amber-900 text-sm">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>ملاحظات وتوجيهات فريق الإدارة:</span>
+                </div>
+                <p className="leading-relaxed whitespace-pre-wrap text-slate-800 pr-6">{dbApplication.adminNotes}</p>
+              </div>
+            )
           )}
 
           {/* Review Details Cards */}
@@ -2316,7 +2410,43 @@ export const TutorRegistrationView: React.FC = () => {
 
           {/* Submission and Action Buttons */}
           <div className="pt-2 space-y-3.5">
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 flex-wrap">
+              {/* If Approved: Tutor Dashboard Button as Primary */}
+              {dbApplication?.status === 'approved' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onNavigateToDashboard) {
+                      onNavigateToDashboard();
+                    } else {
+                      window.location.hash = '#tutor-dashboard';
+                    }
+                  }}
+                  className="w-full sm:w-auto px-8 py-3.5 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm bg-[#0D4E8B] hover:bg-[#003767] text-white shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  <GraduationCap className="w-4 h-4" />
+                  <span>الانتقال إلى لوحة المعلم</span>
+                </button>
+              )}
+
+              {/* If Approved and Published: Public Profile Preview */}
+              {dbApplication?.status === 'approved' && isTutorPublished && applicantTutorId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onNavigateToPublicProfile) {
+                      onNavigateToPublicProfile(applicantTutorId);
+                    } else {
+                      window.location.hash = `#tutor/${applicantTutorId}`;
+                    }
+                  }}
+                  className="w-full sm:w-auto px-6 py-3.5 rounded-xl text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>معاينة ملفي العام</span>
+                </button>
+              )}
+
               {/* WhatsApp Button: Dynamic Label and Behavior */}
               <a
                 href={formData.termsAccepted ? getApplicationWhatsAppUrl() : undefined}
@@ -2329,7 +2459,7 @@ export const TutorRegistrationView: React.FC = () => {
                   }
                   trackTeacherApplicationWhatsAppClicked();
                 }}
-                className={`w-full sm:w-auto px-8 py-3.5 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                className={`w-full sm:w-auto px-6 py-3.5 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
                   formData.termsAccepted
                     ? 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
                     : 'bg-slate-300 text-slate-500 cursor-not-allowed pointer-events-none'
@@ -2343,7 +2473,7 @@ export const TutorRegistrationView: React.FC = () => {
                     dbApplication.status === 'interview_scheduled' ||
                     dbApplication.status === 'needs_info' ||
                     dbApplication.status === 'approved')
-                    ? 'تواصل مع الإدارة بشأن طلبك'
+                    ? 'تواصل مع الإدارة عبر واتساب'
                     : 'متابعة التقديم عبر واتساب'}
                 </span>
               </a>
@@ -2385,7 +2515,7 @@ export const TutorRegistrationView: React.FC = () => {
               </p>
             ) : dbApplication?.status === 'approved' ? (
               <p className="text-[11px] sm:text-xs text-emerald-800 text-center max-w-lg mx-auto leading-relaxed">
-                تم اعتماد وقبول طلبك برقم المرجع <strong>{dbApplication.referenceCode}</strong>. تواصل مع الإدارة عبر واتساب لترتيب الخطوات التالية وجدول الحصص.
+                تم اعتماد وقبول طلبك برقم المرجع <strong>{dbApplication.referenceCode}</strong>. يمكنك الدخول إلى <strong>«لوحة المعلم»</strong> لإضافة مواعيدك وإدارتها، كما يمكنك التواصل مع الإدارة عبر واتساب.
               </p>
             ) : dbApplication?.status === 'rejected' ? (
               <p className="text-[11px] sm:text-xs text-rose-800 text-center max-w-lg mx-auto leading-relaxed">
