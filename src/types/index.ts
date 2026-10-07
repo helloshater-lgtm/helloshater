@@ -172,6 +172,9 @@ export interface TutorApplicationFormData {
   onlineExperienceDetails: string;
   bioAndMethodology: string;
   portfolioUrl: string;
+  // Personal Photo / Avatar (Optional at application submission)
+  avatarPath?: string | null;
+  avatarUrl?: string | null;
   // Pricing & Availability
   suggestedHourlyRate: string;
   currency: string;

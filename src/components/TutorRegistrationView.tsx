@@ -50,6 +50,9 @@ import {
   Save,
   Send,
   Loader2,
+  Camera,
+  UploadCloud,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 export const COUNTRY_OPTIONS = [
@@ -323,6 +326,11 @@ export const TutorRegistrationView: React.FC = () => {
   const [isSavingDb, setIsSavingDb] = useState<boolean>(false);
   const [saveStatusMessage, setSaveStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Avatar Upload State
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState<boolean>(false);
+  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
+
   // Live options loaded from Supabase Data Layer with fallbacks
   const [stages, setStages] = useState<Stage[]>(FALLBACK_STAGES);
   const [allGrades, setAllGrades] = useState<Grade[]>(FALLBACK_GRADES);
@@ -373,6 +381,8 @@ export const TutorRegistrationView: React.FC = () => {
           onlineExperienceDetails: app.onlineExperienceDetails || prev.onlineExperienceDetails,
           bioAndMethodology: app.bioAndMethodology || prev.bioAndMethodology,
           portfolioUrl: app.portfolioUrl || prev.portfolioUrl,
+          avatarPath: app.avatarPath || prev.avatarPath,
+          avatarUrl: app.avatarUrl || null,
           suggestedHourlyRate: String(app.suggestedHourlyRate || prev.suggestedHourlyRate),
           currency: app.currency || prev.currency,
           sessionDurationMinutes: app.sessionDurationMinutes || prev.sessionDurationMinutes,
@@ -382,6 +392,13 @@ export const TutorRegistrationView: React.FC = () => {
           termsAccepted: Boolean(app.termsAccepted),
           termsPolicyVersion: app.policyVersion || TUTOR_COOPERATION_POLICY_VERSION,
         }));
+
+        // Load private signed URL for avatar if exists
+        if (app.avatarPath) {
+          TutorApplicationService.getApplicationAvatarSignedUrl(app.avatarPath).then((url) => {
+            if (url) setAvatarPreviewUrl(url);
+          });
+        }
 
         // إذا كان الطلب مُرسلاً أو معتمداً أو مرفوضاً، اعرض شاشة الملخص للقراءة فقط افتراضياً
         if (
@@ -447,6 +464,110 @@ export const TutorRegistrationView: React.FC = () => {
       setSaveStatusMessage({ type: 'error', text: err?.message || 'تعذر إرسال الطلب.' });
     } finally {
       setIsSavingDb(false);
+    }
+  };
+
+  // Upload or replace personal photo (allowed in draft and needs_info only)
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset error
+    setAvatarUploadError(null);
+
+    // Prompt user to sign in if not authenticated
+    if (!currentUser) {
+      setAuthModalMode('signup');
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    // Check status permissions
+    if (
+      dbApplication &&
+      dbApplication.status !== 'draft' &&
+      dbApplication.status !== 'needs_info'
+    ) {
+      setAvatarUploadError('لا يمكن تعديل الصورة بعد إرسال الطلب للاعتماد.');
+      return;
+    }
+
+    // Client-side validation: formats
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setAvatarUploadError('يرجى اختيار صورة بصيغة JPEG أو PNG أو WebP.');
+      return;
+    }
+
+    // Client-side validation: size <= 2MB
+    const maxSizeBytes = 2 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      setAvatarUploadError('حجم الصورة يجب ألا يتجاوز 2 ميجابايت.');
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    try {
+      const { avatarPath, signedUrl } = await TutorApplicationService.uploadApplicationAvatar(
+        file,
+        dbApplication?.status
+      );
+
+      // Update form state and preview
+      setAvatarPreviewUrl(signedUrl);
+      handleInputChange('avatarPath', avatarPath);
+
+      // Auto-save path to application if user is logged in
+      const updatedFormData = { ...formData, avatarPath };
+      const saved = await TutorApplicationService.saveApplication(
+        updatedFormData,
+        false,
+        dbApplication?.id
+      );
+      setDbApplication(saved);
+      setSaveStatusMessage({ type: 'success', text: 'تم رفع الصورة وحفظها بنجاح في طلبك!' });
+      setTimeout(() => setSaveStatusMessage(null), 3000);
+    } catch (err: any) {
+      setAvatarUploadError(err?.message || 'تعذر رفع الصورة.');
+    } finally {
+      setIsUploadingAvatar(false);
+      // Reset input element value so same file can be selected again if needed
+      e.target.value = '';
+    }
+  };
+
+  // Remove uploaded avatar
+  const handleRemoveAvatar = async () => {
+    if (!formData.avatarPath) return;
+
+    if (
+      dbApplication &&
+      dbApplication.status !== 'draft' &&
+      dbApplication.status !== 'needs_info'
+    ) {
+      setAvatarUploadError('لا يمكن حذف الصورة في حالة الطلب الحالية.');
+      return;
+    }
+
+    const oldPath = formData.avatarPath;
+    handleInputChange('avatarPath', null);
+    setAvatarPreviewUrl(null);
+    setAvatarUploadError(null);
+
+    try {
+      await TutorApplicationService.deleteApplicationAvatar(oldPath);
+      if (currentUser) {
+        const updated = { ...formData, avatarPath: null };
+        const saved = await TutorApplicationService.saveApplication(
+          updated,
+          false,
+          dbApplication?.id,
+          true // explicit removeAvatar
+        );
+        setDbApplication(saved);
+      }
+    } catch (err) {
+      console.warn('Error deleting application avatar:', err);
     }
   };
 
@@ -1100,6 +1221,105 @@ export const TutorRegistrationView: React.FC = () => {
                     <span>{errors.phone}</span>
                   </p>
                 )}
+              </div>
+
+              {/* Personal Photo / Avatar Field */}
+              <div id="form-field-avatar" className="space-y-2 sm:col-span-2 pt-3 border-t border-[#F1F5F9]">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <label className="text-xs font-bold text-[#1F2A44] flex items-center gap-1.5">
+                    <Camera className="w-4 h-4 text-[#0D4E8B]" />
+                    <span>الصورة الشخصية</span>
+                    <span className="text-[11px] font-normal text-[#64748B]">(اختيارية عند التقديم)</span>
+                  </label>
+                  <span className="text-[11px] text-[#64748B]">
+                    صيغ مدعومة: JPG، PNG، WebP — بحد أقصى 2MB
+                  </span>
+                </div>
+
+                <p className="text-xs text-[#535E7B] leading-relaxed">
+                  اختيارية عند التقديم. أضف صورة واضحة ومناسبة لملفك التعريفي. يمكنك تقديم الطلب بدونها، وسنطلب استكمالها قبل نشر ملفك لأولياء الأمور.
+                </p>
+
+                {/* Avatar Preview & Actions Container */}
+                <div className="p-4 rounded-2xl bg-[#F8FAFD] border border-[#CBD5E1] flex flex-col sm:flex-row items-center gap-4">
+                  {/* Avatar Circular Thumbnail */}
+                  <div className="relative w-20 h-20 rounded-full border-2 border-dashed border-[#CBD5E1] bg-white flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+                    {avatarPreviewUrl ? (
+                      <img
+                        src={avatarPreviewUrl}
+                        alt="الصورة الشخصية للمتقدم"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center text-slate-400 gap-1">
+                        <ImageIcon className="w-6 h-6 text-slate-400" />
+                        <span className="text-[9px] text-slate-400">لا توجد صورة</span>
+                      </div>
+                    )}
+                    {isUploadingAvatar && (
+                      <div className="absolute inset-0 bg-white/80 backdrop-blur-xs flex items-center justify-center">
+                        <Loader2 className="w-5 h-5 text-[#0D4E8B] animate-spin" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions & File Input */}
+                  <div className="flex-1 space-y-2 text-center sm:text-right">
+                    {(!dbApplication || dbApplication.status === 'draft' || dbApplication.status === 'needs_info') ? (
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                        <label className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                          isUploadingAvatar
+                            ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                            : 'bg-[#0D4E8B] hover:bg-[#003767] text-white active:scale-95'
+                        }`}>
+                          {isUploadingAvatar ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <UploadCloud className="w-3.5 h-3.5" />
+                          )}
+                          <span>{formData.avatarPath ? 'استبدال الصورة' : 'اختيار صورة ورفعها'}</span>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            onChange={handleAvatarFileChange}
+                            disabled={isUploadingAvatar}
+                            className="hidden"
+                          />
+                        </label>
+
+                        {formData.avatarPath && (
+                          <button
+                            type="button"
+                            onClick={handleRemoveAvatar}
+                            disabled={isUploadingAvatar}
+                            className="px-3.5 py-2 rounded-xl border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>حذف الصورة</span>
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-[#64748B] block">
+                        تم إرسال الطلب، والصورة مقفلة للقراءة فقط لحين مراجعة الإدارة.
+                      </span>
+                    )}
+
+                    {avatarUploadError && (
+                      <p className="text-xs text-rose-600 font-bold flex items-center gap-1 pt-1 justify-center sm:justify-start">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{avatarUploadError}</span>
+                      </p>
+                    )}
+
+                    {formData.avatarPath && !avatarUploadError && (
+                      <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>تم حفظ الصورة الشخصية في ملف طلبك بنجاح.</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1995,14 +2215,29 @@ export const TutorRegistrationView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             {/* Card 1: Personal & Contact */}
             <div className="p-4 rounded-2xl bg-[#F8FAFD] border border-[#E2E8F0] space-y-2">
-              <h4 className="font-['Cairo'] font-bold text-[#0D4E8B] pb-1 border-b border-[#E2E8F0] flex items-center gap-1.5">
-                <Users className="w-4 h-4" />
-                <span>البيانات الأساسية</span>
+              <h4 className="font-['Cairo'] font-bold text-[#0D4E8B] pb-1 border-b border-[#E2E8F0] flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Users className="w-4 h-4" />
+                  <span>البيانات الأساسية</span>
+                </span>
+                {avatarPreviewUrl && (
+                  <div className="w-8 h-8 rounded-full overflow-hidden border border-[#CBD5E1] shadow-2xs">
+                    <img src={avatarPreviewUrl} alt="صورة المعلم" className="w-full h-full object-cover" />
+                  </div>
+                )}
               </h4>
               <ul className="space-y-1.5 text-slate-700">
                 <li>• <strong>الاسم:</strong> {formData.fullName}</li>
                 <li>• <strong>الهاتف:</strong> {formData.countryCode} {normalizePhone(formData.phone, formData.countryCode)}</li>
                 <li>• <strong>المسار:</strong> {formData.track === 'school' ? 'المناهج المدرسية' : 'القرآن والتأسيس'}</li>
+                <li>
+                  • <strong>الصورة الشخصية:</strong>{' '}
+                  {formData.avatarPath ? (
+                    <span className="text-emerald-700 font-bold">تم إرفاق صورة شخصية للمراجعة</span>
+                  ) : (
+                    <span className="text-slate-500">لم تُرفق (اختيارية عند التقديم)</span>
+                  )}
+                </li>
               </ul>
             </div>
 

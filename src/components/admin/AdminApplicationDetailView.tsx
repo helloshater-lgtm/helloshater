@@ -21,6 +21,9 @@ import {
   Loader2,
   Check,
   Send,
+  Camera,
+  Image as ImageIcon,
+  Info,
 } from 'lucide-react';
 
 interface AdminApplicationDetailViewProps {
@@ -39,11 +42,16 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Associated Tutor Status (if approved)
+  const [tutorStatus, setTutorStatus] = useState<{ isPublished: boolean; avatarUrl: string | null } | null>(null);
+  const [isPublishingWithAvatar, setIsPublishingWithAvatar] = useState(false);
+
   // Decision state
   const [isProcessing, setIsProcessing] = useState(false);
   const [actionType, setActionType] = useState<'idle' | 'needs_info' | 'approve' | 'reject'>('idle');
   const [decisionNotes, setDecisionNotes] = useState('');
   const [tutorSlug, setTutorSlug] = useState('');
+  const [avatarSignedUrl, setAvatarSignedUrl] = useState<string | null>(null);
 
   const loadApplication = async () => {
     setIsLoading(true);
@@ -54,13 +62,28 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
         setErrorMessage('تعذر العثور على بيانات الطلب المحدد.');
       } else {
         setApplication(data);
+        // Load avatar signed URL if exists (private preview only)
+        if (data.avatarPath) {
+          AdminService.getApplicationAvatarSignedUrl(data.avatarPath).then((url) => {
+            setAvatarSignedUrl(url);
+          });
+        } else {
+          setAvatarSignedUrl(null);
+        }
         // Auto-generate suggested slug
-        const rawSlug = data.fullName
-          .trim()
-          .toLowerCase()
-          .replace(/[^\u0621-\u064Aa-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-');
         setTutorSlug(`tutor-${Math.floor(1000 + Math.random() * 9000)}`);
+
+        // Check associated tutor publication state if approved
+        if (data.status === 'approved' && data.applicantTutorId) {
+          try {
+            const status = await AdminService.getTutorPublicationStatus(data.applicantTutorId);
+            setTutorStatus(status);
+          } catch (tutorErr) {
+            console.warn('Could not load tutor publication status:', tutorErr);
+          }
+        } else {
+          setTutorStatus(null);
+        }
       }
     } catch (err: any) {
       setErrorMessage(err?.message || 'فشل تحميل بيانات الطلب.');
@@ -101,7 +124,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
     }
   };
 
-  // Handle Approve
+  // Handle Approve (Creates draft tutor record without copying avatar to public bucket)
   const handleApproveAction = async () => {
     if (!tutorSlug.trim() || !/^[a-z0-9-]+$/.test(tutorSlug.trim())) {
       setErrorMessage('يرجى إدخال معرف صالح للمعلم (Slug) بالإنجليزية والأرقام والشرطات فقط.');
@@ -120,7 +143,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
       );
 
       setSuccessMessage(
-        `تم قبول الطلب واعتماد المعلم بنجاح! تم إنشاء ملف المعلم (${result.tutorId}) بحالة "غير منشور" للحفاظ على التحكم الإداري بالنشر.`
+        `تم قبول الطلب واعتماد المعلم بنجاح! تم إنشاء ملف المعلم (${result.tutorId}) بحالة "غير منشور". تظل الصورة الشخصية محفوظة في الدلو الخاص لمعاينة الإدارة، ولن يتم نقلها للدلو العام إلا عند قرار النشر الصريح.`
       );
       setActionType('idle');
       await loadApplication();
@@ -128,6 +151,35 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
       setErrorMessage(err?.message || 'فشل اعتماد وقبول الطلب.');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  // Explicit Publication Action: Transfer avatar and publish tutor in one atomic flow
+  const handlePublishWithAvatar = async () => {
+    if (!application?.applicantTutorId) return;
+
+    setIsPublishingWithAvatar(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      if (application.avatarPath && !tutorStatus?.avatarUrl) {
+        await AdminService.publishTutorWithApplicationAvatar(
+          application.id,
+          application.applicantTutorId
+        );
+        setSuccessMessage(
+          'تم نقل الصورة بنجاح إلى الدلو العام، وتحديث رابطها في ملف المعلم، ونشر ملف المعلم في المنصة للجمهور!'
+        );
+      } else {
+        await AdminService.toggleTutorPublish(application.applicantTutorId, true);
+        setSuccessMessage('تم نشر وتفعيل ملف المعلم في منصة شاطر بنجاح!');
+      }
+      await loadApplication();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'فشل نقل الصورة أو نشر ملف المعلم.');
+    } finally {
+      setIsPublishingWithAvatar(false);
     }
   };
 
@@ -283,6 +335,59 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
               </button>
             </div>
           )}
+
+          {/* Approved tutor publication status & explicit action */}
+          {application.status === 'approved' && application.applicantTutorId && (
+            <div className="flex flex-wrap items-center gap-2">
+              {tutorStatus && (
+                <span
+                  className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${
+                    tutorStatus.isPublished
+                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                      : 'bg-amber-100 text-amber-900 border border-amber-300'
+                  }`}
+                >
+                  {tutorStatus.isPublished ? 'ملف منشور للجمهور' : 'ملف غير منشور (مسودة)'}
+                </span>
+              )}
+
+              {tutorStatus && !tutorStatus.isPublished && (
+                <button
+                  type="button"
+                  onClick={handlePublishWithAvatar}
+                  disabled={isPublishingWithAvatar}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  {isPublishingWithAvatar ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>جاري نقل الصورة والنشر...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>
+                        {application.avatarPath && !tutorStatus.avatarUrl
+                          ? 'نقل الصورة ونشر المعلم في المنصة'
+                          : 'نشر ملف المعلم في المنصة'}
+                      </span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {onNavigateToTutorEdit && (
+                <button
+                  type="button"
+                  onClick={() => onNavigateToTutorEdit(application.applicantTutorId!)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>تعديل ملف المعلم</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Existing Admin Notes if present */}
@@ -325,6 +430,15 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
                 <span className="text-[11px] text-[#64748B] block">
                   سيتم إنشاء ملف المعلم بهذا المعرف بحالة <strong>غير منشور</strong> ليتسنى للمشرف مراجعته ونشره لاحقاً.
                 </span>
+
+                {application?.avatarPath && (
+                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-[#0D4E8B] flex items-start gap-2 pt-2">
+                    <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>
+                      الصورة الشخصية للمتقدم تظل محفوظة بأمان في الدلو الخاص. سيتم الاحتفاظ بها ومعاينتها للإدارة فقط، ولن يتم نقلها للدلو العام أو إتاحة رابطها حتى يصدر قرار النشر الصريح.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -384,12 +498,59 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Section 1: Personal & Contact */}
         <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] space-y-4">
-          <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44] pb-2 border-b border-[#F1F5F9] flex items-center gap-2">
-            <User className="w-4 h-4 text-[#0D4E8B]" />
-            <span>البيانات الشخصية والتواصل</span>
+          <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44] pb-2 border-b border-[#F1F5F9] flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <User className="w-4 h-4 text-[#0D4E8B]" />
+              <span>البيانات الشخصية والتواصل</span>
+            </span>
+            {avatarSignedUrl ? (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
+                  صورة مرفوعة
+                </span>
+                <a
+                  href={avatarSignedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-9 h-9 rounded-full overflow-hidden border border-[#CBD5E1] shadow-2xs block hover:opacity-90 transition-opacity"
+                  title="عرض الصورة بالحجم الكامل"
+                >
+                  <img src={avatarSignedUrl} alt="صورة المتقدم" className="w-full h-full object-cover" />
+                </a>
+              </div>
+            ) : (
+              <span className="text-[10px] text-[#64748B] bg-slate-100 px-2 py-0.5 rounded-full">
+                بدون صورة
+              </span>
+            )}
           </h3>
 
           <div className="space-y-2.5 text-xs">
+            {avatarSignedUrl && (
+              <div className="p-3 rounded-xl bg-[#F8FAFD] border border-[#E2E8F0] flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full overflow-hidden border border-[#CBD5E1] shrink-0 bg-white shadow-2xs">
+                  <img src={avatarSignedUrl} alt="صورة المتقدم" className="w-full h-full object-cover" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold text-[#0D4E8B] flex items-center gap-1">
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>الصورة الشخصية للمتقدم</span>
+                  </div>
+                  <p className="text-[11px] text-[#64748B] mt-0.5 truncate">
+                    مسار التخزين الخاص: <span className="font-mono">{application.avatarPath}</span>
+                  </p>
+                </div>
+                <a
+                  href={avatarSignedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1.5 rounded-lg bg-white border border-[#CBD5E1] hover:bg-slate-50 text-[11px] font-bold text-[#1F2A44] transition-colors"
+                >
+                  معاينة مكبرة
+                </a>
+              </div>
+            )}
+
             <div className="flex items-center justify-between">
               <span className="text-[#64748B]">الاسم الكامل:</span>
               <span className="font-bold text-[#1F2A44]">{application.fullName}</span>

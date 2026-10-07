@@ -575,6 +575,8 @@ export const AdminService = {
       onlineExperienceDetails: row.online_experience_details || '',
       bioAndMethodology: row.bio_and_methodology || '',
       portfolioUrl: row.portfolio_url || '',
+      avatarPath: row.avatar_path || null,
+      avatarUrl: null,
       suggestedHourlyRate: String(row.suggested_hourly_rate || 120),
       suggestedHourlyRateNum: row.suggested_hourly_rate || 120,
       currency: row.currency || 'ج.م',
@@ -637,6 +639,8 @@ export const AdminService = {
       onlineExperienceDetails: data.online_experience_details || '',
       bioAndMethodology: data.bio_and_methodology || '',
       portfolioUrl: data.portfolio_url || '',
+      avatarPath: data.avatar_path || null,
+      avatarUrl: null, // Populated via signed url or helper below
       suggestedHourlyRate: String(data.suggested_hourly_rate || 120),
       suggestedHourlyRateNum: data.suggested_hourly_rate || 120,
       currency: data.currency || 'ج.م',
@@ -803,5 +807,177 @@ export const AdminService = {
       .eq('id', applicationId);
 
     return { tutorId: cleanSlug };
+  },
+
+  /**
+   * 15. Get Signed URL for application avatar in admin view
+   */
+  async getApplicationAvatarSignedUrl(storagePath: string): Promise<string | null> {
+    if (!storagePath) return null;
+    try {
+      const { data, error } = await supabase.storage
+        .from('tutor-application-avatars')
+        .createSignedUrl(storagePath, 3600);
+
+      if (error || !data?.signedUrl) {
+        console.warn('Could not generate signed URL for admin application view:', error);
+        return null;
+      }
+
+      return data.signedUrl;
+    } catch (err) {
+      console.warn('Error creating admin signed url for application avatar:', err);
+      return null;
+    }
+  },
+
+  /**
+   * 16. Copy Application Avatar to Public Tutor Avatar bucket ('tutor-avatars')
+   * Strictly invoked upon explicit publishing decision.
+   * 1. Calls RPC admin_get_approved_application_avatar_transfer_info to validate:
+   *    - Caller is admin
+   *    - Application status is approved
+   *    - applicant_tutor_id IS NOT NULL and IS NOT DISTINCT FROM p_tutor_id
+   *    - avatar_path exists and tutor row is locked
+   * 2. Uses Storage API to download from private bucket and upload to public bucket.
+   * 3. Updates tutor.avatar_url and verifies update with select('id, avatar_url, is_published').single().
+   * 4. Optionally completes publishing if andPublish is true.
+   * 5. If transfer, DB update, or publishing fails, performs safe cleanup of the newly uploaded
+   *    image only after verifying it is not referenced in DB (protecting against connection loss),
+   *    and propagates the error to ensure no false success is displayed.
+   */
+  async copyApplicationAvatarToTutor(
+    applicationId: string,
+    tutorId: string,
+    andPublish?: boolean
+  ): Promise<string> {
+    // 1. Call server-side RPC to strictly validate and get transfer specifications
+    const { data: info, error: rpcError } = await supabase.rpc(
+      'admin_get_approved_application_avatar_transfer_info',
+      {
+        p_application_id: applicationId,
+        p_tutor_id: tutorId,
+      }
+    );
+
+    if (rpcError || !info) {
+      throw new Error(
+        `تعذر اعتماد بيانات نقل الصورة: ${rpcError?.message || 'بيانات النقل غير صالحة'}`
+      );
+    }
+
+    const sourceBucket: string = info.sourceBucket || 'tutor-application-avatars';
+    const sourcePath: string = info.sourcePath;
+    const targetBucket: string = info.targetBucket || 'tutor-avatars';
+    const targetPath: string = info.targetPath;
+
+    if (!sourcePath || !targetPath) {
+      throw new Error('مسارات الصورة غير مكتملة في استجابة الخادم.');
+    }
+
+    // 2. Download from private storage bucket using Storage API
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from(sourceBucket)
+      .download(sourcePath);
+
+    if (downloadError || !blob) {
+      throw new Error(
+        `تعذر تنزيل صورة الطلب من الدلو الخاص: ${downloadError?.message || 'الملف غير موجود'}`
+      );
+    }
+
+    // 3. Upload to public tutor-avatars bucket using Storage API
+    let uploadSucceeded = false;
+    const { error: uploadError } = await supabase.storage
+      .from(targetBucket)
+      .upload(targetPath, blob, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: blob.type || 'image/jpeg',
+      });
+
+    if (uploadError) {
+      throw new Error(`فشل نقل الصورة إلى الدلو العام للمعلمين: ${uploadError.message}`);
+    }
+    uploadSucceeded = true;
+
+    // 4. Get public URL
+    const { data: publicUrlData } = supabase.storage
+      .from(targetBucket)
+      .getPublicUrl(targetPath);
+
+    const publicUrl = publicUrlData.publicUrl;
+
+    try {
+      // 5. Update tutor record in public.tutors and strictly verify with select().single()
+      const { data: updatedTutor, error: updateError } = await supabase
+        .from('tutors')
+        .update({
+          avatar_url: publicUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', tutorId)
+        .select('id, avatar_url, is_published')
+        .single();
+
+      if (updateError || !updatedTutor) {
+        throw new Error(
+          `تعذر حفظ رابط الصورة في ملف المعلم أو التأكد من تحديثه: ${
+            updateError?.message || 'لم يتم العثور على سجل المعلم المقصود'
+          }`
+        );
+      }
+
+      // 6. If explicit publish is requested alongside avatar transfer
+      if (andPublish) {
+        const published = await this.toggleTutorPublish(tutorId, true);
+        if (!published) {
+          throw new Error('تعذر إتمام عملية النشر بعد حفظ الصورة.');
+        }
+      }
+
+      return publicUrl;
+    } catch (err: any) {
+      // Safe cleanup: If upload succeeded but DB update or publishing failed,
+      // first verify that DB does not reference this image before deleting (protecting against connection loss)
+      if (uploadSucceeded) {
+        try {
+          await this.safeCleanupPendingAvatar(tutorId, targetPath, publicUrl);
+        } catch (cleanupErr) {
+          console.warn('تحذير أثناء التنظيف الآمن للصورة:', cleanupErr);
+        }
+      }
+      throw err;
+    }
+  },
+
+  /**
+   * Quick check for tutor publication and avatar status
+   */
+  async getTutorPublicationStatus(
+    tutorId: string
+  ): Promise<{ isPublished: boolean; avatarUrl: string | null } | null> {
+    const { data, error } = await supabase
+      .from('tutors')
+      .select('id, is_published, avatar_url')
+      .eq('id', tutorId)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return {
+      isPublished: Boolean(data.is_published),
+      avatarUrl: data.avatar_url || null,
+    };
+  },
+
+  /**
+   * 17. Explicit publish of tutor with application avatar
+   * Transfers avatar to public bucket, updates tutor record, and executes publication in a single flow
+   */
+  async publishTutorWithApplicationAvatar(
+    applicationId: string,
+    tutorId: string
+  ): Promise<string> {
+    return this.copyApplicationAvatarToTutor(applicationId, tutorId, true);
   },
 };

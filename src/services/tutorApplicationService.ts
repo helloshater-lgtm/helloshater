@@ -130,14 +130,15 @@ export const TutorApplicationService = {
   async saveApplication(
     formData: TutorApplicationFormData,
     isSubmit: boolean = false,
-    _existingAppId?: string
+    _existingAppId?: string,
+    removeAvatar: boolean = false
   ): Promise<TutorApplicationRecord> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       throw new Error('يجب تسجيل الدخول بحساب المعلم أولاً لحفظ الطلب أو إرساله.');
     }
 
-    const payload = {
+    const payload: any = {
       fullName: formData.fullName.trim(),
       countryCode: formData.countryCode,
       phone: formData.phone.trim(),
@@ -157,6 +158,8 @@ export const TutorApplicationService = {
       onlineExperienceDetails: formData.onlineExperienceDetails.trim() || null,
       bioAndMethodology: formData.bioAndMethodology.trim(),
       portfolioUrl: formData.portfolioUrl.trim() || null,
+      avatarPath: formData.avatarPath || null,
+      removeAvatar: removeAvatar,
       suggestedHourlyRate: Number(formData.suggestedHourlyRate) || 120,
       currency: formData.currency || 'ج.م',
       sessionDurationMinutes: formData.sessionDurationMinutes || 50,
@@ -204,6 +207,7 @@ export const TutorApplicationService = {
         online_experience_details: payload.onlineExperienceDetails,
         bio_and_methodology: payload.bioAndMethodology,
         portfolio_url: payload.portfolioUrl,
+        avatar_path: payload.avatarPath || null,
         suggested_hourly_rate: payload.suggestedHourlyRate,
         currency: payload.currency,
         session_duration_minutes: payload.sessionDurationMinutes,
@@ -289,6 +293,8 @@ export const TutorApplicationService = {
       onlineExperienceDetails: row.online_experience_details || '',
       bioAndMethodology: row.bio_and_methodology || '',
       portfolioUrl: row.portfolio_url || '',
+      avatarPath: row.avatar_path || null,
+      avatarUrl: null, // Populated via signed URL when viewing
       suggestedHourlyRate: String(row.suggested_hourly_rate || 120),
       suggestedHourlyRateNum: row.suggested_hourly_rate || 120,
       currency: row.currency || 'ج.م',
@@ -309,5 +315,101 @@ export const TutorApplicationService = {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  },
+
+  /**
+   * 8. Upload Application Avatar to Private Storage Bucket ('tutor-application-avatars')
+   * Validates format (JPEG, PNG, WebP) and size (<= 2MB)
+   * Only permitted in draft and needs_info states
+   */
+  async uploadApplicationAvatar(
+    file: File,
+    currentStatus?: TutorApplicationStatus
+  ): Promise<{ avatarPath: string; signedUrl: string }> {
+    const user = await this.getCurrentUser();
+    if (!user) {
+      throw new Error('يرجى تسجيل الدخول بحساب المعلم أولاً لرفع الصورة الشخصية.');
+    }
+
+    // Status gate: only draft, needs_info or new application can upload
+    if (
+      currentStatus &&
+      currentStatus !== 'draft' &&
+      currentStatus !== 'needs_info'
+    ) {
+      throw new Error('لا يمكن تعديل أو رفع الصورة بعد إرسال الطلب للاعتماد إلا إذا طلبت الإدارة استكمال بيانات.');
+    }
+
+    // Format validation
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedMimeTypes.includes(file.type)) {
+      throw new Error('صيغة الصورة غير مدعومة. يرجى اختيار صورة بصيغة JPEG أو PNG أو WebP.');
+    }
+
+    // Size validation: max 2MB (2,097,152 bytes)
+    const maxSizeBytes = 2 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      throw new Error('حجم الصورة كبير جداً. الحد الأقصى المسموح به هو 2 ميجابايت.');
+    }
+
+    const ext = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const storagePath = `${user.id}/avatar-${uniqueSuffix}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('tutor-application-avatars')
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`تعذر رفع الصورة الشخصية: ${uploadError.message}`);
+    }
+
+    // Generate signed URL for private preview (valid for 1 hour)
+    const signedUrl = await this.getApplicationAvatarSignedUrl(storagePath);
+
+    return {
+      avatarPath: storagePath,
+      signedUrl: signedUrl || '',
+    };
+  },
+
+  /**
+   * 9. Get Signed URL for private application avatar
+   */
+  async getApplicationAvatarSignedUrl(storagePath: string): Promise<string | null> {
+    if (!storagePath) return null;
+    try {
+      const { data, error } = await supabase.storage
+        .from('tutor-application-avatars')
+        .createSignedUrl(storagePath, 3600); // 1 hour validity
+
+      if (error || !data?.signedUrl) {
+        console.warn('Could not generate signed URL for application avatar:', error);
+        return null;
+      }
+
+      return data.signedUrl;
+    } catch (err) {
+      console.warn('Error fetching signed URL for application avatar:', err);
+      return null;
+    }
+  },
+
+  /**
+   * 10. Delete/Cleanup Application Avatar from storage
+   */
+  async deleteApplicationAvatar(storagePath: string): Promise<boolean> {
+    if (!storagePath) return false;
+    try {
+      const { error } = await supabase.storage
+        .from('tutor-application-avatars')
+        .remove([storagePath]);
+      return !error;
+    } catch {
+      return false;
+    }
   },
 };
