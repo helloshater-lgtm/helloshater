@@ -220,6 +220,7 @@ export const TutorPortalService = {
 
   /**
    * 3. Create a future available slot
+   * Strictly uses secure server-side RPC tutor_create_slot
    */
   async createSlot(
     slotDate: string,
@@ -234,71 +235,30 @@ export const TutorPortalService = {
       p_timezone: timezone,
     });
 
-    if (!rpcError) return;
-
-    // Fallback
-    const context = await this.getMyContext();
-    const { error } = await supabase
-      .from('tutor_available_slots')
-      .insert({
-        tutor_id: context.tutor.id,
-        slot_date: slotDate,
-        start_time: startTime,
-        end_time: endTime,
-        timezone,
-        is_available: true,
-        is_booked: false,
-        notes: null,
-      });
-
-    if (error) {
-      throw new Error(`فشل إضافة الموعد: ${error.message}`);
+    if (rpcError) {
+      throw new Error(`تعذر حفظ الموعد: ${rpcError.message}`);
     }
   },
 
   /**
-   * 4. Delete an available slot (booked or admin-closed slots cannot be deleted)
+   * 4. Delete an available slot (strictly uses secure server-side RPC)
    */
   async deleteSlot(slotId: string): Promise<void> {
     const { error: rpcError } = await supabase.rpc('tutor_delete_slot', {
       p_slot_id: slotId,
     });
 
-    if (!rpcError) return;
-
-    // Fallback with strict client-side checks
-    const { data: slot, error: fetchErr } = await supabase
-      .from('tutor_available_slots')
-      .select('is_booked, is_available')
-      .eq('id', slotId)
-      .single();
-
-    if (fetchErr || !slot) {
-      throw new Error('الموعد غير موجود.');
-    }
-
-    if (slot.is_booked) {
-      throw new Error('لا يمكن حذف موعد محجوز لطالب.');
-    }
-
-    if (!slot.is_available) {
-      throw new Error('لا يمكن حذف موعد تم إغلاقه إدارياً.');
-    }
-
-    const { error } = await supabase
-      .from('tutor_available_slots')
-      .delete()
-      .eq('id', slotId);
-
-    if (error) {
-      throw new Error(`فشل حذف الموعد: ${error.message}`);
+    if (rpcError) {
+      throw new Error(`تعذر حذف الموعد: ${rpcError.message}`);
     }
   },
 
   /**
    * 5. Upload proposed avatar to private pending storage bucket
+   * Path: pending/<auth.uid()>/<unique-filename>
+   * Returns storagePath (for persistent DB draft) and previewSignedUrl (for immediate UI preview)
    */
-  async uploadDraftAvatar(file: File): Promise<string> {
+  async uploadDraftAvatar(file: File): Promise<{ storagePath: string; previewSignedUrl: string }> {
     const { data: authData } = await supabase.auth.getUser();
     if (!authData.user) {
       throw new Error('يجب تسجيل الدخول لرفع الصورة المقترحة.');
@@ -315,11 +275,12 @@ export const TutorPortalService = {
     }
 
     const ext = file.type.split('/')[1] || 'jpg';
-    const filePath = `pending/${authData.user.id}-${Date.now()}.${ext}`;
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const storagePath = `pending/${authData.user.id}/${uniqueSuffix}.${ext}`;
 
     const { error } = await supabase.storage
       .from('tutor-avatars-pending')
-      .upload(filePath, file, {
+      .upload(storagePath, file, {
         cacheControl: '3600',
         upsert: true,
       });
@@ -328,20 +289,24 @@ export const TutorPortalService = {
       throw new Error(`تعذر رفع الصورة المقترحة: ${error.message}`);
     }
 
-    // Get signed URL for preview
+    // Get signed URL for preview (1 hour)
     const { data: signedData } = await supabase.storage
       .from('tutor-avatars-pending')
-      .createSignedUrl(filePath, 3600);
+      .createSignedUrl(storagePath, 3600);
 
-    return signedData?.signedUrl || filePath;
+    return {
+      storagePath,
+      previewSignedUrl: signedData?.signedUrl || storagePath,
+    };
   },
 
   /**
    * 6. Submit profile draft for administrative review
+   * Saves the permanent private storagePath (not temporary Signed URL)
    */
   async submitProfileDraft(payload: {
     headline: string;
-    avatarUrl?: string | null;
+    avatarPath?: string | null;
     helpChildQuote?: string | null;
     helpChildSummary?: string | null;
   }): Promise<void> {
@@ -351,29 +316,13 @@ export const TutorPortalService = {
 
     const { error: rpcError } = await supabase.rpc('tutor_submit_profile_draft', {
       p_headline: payload.headline.trim(),
-      p_avatar_url: payload.avatarUrl || null,
+      p_avatar_url: payload.avatarPath || null,
       p_help_child_quote: payload.helpChildQuote?.trim() || null,
       p_help_child_summary: payload.helpChildSummary?.trim() || null,
     });
 
-    if (!rpcError) return;
-
-    // Fallback: insert directly into tutor_profile_drafts
-    const context = await this.getMyContext();
-    const { error } = await supabase
-      .from('tutor_profile_drafts')
-      .insert({
-        tutor_id: context.tutor.id,
-        headline: payload.headline.trim(),
-        avatar_url: payload.avatarUrl || null,
-        help_child_quote: payload.helpChildQuote?.trim() || null,
-        help_child_summary: payload.helpChildSummary?.trim() || null,
-        status: 'pending_review',
-        submitted_at: new Date().toISOString(),
-      });
-
-    if (error) {
-      throw new Error(`فشل إرسال مقترح التعديل: ${error.message}`);
+    if (rpcError) {
+      throw new Error(`فشل إرسال مقترح التعديل: ${rpcError.message}`);
     }
   },
 };

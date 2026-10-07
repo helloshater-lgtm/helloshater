@@ -242,10 +242,34 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
     setQualifications(qualifications.filter((_, i) => i !== index));
   };
 
+  // Helper to add 20 minutes to HH:mm
+  const add20MinutesToSlot = (timeStr: string): string => {
+    if (!timeStr || !timeStr.includes(':')) return '';
+    const [h, m] = timeStr.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return '';
+    const totalMinutes = h * 60 + m + 20;
+    const endH = Math.floor((totalMinutes / 60) % 24);
+    const endM = totalMinutes % 60;
+    return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+  };
+
+  const handleSlotStartTimeChange = (val: string) => {
+    setNewSlotStart(val);
+    setNewSlotEnd(add20MinutesToSlot(val));
+  };
+
   // Add Slot Handler
   const handleAddSlot = async () => {
     if (!newSlotDate || !newSlotStart || !newSlotEnd) {
       setErrorMessage('يرجى تحديد التاريخ ووقت البداية ووقت النهاية للموعد.');
+      return;
+    }
+
+    const [startH, startM] = newSlotStart.split(':').map(Number);
+    const [endH, endM] = newSlotEnd.split(':').map(Number);
+    const durationMinutes = endH * 60 + endM - (startH * 60 + startM);
+    if (durationMinutes !== 20) {
+      setErrorMessage('مدة الحصة التجريبية المعتمدة هي 20 دقيقة بالضبط.');
       return;
     }
 
@@ -1308,18 +1332,18 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
                 <input
                   type="time"
                   value={newSlotStart}
-                  onChange={(e) => setNewSlotStart(e.target.value)}
+                  onChange={(e) => handleSlotStartTimeChange(e.target.value)}
                   className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-[#1F2A44]">وقت النهاية</label>
+                <label className="text-[11px] font-bold text-[#1F2A44]">وقت النهاية (20 دقيقة تلقائياً)</label>
                 <input
                   type="time"
                   value={newSlotEnd}
                   onChange={(e) => setNewSlotEnd(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                  className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-slate-50"
                 />
               </div>
             </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { supabase } from '../../lib/supabase';
 import { TutorPortalService } from '../../services/tutorPortalService';
 import { TutorPortalContext, TutorAvailableSlot } from '../../types';
 import {
@@ -41,19 +42,36 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // Active Tab
   const [activeTab, setActiveTab] = useState<'overview' | 'profile-draft' | 'slots'>('overview');
 
-  // Slots Form State
+  // Slots Form State (Trial duration is exactly 20 minutes)
   const [newSlotDate, setNewSlotDate] = useState('');
   const [newSlotStart, setNewSlotStart] = useState('16:00');
-  const [newSlotEnd, setNewSlotEnd] = useState('16:30');
+  const [newSlotEnd, setNewSlotEnd] = useState('16:20');
   const [newSlotTimezone, setNewSlotTimezone] = useState('Africa/Cairo');
   const [isAddingSlot, setIsAddingSlot] = useState(false);
   const [deletingSlotId, setDeletingSlotId] = useState<string | null>(null);
+
+  // Helper to add 20 minutes to HH:mm
+  const add20Minutes = (timeStr: string): string => {
+    if (!timeStr || !timeStr.includes(':')) return '16:20';
+    const [h, m] = timeStr.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return '16:20';
+    const totalMinutes = h * 60 + m + 20;
+    const endH = Math.floor((totalMinutes / 60) % 24);
+    const endM = totalMinutes % 60;
+    return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+  };
+
+  const handleStartTimeChange = (val: string) => {
+    setNewSlotStart(val);
+    setNewSlotEnd(add20Minutes(val));
+  };
 
   // Profile Draft Form State
   const [draftHeadline, setDraftHeadline] = useState('');
   const [draftQuote, setDraftQuote] = useState('');
   const [draftSummary, setDraftSummary] = useState('');
-  const [draftAvatarUrl, setDraftAvatarUrl] = useState<string | null>(null);
+  const [draftAvatarPath, setDraftAvatarPath] = useState<string | null>(null);
+  const [draftAvatarPreview, setDraftAvatarPreview] = useState<string | null>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isSubmittingDraft, setIsSubmittingDraft] = useState(false);
 
@@ -71,7 +89,24 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       setDraftHeadline(existingDraft?.headline || tutor.headline || '');
       setDraftQuote(existingDraft?.helpChildQuote || tutor.helpChildQuote || '');
       setDraftSummary(existingDraft?.helpChildSummary || tutor.helpChildSummary || '');
-      setDraftAvatarUrl(existingDraft?.avatarUrl || null);
+      
+      if (existingDraft?.avatarUrl) {
+        setDraftAvatarPath(existingDraft.avatarUrl);
+        // If it's a private storage path, try to get a temporary signed url for preview
+        if (existingDraft.avatarUrl.startsWith('pending/')) {
+          supabase.storage
+            .from('tutor-avatars-pending')
+            .createSignedUrl(existingDraft.avatarUrl, 3600)
+            .then(({ data }) => {
+              if (data?.signedUrl) setDraftAvatarPreview(data.signedUrl);
+            });
+        } else {
+          setDraftAvatarPreview(existingDraft.avatarUrl);
+        }
+      } else {
+        setDraftAvatarPath(null);
+        setDraftAvatarPreview(null);
+      }
 
       // Load slots
       try {
@@ -96,6 +131,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     e.preventDefault();
     if (!newSlotDate || !newSlotStart || !newSlotEnd) {
       setErrorMessage('يرجى تحديد تاريخ ووقت البداية والنهاية للموعد.');
+      return;
+    }
+
+    // Validate 20 minutes duration exactly
+    const [startH, startM] = newSlotStart.split(':').map(Number);
+    const [endH, endM] = newSlotEnd.split(':').map(Number);
+    const durationMinutes = endH * 60 + endM - (startH * 60 + startM);
+    if (durationMinutes !== 20) {
+      setErrorMessage('مدة الموعد التجريبي المعتمدة هي 20 دقيقة بالضبط.');
       return;
     }
 
@@ -144,8 +188,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     setErrorMessage(null);
 
     try {
-      const uploadedPath = await TutorPortalService.uploadDraftAvatar(file);
-      setDraftAvatarUrl(uploadedPath);
+      const uploaded = await TutorPortalService.uploadDraftAvatar(file);
+      setDraftAvatarPath(uploaded.storagePath);
+      setDraftAvatarPreview(uploaded.previewSignedUrl);
       setSuccessMessage('تم رفع الصورة المقترحة بنجاح! سيتم إرسالها للمراجعة مع حفظ التعديلات.');
       setTimeout(() => setSuccessMessage(null), 4000);
     } catch (err: any) {
@@ -170,7 +215,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     try {
       await TutorPortalService.submitProfileDraft({
         headline: draftHeadline.trim(),
-        avatarUrl: draftAvatarUrl,
+        avatarPath: draftAvatarPath,
         helpChildQuote: draftQuote.trim() || null,
         helpChildSummary: draftSummary.trim() || null,
       });
@@ -467,11 +512,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-4">
             <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex items-center gap-2">
               <Plus className="w-5 h-5 text-[#0D4E8B]" />
-              <span>إضافة موعد تجريبي متاح للطلاب (مجاني - مدته ٢٠ إلى ٣٠ دقيقة)</span>
+              <span>إضافة موعد تجريبي متاح للطلاب (مجاني - مدته 20 دقيقة بالضبط)</span>
             </h3>
 
             <p className="text-xs text-[#64748B] leading-relaxed">
-              المواعيد التي تضيفها هنا تظهر لأولياء الأمور لحجز حصة تجريبية مباشرة. لا يمكنك إضافة مواعيد في الماضي أو مواعيد متعارضة.
+              المواعيد التي تضيفها هنا تظهر لأولياء الأمور لحجز حصة تجريبية مباشرة. مدة الموعد محددة بـ 20 دقيقة وتُحسب تلقائياً.
             </p>
 
             <form onSubmit={handleCreateSlot} className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2">
@@ -492,20 +537,20 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 <input
                   type="time"
                   value={newSlotStart}
-                  onChange={(e) => setNewSlotStart(e.target.value)}
+                  onChange={(e) => handleStartTimeChange(e.target.value)}
                   required
                   className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-[#1F2A44] block">وقت النهاية</label>
+                <label className="text-xs font-bold text-[#1F2A44] block">وقت النهاية (20 دقيقة تلقائياً)</label>
                 <input
                   type="time"
                   value={newSlotEnd}
                   onChange={(e) => setNewSlotEnd(e.target.value)}
                   required
-                  className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                  className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-slate-50"
                 />
               </div>
 
@@ -699,8 +744,8 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
               <div className="flex items-center gap-4">
                 <div className="w-16 h-16 rounded-2xl overflow-hidden border border-[#CBD5E1] bg-slate-50 shrink-0">
-                  {draftAvatarUrl ? (
-                    <img src={draftAvatarUrl} alt="صورة مقترحة" className="w-full h-full object-cover" />
+                  {draftAvatarPreview ? (
+                    <img src={draftAvatarPreview} alt="صورة مقترحة" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-slate-400">
                       <Camera className="w-6 h-6" />

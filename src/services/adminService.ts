@@ -60,15 +60,11 @@ export const AdminService = {
 
     const tutorIds = tutorsData.map((t) => t.id);
 
-    // Fetch counts for school offerings, quran offerings, and available slots
-    const [schoolOfferingsRes, quranOfferingsRes, slotsRes] = await Promise.all([
+    // Fetch counts for school offerings, quran offerings, and available slots via secure RPC
+    const [schoolOfferingsRes, quranOfferingsRes, slotCountsRpcRes] = await Promise.all([
       supabase.from('tutor_school_offerings').select('tutor_id').in('tutor_id', tutorIds),
       supabase.from('tutor_quran_offerings').select('tutor_id').in('tutor_id', tutorIds),
-      supabase
-        .from('tutor_available_slots')
-        .select('tutor_id')
-        .in('tutor_id', tutorIds)
-        .eq('is_available', true),
+      supabase.rpc('admin_get_tutors_slot_counts', { p_tutor_ids: tutorIds }),
     ]);
 
     const offeringCounts: Record<string, number> = {};
@@ -80,9 +76,22 @@ export const AdminService = {
     });
 
     const slotCounts: Record<string, number> = {};
-    (slotsRes.data || []).forEach((row: any) => {
-      slotCounts[row.tutor_id] = (slotCounts[row.tutor_id] || 0) + 1;
-    });
+    if (!slotCountsRpcRes.error && slotCountsRpcRes.data) {
+      (slotCountsRpcRes.data as any[]).forEach((row: any) => {
+        slotCounts[row.tutor_id] = Number(row.available_slots_count || 0);
+      });
+    } else {
+      // Fallback in case RPC is not yet created
+      const slotsRes = await supabase
+        .from('tutor_available_slots')
+        .select('tutor_id')
+        .in('tutor_id', tutorIds)
+        .eq('is_available', true);
+
+      (slotsRes.data || []).forEach((row: any) => {
+        slotCounts[row.tutor_id] = (slotCounts[row.tutor_id] || 0) + 1;
+      });
+    }
 
     return tutorsData.map((row: any) => ({
       id: row.id,
@@ -446,6 +455,7 @@ export const AdminService = {
 
   /**
    * 7. Slot Management: Add new trial slot via Africa/Cairo verified RPC
+   * Strictly enforces 20-minute trial slot duration
    */
   async addSlot(
     tutorId: string,
@@ -457,6 +467,14 @@ export const AdminService = {
   ): Promise<string> {
     if (!slotDate || !startTime || !endTime) {
       throw new Error('يرجى تحديد التاريخ ووقت البداية ووقت النهاية للموعد.');
+    }
+
+    // Verify 20 minutes duration exactly
+    const [startH, startM] = startTime.split(':').map(Number);
+    const [endH, endM] = endTime.split(':').map(Number);
+    const durationMinutes = endH * 60 + endM - (startH * 60 + startM);
+    if (durationMinutes !== 20) {
+      throw new Error('مدة الحصة التجريبية المعتمدة هي 20 دقيقة بالضبط.');
     }
 
     const { data: newId, error } = await supabase.rpc('admin_add_slot', {
@@ -979,5 +997,68 @@ export const AdminService = {
     tutorId: string
   ): Promise<string> {
     return this.copyApplicationAvatarToTutor(applicationId, tutorId, true);
+  },
+
+  /**
+   * 18. Review tutor profile draft (approve, reject, or request revision)
+   * If approving a draft that has a pending avatar in tutor-avatars-pending:
+   * 1. Calls RPC admin_get_draft_avatar_transfer_info
+   * 2. Copies avatar to public tutor-avatars bucket
+   * 3. Calls admin_review_tutor_profile_draft with the new permanent public URL
+   */
+  async reviewProfileDraft(
+    draftId: string,
+    action: 'approve' | 'reject' | 'needs_revision',
+    adminNotes?: string
+  ): Promise<void> {
+    let approvedPublicAvatarUrl: string | null = null;
+
+    if (action === 'approve') {
+      try {
+        const { data: transferInfo, error: infoError } = await supabase.rpc(
+          'admin_get_draft_avatar_transfer_info',
+          { p_draft_id: draftId }
+        );
+
+        if (!infoError && transferInfo?.sourcePath && transferInfo?.targetPath) {
+          // Download from private pending bucket
+          const { data: blob, error: dlErr } = await supabase.storage
+            .from(transferInfo.sourceBucket || 'tutor-avatars-pending')
+            .download(transferInfo.sourcePath);
+
+          if (!dlErr && blob) {
+            // Upload to public tutor-avatars bucket
+            const { error: upErr } = await supabase.storage
+              .from(transferInfo.targetBucket || 'tutor-avatars')
+              .upload(transferInfo.targetPath, blob, {
+                cacheControl: '3600',
+                upsert: true,
+                contentType: blob.type || 'image/jpeg',
+              });
+
+            if (!upErr) {
+              const { data: pubData } = supabase.storage
+                .from(transferInfo.targetBucket || 'tutor-avatars')
+                .getPublicUrl(transferInfo.targetPath);
+
+              approvedPublicAvatarUrl = pubData?.publicUrl || null;
+            }
+          }
+        }
+      } catch (avatarErr) {
+        console.warn('No pending avatar to transfer or error during draft avatar copy:', avatarErr);
+      }
+    }
+
+    const { error } = await supabase.rpc('admin_review_tutor_profile_draft', {
+      p_draft_id: draftId,
+      p_action: action,
+      p_admin_notes: adminNotes?.trim() || null,
+      p_approved_avatar_url: approvedPublicAvatarUrl,
+    });
+
+    if (error) {
+      throw new Error(`فشل تنفيذ قرار مراجعة مسودة المعلم: ${error.message}`);
+    }
   },
 };

@@ -500,12 +500,32 @@ export const SupabaseDataService = {
 
   /**
    * 8. Tutor Available Slots
-   * Queries public.tutor_available_slots with explicit columns (excluding private admin notes)
+   * Queries public available slots via secure get_public_tutor_slots RPC (excluding private admin notes)
    */
   async getTutorAvailableSlots(tutorId: string): Promise<TutorAvailableSlot[]> {
     if (!tutorId) return [];
 
     try {
+      // 1. Try secure public RPC first
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_public_tutor_slots', {
+        p_tutor_id: tutorId,
+      });
+
+      if (!rpcError && rpcData) {
+        return (rpcData as any[]).map((row) => ({
+          id: row.id,
+          tutorId: row.tutor_id,
+          slotDate: row.slot_date,
+          startTime: row.start_time,
+          endTime: row.end_time,
+          timezone: row.timezone || 'Africa/Cairo',
+          isAvailable: row.is_available,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
+      }
+
+      // 2. Fallback to direct select if RPC not yet deployed
       const { data, error } = await supabase
         .from('tutor_available_slots')
         .select('id, tutor_id, slot_date, start_time, end_time, timezone, is_available, created_at, updated_at')
