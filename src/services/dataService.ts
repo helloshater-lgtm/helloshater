@@ -103,6 +103,20 @@ export const DataService = {
   },
 
   /**
+   * Get available private 1:1 slots for a tutor
+   */
+  async getTutorPrivateSlots(tutorId: string) {
+    return SupabaseDataService.getTutorPrivateSlots(tutorId);
+  },
+
+  /**
+   * Get approved educational groups for a tutor
+   */
+  async getTutorGroups(tutorId: string) {
+    return SupabaseDataService.getTutorGroups(tutorId);
+  },
+
+  /**
    * Test connection to Supabase
    */
   async testConnection() {

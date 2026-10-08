@@ -555,4 +555,118 @@ export const SupabaseDataService = {
       return [];
     }
   },
+
+  /**
+   * 9. Public Private Slots (1:1)
+   */
+  async getTutorPrivateSlots(tutorId: string): Promise<any[]> {
+    if (!tutorId) return [];
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_public_tutor_private_slots', {
+        p_tutor_id: tutorId,
+      });
+
+      if (!rpcError && rpcData) {
+        return rpcData.map((row: any) => ({
+          id: row.id,
+          specializationLabel: row.specialization_label,
+          slotDate: row.slot_date,
+          startTime: row.start_time,
+          endTime: row.end_time,
+          timezone: row.timezone || 'Africa/Cairo',
+          durationMinutes: row.duration_minutes,
+          priceAmount: row.price_amount,
+          currency: row.currency || 'ج.م',
+        }));
+      }
+
+      // Fallback: direct select
+      const { data, error } = await supabase
+        .from('tutor_private_slots')
+        .select('id, specialization_label, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency')
+        .eq('tutor_id', tutorId)
+        .eq('is_available', true)
+        .eq('is_booked', false)
+        .order('slot_date', { ascending: true })
+        .order('start_time', { ascending: true });
+
+      if (error) return [];
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        specializationLabel: row.specialization_label,
+        slotDate: row.slot_date,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        timezone: row.timezone || 'Africa/Cairo',
+        durationMinutes: row.duration_minutes,
+        priceAmount: row.price_amount,
+        currency: row.currency || 'ج.م',
+      }));
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * 10. Public Groups for tutor profile
+   */
+  async getTutorGroups(tutorId: string): Promise<any[]> {
+    if (!tutorId) return [];
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_public_tutor_groups', {
+        p_tutor_id: tutorId,
+      });
+
+      if (!rpcError && rpcData) {
+        return rpcData.map((row: any) => ({
+          id: row.id,
+          title: row.title,
+          description: row.description,
+          specializationLabel: row.specialization_label,
+          maxStudents: row.max_students,
+          enrolledStudents: row.enrolled_students || 0,
+          remainingSeats: row.remaining_seats !== undefined ? row.remaining_seats : Math.max(0, row.max_students - (row.enrolled_students || 0)),
+          pricePerStudent: row.price_per_student,
+          priceType: row.price_type || 'full_package',
+          currency: row.currency || 'ج.م',
+          sessionsCount: row.sessions_count,
+          sessionDurationMinutes: row.session_duration_minutes,
+          startDate: row.start_date,
+          endDate: row.end_date,
+          weeklyScheduleSummary: row.weekly_schedule_summary,
+          status: row.status,
+        }));
+      }
+
+      const { data, error } = await supabase
+        .from('tutor_groups')
+        .select('*')
+        .eq('tutor_id', tutorId)
+        .eq('is_published', true)
+        .in('status', ['open', 'in_progress'])
+        .order('start_date', { ascending: true });
+
+      if (error) return [];
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        specializationLabel: row.specialization_label,
+        maxStudents: row.max_students,
+        enrolledStudents: row.enrolled_students || 0,
+        remainingSeats: Math.max(0, row.max_students - (row.enrolled_students || 0)),
+        pricePerStudent: row.price_per_student,
+        priceType: row.price_type || 'full_package',
+        currency: row.currency || 'ج.م',
+        sessionsCount: row.sessions_count,
+        sessionDurationMinutes: row.session_duration_minutes,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        weeklyScheduleSummary: row.weekly_schedule_summary,
+        status: row.status,
+      }));
+    } catch {
+      return [];
+    }
+  },
 };

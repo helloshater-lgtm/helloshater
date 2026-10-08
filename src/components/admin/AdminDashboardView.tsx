@@ -7,6 +7,7 @@ import { AdminTutorsListView } from './AdminTutorsListView';
 import { AdminTutorEditorView } from './AdminTutorEditorView';
 import { AdminApplicationsListView } from './AdminApplicationsListView';
 import { AdminApplicationDetailView } from './AdminApplicationDetailView';
+import { AdminClassesManagementView } from './AdminClassesManagementView';
 import { TutorProfileView } from '../TutorProfileView';
 import {
   ShieldCheck,
@@ -18,6 +19,7 @@ import {
   ArrowRight,
   Users,
   FileCheck2,
+  Calendar,
 } from 'lucide-react';
 
 interface AdminDashboardViewProps {
@@ -28,8 +30,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Top Nav Tab: 'tutors' | 'applications'
-  const [activeTab, setActiveTab] = useState<'tutors' | 'applications'>('tutors');
+  // Top Nav Tab: 'tutors' | 'applications' | 'classes'
+  const [activeTab, setActiveTab] = useState<'tutors' | 'applications' | 'classes'>('tutors');
   const [pendingApplicationsCount, setPendingApplicationsCount] = useState<number>(0);
 
   // Sub-Views: 'list' | 'edit' | 'new' | 'preview' | 'app-detail'
@@ -274,6 +276,22 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
             </span>
           )}
         </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('classes');
+            setCurrentMode('list');
+          }}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'classes'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
+          }`}
+        >
+          <Calendar className="w-4 h-4" />
+          <span>الحصص والمجموعات</span>
+        </button>
       </div>
 
       {/* Global Error Banner */}
@@ -293,6 +311,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
           <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
           <p className="text-xs sm:text-sm text-[#64748B] font-medium">جاري تحميل بيانات المعلم بالكامل...</p>
         </div>
+      ) : activeTab === 'classes' ? (
+        <AdminClassesManagementView
+          onNotify={(msg, type) => {
+            if (type === 'error') setGlobalError(msg);
+          }}
+        />
       ) : activeTab === 'applications' ? (
         currentMode === 'app-detail' && selectedApplicationId ? (
           <AdminApplicationDetailView

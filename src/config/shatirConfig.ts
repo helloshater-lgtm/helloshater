@@ -165,3 +165,65 @@ export function buildTutorFollowUpWhatsAppUrl(referenceCode: string, applicantNa
   const message = `مرحباً فريق شاطر كلاسيز، أود تقديم بيانات ومؤهلات التدريس للانضمام كمعلم عبر منصة شاطر. الاسم: ${applicantName}.`;
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }
+
+/**
+ * Builds WhatsApp coordination URL for Paid Private 1:1 Session
+ */
+export function buildPrivateSessionBookingWhatsAppUrl(params: {
+  tutorName: string;
+  tutorHonorific: string;
+  specializationLabel: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  timezone: string;
+  durationMinutes: number;
+  priceAmount: number;
+  currency: string;
+}, customNumber?: string): string {
+  const number = (customNumber || SHATIR_CONFIG.adminWhatsAppNumber).replace(/[^0-9]/g, '');
+  const message = [
+    `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
+    `أود حجز وتثبيت حصة خاصة فردية (1:1) لطفلي مع التفاصيل التالية:`,
+    ``,
+    `• المعلم: ${params.tutorHonorific} ${params.tutorName}`,
+    `• التخصص: ${params.specializationLabel}`,
+    `• موعد الحصة: ${params.slotDate} (من ${params.startTime} إلى ${params.endTime} - ${params.timezone})`,
+    `• مدة الحصة: ${params.durationMinutes} دقيقة`,
+    `• سعر الحصة: ${params.priceAmount} ${params.currency}`,
+    ``,
+    `أرجو تأكيد الحجز وموافاتي بطريقة السداد المعتمدة والتنسيق المباشر. شكراً لكم!`,
+  ].join('\n');
+  return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
+}
+
+/**
+ * Builds WhatsApp coordination URL for Group Class Enrollment
+ */
+export function buildGroupClassBookingWhatsAppUrl(params: {
+  tutorName: string;
+  tutorHonorific: string;
+  groupTitle: string;
+  specializationLabel: string;
+  weeklyScheduleSummary: string;
+  startDate: string;
+  sessionsCount: number;
+  pricePerStudent: number;
+  currency: string;
+}, customNumber?: string): string {
+  const number = (customNumber || SHATIR_CONFIG.adminWhatsAppNumber).replace(/[^0-9]/g, '');
+  const message = [
+    `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
+    `أود تسجيل طفلي في المجموعة التعليمية عبر منصة شاطر:`,
+    ``,
+    `• اسم المجموعة: ${params.groupTitle}`,
+    `• المعلم: ${params.tutorHonorific} ${params.tutorName}`,
+    `• التخصص: ${params.specializationLabel}`,
+    `• جدول الحصص: ${params.weeklyScheduleSummary}`,
+    `• تاريخ البدء: ${params.startDate} (${params.sessionsCount} حصص)`,
+    `• اشتراك الطالب: ${params.pricePerStudent} ${params.currency}`,
+    ``,
+    `أرجو إفادتي بتوفر مقعد والخطوات التالية لتأكيد انضمام الطالب. شكراً لكم!`,
+  ].join('\n');
+  return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
+}

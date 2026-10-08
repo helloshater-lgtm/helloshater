@@ -385,4 +385,115 @@ export interface TutorPortalContext {
   } | null;
 }
 
+export interface ApprovedSpecializationItem {
+  id: string; // unique key in UI
+  track: TrackType;
+  label: string;
+  // School fields
+  courseOptionId?: string;
+  stageId?: string;
+  stageName?: string;
+  gradeId?: string;
+  gradeName?: string;
+  subjectId?: string;
+  subjectName?: string;
+  curriculumId?: string;
+  curriculumName?: string;
+  // Quran fields
+  ageGroupId?: string;
+  ageGroupName?: string;
+  levelId?: string;
+  levelName?: string;
+}
+
+export interface TutorPrivateSlot {
+  id: string;
+  tutorId?: string;
+  specializationLabel: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  timezone: string;
+  durationMinutes: number;
+  priceAmount: number;
+  currency: string;
+  isAvailable: boolean;
+  isBooked: boolean;
+  bookedAt?: string | null;
+  createdAt?: string;
+}
+
+export interface TutorGroupSessionItem {
+  id?: string;
+  sessionNumber: number;
+  sessionDate: string;
+  startTime: string;
+  endTime: string;
+  timezone?: string;
+  title?: string;
+}
+
+export interface TutorGroup {
+  id: string;
+  tutorId?: string;
+  title: string;
+  description?: string;
+  specializationLabel: string;
+  maxStudents: number;
+  enrolledStudents: number;
+  remainingSeats?: number;
+  pricePerStudent: number;
+  priceType?: 'per_session' | 'full_package';
+  currency: string;
+  sessionsCount: number;
+  sessionDurationMinutes: number;
+  startDate: string;
+  endDate?: string | null;
+  weeklyScheduleSummary: string;
+  reviewStatus?: 'draft' | 'pending_review' | 'approved' | 'rejected' | 'needs_revision';
+  adminReviewNotes?: string | null;
+  status: 'open' | 'in_progress' | 'completed' | 'cancelled';
+  isPublished: boolean;
+  sessions?: TutorGroupSessionItem[];
+  createdAt?: string;
+}
+
+export interface TutorPrivateBooking {
+  id: string;
+  slotId: string;
+  tutorId: string;
+  studentName: string;
+  guardianName: string;
+  phoneNumber: string;
+  agreedPrice: number;
+  currency: string;
+  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  notes?: string;
+  cancellationReason?: string;
+  cancelledBy?: string;
+  cancelledAt?: string;
+  confirmedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TutorGroupEnrollment {
+  id: string;
+  groupId: string;
+  tutorId: string;
+  studentName: string;
+  guardianName: string;
+  phoneNumber: string;
+  agreedPrice: number;
+  currency: string;
+  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  notes?: string;
+  cancellationReason?: string;
+  cancelledBy?: string;
+  cancelledAt?: string;
+  confirmedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 

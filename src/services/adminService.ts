@@ -1061,4 +1061,189 @@ export const AdminService = {
       throw new Error(`فشل تنفيذ قرار مراجعة مسودة المعلم: ${error.message}`);
     }
   },
+
+  /**
+   * 19. Admin review group class (approve, reject, needs_revision)
+   */
+  async reviewGroup(
+    groupId: string,
+    action: 'approve' | 'reject' | 'needs_revision',
+    adminNotes?: string
+  ): Promise<void> {
+    const { error } = await supabase.rpc('admin_review_group', {
+      p_group_id: groupId,
+      p_action: action,
+      p_admin_notes: adminNotes?.trim() || null,
+    });
+
+    if (error) {
+      throw new Error(`فشل مراجعة المجموعة: ${error.message}`);
+    }
+  },
+
+  /**
+   * 20. Admin confirm private booking
+   */
+  async confirmPrivateBooking(bookingId: string): Promise<void> {
+    const { error } = await supabase.rpc('admin_confirm_private_booking', {
+      p_booking_id: bookingId,
+    });
+
+    if (error) {
+      throw new Error(`تعذر تأكيد حجز الحصة الخاصة: ${error.message}`);
+    }
+  },
+
+  /**
+   * 21. Admin cancel private booking
+   */
+  async cancelPrivateBooking(
+    bookingId: string,
+    reason?: string,
+    reopenSlot: boolean = true
+  ): Promise<void> {
+    const { error } = await supabase.rpc('admin_cancel_private_booking', {
+      p_booking_id: bookingId,
+      p_cancellation_reason: reason?.trim() || null,
+      p_reopen_slot: reopenSlot,
+    });
+
+    if (error) {
+      throw new Error(`تعذر إلغاء حجز الحصة الخاصة: ${error.message}`);
+    }
+  },
+
+  /**
+   * 22. Admin confirm group enrollment
+   */
+  async confirmGroupEnrollment(enrollmentId: string): Promise<void> {
+    const { error } = await supabase.rpc('admin_confirm_group_enrollment', {
+      p_enrollment_id: enrollmentId,
+    });
+
+    if (error) {
+      throw new Error(`تعذر تأكيد اشتراك الطالب في المجموعة: ${error.message}`);
+    }
+  },
+
+  /**
+   * 23. Admin cancel group enrollment
+   */
+  async cancelGroupEnrollment(enrollmentId: string, reason?: string): Promise<void> {
+    const { error } = await supabase.rpc('admin_cancel_group_enrollment', {
+      p_enrollment_id: enrollmentId,
+      p_cancellation_reason: reason?.trim() || null,
+    });
+
+    if (error) {
+      throw new Error(`تعذر إلغاء اشتراك الطالب في المجموعة: ${error.message}`);
+    }
+  },
+
+  /**
+   * 24. Admin create private booking from WhatsApp lead
+   */
+  async createPrivateBooking(params: {
+    slotId: string;
+    studentName: string;
+    guardianName: string;
+    phoneNumber: string;
+    agreedPrice: number;
+    notes?: string;
+  }): Promise<{ bookingId: string; alreadyExists?: boolean }> {
+    const { slotId, studentName, guardianName, phoneNumber, agreedPrice, notes } = params;
+    const { data, error } = await supabase.rpc('admin_create_private_booking', {
+      p_slot_id: slotId,
+      p_student_name: studentName.trim(),
+      p_guardian_name: guardianName.trim(),
+      p_phone_number: phoneNumber.trim(),
+      p_agreed_price: agreedPrice,
+      p_notes: notes?.trim() || null,
+    });
+
+    if (error) {
+      throw new Error(`فشل تسجيل طلب حجز الحصة الخاصة: ${error.message}`);
+    }
+
+    return { bookingId: data?.bookingId, alreadyExists: data?.alreadyExists };
+  },
+
+  /**
+   * 25. Admin create group enrollment from WhatsApp lead
+   */
+  async createGroupEnrollment(params: {
+    groupId: string;
+    studentName: string;
+    guardianName: string;
+    phoneNumber: string;
+    agreedPrice: number;
+    priceType?: 'per_session' | 'full_package';
+    notes?: string;
+  }): Promise<{ enrollmentId: string; alreadyExists?: boolean }> {
+    const { groupId, studentName, guardianName, phoneNumber, agreedPrice, priceType = 'full_package', notes } = params;
+    const { data, error } = await supabase.rpc('admin_create_group_enrollment', {
+      p_group_id: groupId,
+      p_student_name: studentName.trim(),
+      p_guardian_name: guardianName.trim(),
+      p_phone_number: phoneNumber.trim(),
+      p_agreed_price: agreedPrice,
+      p_price_type: priceType,
+      p_notes: notes?.trim() || null,
+    });
+
+    if (error) {
+      throw new Error(`فشل تسجيل اشتراك المجموعة: ${error.message}`);
+    }
+
+    return { enrollmentId: data?.enrollmentId, alreadyExists: data?.alreadyExists };
+  },
+
+  /**
+   * 26. Admin get private bookings
+   */
+  async getPrivateBookings(status?: string, tutorId?: string): Promise<any[]> {
+    const { data, error } = await supabase.rpc('admin_get_private_bookings', {
+      p_status: status || null,
+      p_tutor_id: tutorId || null,
+    });
+
+    if (error) {
+      return [];
+    }
+
+    return data || [];
+  },
+
+  /**
+   * 27. Admin get group enrollments
+   */
+  async getGroupEnrollments(status?: string, groupId?: string, tutorId?: string): Promise<any[]> {
+    const { data, error } = await supabase.rpc('admin_get_group_enrollments', {
+      p_status: status || null,
+      p_group_id: groupId || null,
+      p_tutor_id: tutorId || null,
+    });
+
+    if (error) {
+      return [];
+    }
+
+    return data || [];
+  },
+
+  /**
+   * 28. Admin get educational groups
+   */
+  async getGroups(reviewStatus?: string, tutorId?: string): Promise<any[]> {
+    const { data, error } = await supabase.rpc('admin_get_groups', {
+      p_review_status: reviewStatus || null,
+      p_tutor_id: tutorId || null,
+    });
+
+    if (error) {
+      return [];
+    }
+
+    return data || [];
+  },
 };

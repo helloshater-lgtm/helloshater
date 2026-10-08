@@ -4,7 +4,11 @@ import { DataService } from '../services/dataService';
 import { VideoModal } from './VideoModal';
 import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
 import { TutorTrialCalendar, SelectedTrialSlotData } from './TutorTrialCalendar';
-import { trackTrialSlotSelected } from '../services/analytics';
+import { trackTrialSlotSelected, trackWhatsAppClicked } from '../services/analytics';
+import {
+  buildPrivateSessionBookingWhatsAppUrl,
+  buildGroupClassBookingWhatsAppUrl,
+} from '../config/shatirConfig';
 import {
   ArrowRight,
   GraduationCap,
@@ -22,6 +26,10 @@ import {
   CheckCircle2,
   Bookmark,
   Info,
+  Users,
+  DollarSign,
+  Loader2,
+  Lock,
 } from 'lucide-react';
 
 interface TutorProfileViewProps {
@@ -54,6 +62,11 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   const [availableSlots, setAvailableSlots] = useState<TutorAvailableSlot[]>([]);
   const [isLoadingSlots, setIsLoadingSlots] = useState(true);
   const [selectedSlotData, setSelectedSlotData] = useState<SelectedTrialSlotData | null>(null);
+
+  // Paid Private Slots & Educational Groups for public display
+  const [publicPrivateSlots, setPublicPrivateSlots] = useState<any[]>([]);
+  const [publicGroups, setPublicGroups] = useState<any[]>([]);
+  const [isLoadingOffers, setIsLoadingOffers] = useState(false);
 
   // Helpers for slot formatting in natural Arabic
   const formatSlotDay = (dateStr: string): string => {
@@ -168,6 +181,60 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       isMounted = false;
     };
   }, [tutor.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingOffers(true);
+    Promise.allSettled([
+      DataService.getTutorPrivateSlots(tutor.id),
+      DataService.getTutorGroups(tutor.id),
+    ]).then(([privateRes, groupsRes]) => {
+      if (!isMounted) return;
+      if (privateRes.status === 'fulfilled') {
+        setPublicPrivateSlots(privateRes.value || []);
+      }
+      if (groupsRes.status === 'fulfilled') {
+        setPublicGroups(groupsRes.value || []);
+      }
+      setIsLoadingOffers(false);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [tutor.id]);
+
+  const handleBookPrivateSlot = (slot: any) => {
+    trackWhatsAppClicked('private_slot_booking');
+    const url = buildPrivateSessionBookingWhatsAppUrl({
+      tutorName: tutor.name,
+      tutorHonorific: tutor.honorific,
+      specializationLabel: slot.specializationLabel,
+      slotDate: slot.slotDate,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      timezone: slot.timezone || 'بتوقيت القاهرة',
+      durationMinutes: slot.durationMinutes,
+      priceAmount: slot.priceAmount,
+      currency: slot.currency,
+    });
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleBookGroup = (group: any) => {
+    trackWhatsAppClicked('group_class_booking');
+    const url = buildGroupClassBookingWhatsAppUrl({
+      tutorName: tutor.name,
+      tutorHonorific: tutor.honorific,
+      groupTitle: group.title,
+      specializationLabel: group.specializationLabel,
+      weeklyScheduleSummary: group.weeklyScheduleSummary,
+      startDate: group.startDate,
+      sessionsCount: group.sessionsCount,
+      pricePerStudent: group.pricePerStudent,
+      currency: group.currency,
+    });
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   const handleSelectCalendarSlot = (slot: SelectedTrialSlotData) => {
     setSelectedSlotData(slot);
@@ -592,6 +659,151 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                 </p>
               </div>
             </div>
+
+            {/* Section: الحصص الخاصة المدفوعة (1:1) المتاحة للحجز المباشر */}
+            {publicPrivateSlots.length > 0 && (
+              <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="w-5 h-5 text-[#0D4E8B]" />
+                    <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                      مواعيد الحصص الخاصة الفردية المتاحة (1:1)
+                    </h2>
+                  </div>
+                  <span className="text-xs font-bold text-[#0D4E8B] bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
+                    {publicPrivateSlots.length} موعد متاح
+                  </span>
+                </div>
+
+                <p className="text-xs text-[#64748B] leading-relaxed">
+                  حصص خصوصية مباشرة فردية مع المعلم، محددة بالتخصص والمدة والسعر لتثبيت الموعد مباشرة مع مستشار شاطر.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {publicPrivateSlots.map((slot) => (
+                    <div
+                      key={slot.id}
+                      className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] hover:border-[#CBD5E1] transition-all flex flex-col justify-between gap-3"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
+                            {new Date(slot.slotDate).toLocaleDateString('ar-EG', {
+                              weekday: 'long',
+                              day: 'numeric',
+                              month: 'short',
+                            })}
+                          </span>
+                          <span className="font-mono text-xs text-[#0D4E8B] font-bold" dir="ltr">
+                            {slot.startTime.substring(0, 5)} - {slot.endTime.substring(0, 5)}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-[#0D4E8B] font-bold">
+                          {slot.specializationLabel}
+                        </p>
+
+                        <div className="flex items-center gap-2 text-[11px] text-[#64748B]">
+                          <span>المدة: {slot.durationMinutes} دقيقة</span>
+                          <span>•</span>
+                          <span className="font-bold text-[#1F2A44]">{slot.priceAmount} {slot.currency}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleBookPrivateSlot(slot)}
+                        className="w-full py-2 px-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>طلب تثبيت هذا الموعد الخاص</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Section: المجموعات التعليمية المفتوحة للتسجيل */}
+            {publicGroups.length > 0 && (
+              <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E2E8F0] shadow-sm space-y-5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-5 h-5 text-[#0D4E8B]" />
+                    <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#0D4E8B]">
+                      المجموعات التعليمية المتاحة (Small Groups)
+                    </h2>
+                  </div>
+                  <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                    مجموعات صغيرة تفاعلية
+                  </span>
+                </div>
+
+                <p className="text-xs text-[#64748B] leading-relaxed">
+                  مجموعات دراسية صغيرة يشرف عليها المعلم مباشرة وتتيح للطالب التفاعل الإيجابي مع زملائه باشتراك مخفض.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {publicGroups.map((group) => (
+                    <div
+                      key={group.id}
+                      className="p-5 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] hover:border-[#CBD5E1] transition-all flex flex-col justify-between gap-4"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                            {group.status === 'open' ? 'متاح التسجيل' : 'جارية'}
+                          </span>
+                          <span className="font-['Cairo'] text-sm font-extrabold text-[#0D4E8B]">
+                            {group.pricePerStudent} {group.currency} / {group.priceType === 'per_session' ? 'للحصة' : 'للباقة'}
+                          </span>
+                        </div>
+
+                        <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                          {group.title}
+                        </h3>
+
+                        <p className="text-xs text-[#0D4E8B] font-bold">
+                          {group.specializationLabel}
+                        </p>
+
+                        {group.description && (
+                          <p className="text-xs text-[#64748B] line-clamp-2 leading-relaxed">
+                            {group.description}
+                          </p>
+                        )}
+
+                        <div className="p-3 rounded-xl bg-white border border-[#E2E8F0] text-xs text-[#535E7B] space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span>الجدول:</span>
+                            <span className="font-bold text-[#1F2A44]">{group.weeklyScheduleSummary}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>البدء:</span>
+                            <span className="font-mono">{group.startDate} ({group.sessionsCount} حصص)</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>المقاعد المتبقية:</span>
+                            <span className="font-bold text-emerald-700">
+                              متبقي {group.remainingSeats !== undefined ? group.remainingSeats : Math.max(0, group.maxStudents - group.enrolledStudents)} مقاعد من {group.maxStudents}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleBookGroup(group)}
+                        className="w-full py-2.5 px-4 rounded-xl bg-[#25D366] hover:bg-[#1EBE5D] text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>حجز مقعد في هذه المجموعة</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ========================================================================= */}
