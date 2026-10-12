@@ -549,7 +549,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           sessions: generatedGroupSessions,
         });
 
-        setSuccessMessage('تم تحديث بيانات المجموعة بنجاح وإعادة تقديمها لمراجعة الإدارة.');
+        setSuccessMessage('تم تحديث بيانات المجموعة ونشرها مباشرة بنجاح.');
         setEditingGroup(null);
       } else {
         await TutorPortalService.createGroup({
@@ -568,7 +568,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           sessions: generatedGroupSessions,
         });
 
-        setSuccessMessage('تم إنشاء المجموعة التعليمية بنجاح ورفعها لمراجعة الإدارة والاعتماد قبل النشر للجمهور.');
+        setSuccessMessage('تم إنشاء المجموعة التعليمية ونشرها مباشرة بنجاح؛ أصبحت متاحة الآن للتسجيل في ملفك العام.');
       }
 
       setTimeout(() => setSuccessMessage(null), 5000);
@@ -1005,6 +1005,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                               <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
                                 انقضى وقته
                               </span>
+                            ) : slot.adminSuspended ? (
+                              <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+                                موقوف إدارياً
+                              </span>
                             ) : (
                               <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                                 مغلق إدارياً
@@ -1015,7 +1019,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                       </div>
 
                       {/* Delete Action */}
-                      {!slot.isBooked && slot.isAvailable && !isPast ? (
+                      {!slot.isBooked && slot.isAvailable && !isPast && !slot.adminSuspended ? (
                         <button
                           type="button"
                           onClick={() => handleDeleteTrialSlot(slot.id)}
@@ -1427,6 +1431,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                               <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
                                 انقضى وقته
                               </span>
+                            ) : slot.adminSuspended ? (
+                              <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+                                موقوف إدارياً
+                              </span>
                             ) : (
                               <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                                 مغلق إدارياً
@@ -1437,7 +1445,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                       </div>
 
                       {/* Actions */}
-                      {!slot.isBooked && slot.isAvailable && !isPast ? (
+                      {!slot.isBooked && slot.isAvailable && !isPast && !slot.adminSuspended ? (
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
@@ -1739,17 +1747,20 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 )}
 
                 {/* Review Note */}
-                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
-                  <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-center gap-2">
+                  <Info className="w-4 h-4 text-[#0D4E8B] shrink-0" />
                   <span>
-                    ملاحظة هامة: بعد إنشاء المجموعة، ستخضع لمراجعة إدارة شاطر للتأكد من المنهج والمواعيد قبل نشرها للجمهور.
+                    ملاحظة: سيتم نشر المجموعة التعليمية فوراً ومباشرة في ملفك التدريسي المعتمد وتكون متاحة لاشتراك الطلاب بمجرد الحفظ دون الحاجة لمراجعة إدارية مسبقة.
                   </span>
                 </div>
 
                 <div className="pt-2 flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowAddGroupForm(false)}
+                    onClick={() => {
+                      setShowAddGroupForm(false);
+                      setEditingGroup(null);
+                    }}
                     className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
                   >
                     إلغاء
@@ -1764,7 +1775,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                     ) : (
                       <>
                         <Check className="w-4 h-4" />
-                        <span>نشر المجموعة التعليمية</span>
+                        <span>{editingGroup ? 'حفظ ونشر التعديلات' : 'نشر المجموعة التعليمية'}</span>
                       </>
                     )}
                   </button>
@@ -1799,21 +1810,21 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                            group.reviewStatus === 'approved'
-                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            group.adminSuspended
+                              ? 'bg-rose-50 text-rose-800 border border-rose-200'
                               : group.reviewStatus === 'rejected'
                               ? 'bg-rose-50 text-rose-800 border border-rose-200'
                               : group.reviewStatus === 'needs_revision'
                               ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                              : 'bg-indigo-50 text-indigo-800 border border-indigo-200'
+                              : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                           }`}>
-                            {group.reviewStatus === 'approved'
-                              ? 'معتمدة إدارياً'
+                            {group.adminSuspended
+                              ? 'موقوفة إدارياً'
                               : group.reviewStatus === 'rejected'
-                              ? 'مرفوضة'
+                              ? 'مرفوضة إدارياً'
                               : group.reviewStatus === 'needs_revision'
-                              ? 'بحاجة لتعديل'
-                              : 'قيد مراجعة الإدارة'}
+                              ? 'ملاحظة إدارية للتعديل'
+                              : 'منشورة ومتاحة'}
                           </span>
 
                           <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
@@ -1852,12 +1863,17 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         </p>
                       )}
 
-                      {group.adminReviewNotes && (
+                      {group.adminSuspended && (group.adminSuspensionReason || group.adminReviewNotes) ? (
+                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900">
+                          <span className="font-bold">سبب الإيقاف الإداري: </span>
+                          <span>{group.adminSuspensionReason || group.adminReviewNotes}</span>
+                        </div>
+                      ) : group.adminReviewNotes ? (
                         <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
                           <span className="font-bold">ملاحظات الإدارة: </span>
                           <span>{group.adminReviewNotes}</span>
                         </div>
-                      )}
+                      ) : null}
 
                       <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
                         <div className="flex items-center justify-between">
@@ -1880,11 +1896,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                     {/* Status Toggle Actions */}
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                       <span className="text-[11px] text-[#64748B]">
-                        {group.isPublished ? 'معروضة بالملف العام' : 'غير معروضة (تتطلب اعتماد الإدارة)'}
+                        {group.adminSuspended
+                          ? 'موقوفة إدارياً من الإدارة'
+                          : group.isPublished
+                          ? 'معروضة بالملف العام'
+                          : 'غير معروضة حالياً'}
                       </span>
 
                       <div className="flex items-center gap-1.5">
-                        {group.enrolledStudents === 0 && group.status !== 'completed' && group.status !== 'cancelled' && (
+                        {group.enrolledStudents === 0 && !group.adminSuspended && group.status !== 'completed' && group.status !== 'cancelled' && (
                           <button
                             type="button"
                             onClick={() => {
@@ -1910,7 +1930,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           </button>
                         )}
 
-                        {group.status === 'open' ? (
+                        {!group.adminSuspended && group.status === 'open' ? (
                           <button
                             type="button"
                             disabled={updatingGroupId === group.id}
@@ -1919,7 +1939,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           >
                             بدء المجموعة
                           </button>
-                        ) : group.status === 'in_progress' ? (
+                        ) : !group.adminSuspended && group.status === 'in_progress' ? (
                           <button
                             type="button"
                             disabled={updatingGroupId === group.id}

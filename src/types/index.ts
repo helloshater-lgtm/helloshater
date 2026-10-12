@@ -227,6 +227,7 @@ export interface TutorAvailableSlot {
   endTime: string;
   timezone: string;
   isAvailable: boolean;
+  adminSuspended?: boolean;
   isBooked?: boolean;
   bookedAt?: string | null;
   notes?: string | null;
@@ -418,6 +419,7 @@ export interface TutorPrivateSlot {
   priceAmount: number;
   currency: string;
   isAvailable: boolean;
+  adminSuspended?: boolean;
   isBooked: boolean;
   bookedAt?: string | null;
   createdAt?: string;
@@ -452,6 +454,8 @@ export interface TutorGroup {
   weeklyScheduleSummary: string;
   reviewStatus?: 'draft' | 'pending_review' | 'approved' | 'rejected' | 'needs_revision';
   adminReviewNotes?: string | null;
+  adminSuspended?: boolean;
+  adminSuspensionReason?: string | null;
   status: 'open' | 'in_progress' | 'completed' | 'cancelled';
   isPublished: boolean;
   sessions?: TutorGroupSessionItem[];

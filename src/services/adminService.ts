@@ -528,6 +528,25 @@ export const AdminService = {
   },
 
   /**
+   * 9.1 Administrative suspension or reopening of a private slot
+   */
+  async togglePrivateSlotAvailability(
+    slotId: string,
+    isAvailable: boolean,
+    notes?: string
+  ): Promise<void> {
+    const { error } = await supabase.rpc('admin_toggle_private_slot_availability', {
+      p_slot_id: slotId,
+      p_is_available: isAvailable,
+      p_notes: notes || null,
+    });
+
+    if (error) {
+      throw new Error(`فشل تحديث إتاحة الموعد الخاص: ${error.message}`);
+    }
+  },
+
+  /**
    * 10. Delete slot (permanently blocked if slot is confirmed booked)
    */
   async deleteSlot(slotId: string): Promise<void> {
@@ -1082,6 +1101,25 @@ export const AdminService = {
   },
 
   /**
+   * 19.1 Admin suspend or resume group publication
+   */
+  async suspendGroup(
+    groupId: string,
+    isSuspended: boolean,
+    reason?: string
+  ): Promise<void> {
+    const { error } = await supabase.rpc('admin_suspend_group', {
+      p_group_id: groupId,
+      p_is_suspended: isSuspended,
+      p_reason: reason?.trim() || null,
+    });
+
+    if (error) {
+      throw new Error(`تعذر تعديل حالة إيقاف المجموعة: ${error.message}`);
+    }
+  },
+
+  /**
    * 20. Admin confirm private booking
    */
   async confirmPrivateBooking(bookingId: string): Promise<void> {
@@ -1247,3 +1285,4 @@ export const AdminService = {
     return data || [];
   },
 };
+

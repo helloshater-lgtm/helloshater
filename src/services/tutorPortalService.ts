@@ -190,6 +190,7 @@ export const TutorPortalService = {
         endTime: s.end_time,
         timezone: s.timezone || 'Africa/Cairo',
         isAvailable: Boolean(s.is_available),
+        adminSuspended: Boolean(s.admin_suspended),
         isBooked: Boolean(s.is_booked),
         bookedAt: s.booked_at,
         notes: null, // Always concealed from tutor
@@ -201,7 +202,7 @@ export const TutorPortalService = {
     const context = await this.getMyContext();
     const { data, error } = await supabase
       .from('tutor_available_slots')
-      .select('id, slot_date, start_time, end_time, timezone, is_available, is_booked, booked_at, created_at')
+      .select('id, slot_date, start_time, end_time, timezone, is_available, admin_suspended, is_booked, booked_at, created_at')
       .eq('tutor_id', context.tutor.id)
       .order('slot_date', { ascending: true })
       .order('start_time', { ascending: true });
@@ -218,6 +219,7 @@ export const TutorPortalService = {
       endTime: s.end_time,
       timezone: s.timezone || 'Africa/Cairo',
       isAvailable: Boolean(s.is_available),
+      adminSuspended: Boolean(s.admin_suspended),
       isBooked: Boolean(s.is_booked),
       bookedAt: s.booked_at,
       notes: null, // Concealed
@@ -465,6 +467,7 @@ export const TutorPortalService = {
         priceAmount: s.price_amount,
         currency: s.currency || 'ج.م',
         isAvailable: Boolean(s.is_available),
+        adminSuspended: Boolean(s.admin_suspended),
         isBooked: Boolean(s.is_booked),
         bookedAt: s.booked_at,
         createdAt: s.created_at,
@@ -475,7 +478,7 @@ export const TutorPortalService = {
     const context = await this.getMyContext();
     const { data, error } = await supabase
       .from('tutor_private_slots')
-      .select('id, specialization_label, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency, is_available, is_booked, booked_at, created_at')
+      .select('id, specialization_label, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency, is_available, admin_suspended, is_booked, booked_at, created_at')
       .eq('tutor_id', context.tutor.id)
       .order('slot_date', { ascending: true })
       .order('start_time', { ascending: true });
@@ -496,6 +499,7 @@ export const TutorPortalService = {
       priceAmount: s.price_amount,
       currency: s.currency || 'ج.م',
       isAvailable: Boolean(s.is_available),
+      adminSuspended: Boolean(s.admin_suspended),
       isBooked: Boolean(s.is_booked),
       bookedAt: s.booked_at,
       createdAt: s.created_at,
@@ -606,8 +610,10 @@ export const TutorPortalService = {
         startDate: g.start_date,
         endDate: g.end_date,
         weeklyScheduleSummary: g.weekly_schedule_summary,
-        reviewStatus: g.review_status || (g.is_published ? 'approved' : 'pending_review'),
+        reviewStatus: g.review_status || (g.is_published ? 'approved' : 'open'),
         adminReviewNotes: g.admin_review_notes || null,
+        adminSuspended: Boolean(g.admin_suspended),
+        adminSuspensionReason: g.admin_suspension_reason || null,
         status: g.status,
         isPublished: Boolean(g.is_published),
         createdAt: g.created_at,
@@ -642,8 +648,10 @@ export const TutorPortalService = {
       startDate: g.start_date,
       endDate: g.end_date,
       weeklyScheduleSummary: g.weekly_schedule_summary,
-      reviewStatus: g.review_status || 'pending_review',
+      reviewStatus: g.review_status || 'approved',
       adminReviewNotes: g.admin_review_notes || null,
+      adminSuspended: Boolean(g.admin_suspended),
+      adminSuspensionReason: g.admin_suspension_reason || null,
       status: g.status,
       isPublished: Boolean(g.is_published),
       createdAt: g.created_at,

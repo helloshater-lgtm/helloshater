@@ -47,6 +47,10 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
   const [reviewAction, setReviewAction] = useState<'approve' | 'reject' | 'needs_revision'>('approve');
   const [reviewNotes, setReviewNotes] = useState('');
 
+  // Group suspension modal
+  const [suspendModalGroup, setSuspendModalGroup] = useState<any | null>(null);
+  const [suspensionReason, setSuspensionReason] = useState('');
+
   // Cancel reason modal
   const [cancelModalItem, setCancelModalItem] = useState<{ type: 'private' | 'group'; id: string } | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -179,6 +183,39 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
     }
   };
 
+  // Handle Group Suspension by Admin
+  const handleSuspendGroup = async () => {
+    if (!suspendModalGroup) return;
+    setActionLoadingId(suspendModalGroup.id);
+    setErrorMessage(null);
+    try {
+      await AdminService.suspendGroup(suspendModalGroup.id, true, suspensionReason);
+      setSuccessMessage('تم إيقاف عرض المجموعة إدارياً وحجبها عن الجمهور بنجاح.');
+      setSuspendModalGroup(null);
+      setSuspensionReason('');
+      await loadData();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'فشل إيقاف عرض المجموعة.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Handle Group Resumption by Admin
+  const handleResumeGroup = async (groupId: string) => {
+    setActionLoadingId(groupId);
+    setErrorMessage(null);
+    try {
+      await AdminService.suspendGroup(groupId, false);
+      setSuccessMessage('تم استئناف نشر المجموعة للجمهور بنجاح.');
+      await loadData();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'فشل استئناف نشر المجموعة.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   // Create Private Booking from WhatsApp
   const handleCreatePrivateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -280,7 +317,14 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
   });
 
   const filteredGroups = groups.filter((g) => {
-    const matchesStatus = statusFilter === 'all' || g.review_status === statusFilter;
+    let matchesStatus = false;
+    if (statusFilter === 'all') {
+      matchesStatus = true;
+    } else if (statusFilter === 'suspended') {
+      matchesStatus = Boolean(g.admin_suspended);
+    } else {
+      matchesStatus = g.review_status === statusFilter && !g.admin_suspended;
+    }
     const matchesSearch =
       searchTerm === '' ||
       g.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -304,10 +348,10 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
             }`}
           >
             <ShieldCheck className="w-4 h-4" />
-            <span>مراجعة المجموعات</span>
-            {groups.filter((g) => g.review_status === 'pending_review').length > 0 && (
-              <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
-                {groups.filter((g) => g.review_status === 'pending_review').length}
+            <span>إدارة المجموعات التعليمية</span>
+            {groups.filter((g) => g.admin_suspended).length > 0 && (
+              <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {groups.filter((g) => g.admin_suspended).length}
               </span>
             )}
           </button>
@@ -411,11 +455,11 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
           >
             {subTab === 'group_reviews' ? (
               <>
-                <option value="all">كل حالات المراجعة</option>
-                <option value="pending_review">قيد المراجعة والاعتماد</option>
-                <option value="approved">معتمدة ومنشورة</option>
+                <option value="all">كل حالات المجموعات</option>
+                <option value="approved">منشورة ومتاحة</option>
+                <option value="suspended">موقوفة إدارياً</option>
                 <option value="needs_revision">بحاجة لتعديل المعلم</option>
-                <option value="rejected">مرفوضة</option>
+                <option value="rejected">مرفوضة إدارياً</option>
               </>
             ) : (
               <>
@@ -454,7 +498,9 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <span
                         className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                          group.review_status === 'approved'
+                          group.admin_suspended
+                            ? 'bg-rose-50 text-rose-800 border border-rose-200'
+                            : group.review_status === 'approved'
                             ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                             : group.review_status === 'pending_review'
                             ? 'bg-amber-50 text-amber-800 border border-amber-200 animate-pulse'
@@ -463,8 +509,10 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                             : 'bg-rose-50 text-rose-800 border border-rose-200'
                         }`}
                       >
-                        {group.review_status === 'approved'
-                          ? 'معتمدة ومنشورة'
+                        {group.admin_suspended
+                          ? 'موقوفة إدارياً'
+                          : group.review_status === 'approved'
+                          ? 'منشورة ومتاحة'
                           : group.review_status === 'pending_review'
                           ? 'قيد مراجعة الإدارة'
                           : group.review_status === 'needs_revision'
@@ -490,7 +538,14 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                       <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{group.description}</p>
                     )}
 
-                    {group.admin_review_notes && (
+                    {group.admin_suspended && (group.admin_suspension_reason || group.admin_review_notes) && (
+                      <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">
+                        <span className="font-bold">سبب الإيقاف الإداري: </span>
+                        <span>{group.admin_suspension_reason || group.admin_review_notes}</span>
+                      </div>
+                    )}
+
+                    {!group.admin_suspended && group.admin_review_notes && (
                       <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700">
                         <span className="font-bold">ملاحظات الإدارة المسجلة: </span>
                         <span>{group.admin_review_notes}</span>
@@ -521,9 +576,34 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                     </div>
                   </div>
 
-                  {/* Review Actions */}
+                  {/* Administrative Actions */}
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2 flex-wrap">
-                    {group.review_status !== 'approved' && (
+                    {group.admin_suspended ? (
+                      <button
+                        type="button"
+                        disabled={actionLoadingId === group.id}
+                        onClick={() => handleResumeGroup(group.id)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>استئناف النشر للجمهور</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={actionLoadingId === group.id}
+                        onClick={() => {
+                          setSuspendModalGroup(group);
+                          setSuspensionReason('');
+                        }}
+                        className="px-3 py-1.5 rounded-xl border border-rose-300 text-rose-700 hover:bg-rose-50 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>إيقاف العرض الإداري</span>
+                      </button>
+                    )}
+
+                    {!group.admin_suspended && group.review_status !== 'approved' && (
                       <button
                         type="button"
                         onClick={() => {
@@ -538,7 +618,7 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                       </button>
                     )}
 
-                    {group.review_status !== 'needs_revision' && (
+                    {!group.admin_suspended && group.review_status !== 'needs_revision' && (
                       <button
                         type="button"
                         onClick={() => {
@@ -552,7 +632,7 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                       </button>
                     )}
 
-                    {group.review_status !== 'rejected' && (
+                    {!group.admin_suspended && group.review_status !== 'rejected' && (
                       <button
                         type="button"
                         onClick={() => {
@@ -843,6 +923,61 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <span>تأكيد الإجراء</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Group Administrative Suspension */}
+      {suspendModalGroup && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-xl">
+            <h3 className="font-['Cairo'] text-base font-bold text-rose-700 flex items-center gap-2">
+              <XCircle className="w-5 h-5 text-rose-600" />
+              <span>إيقاف عرض المجموعة إدارياً</span>
+            </h3>
+
+            <p className="text-xs text-slate-600">
+              المجموعة: <span className="font-bold text-[#1F2A44]">{suspendModalGroup.title}</span>
+            </p>
+
+            <p className="text-xs text-[#64748B]">
+              سيؤدي هذا الإجراء إلى حجب المجموعة وسحب ظهورها من الملف العام للزوار، ومنع المعلم من تعديلها أو تجاوز الإيقاف حتى تقوم الإدارة باستئناف نشرها.
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700 block">
+                سبب الإيقاف الإداري (يظهر للمعلم - اختياري):
+              </label>
+              <textarea
+                value={suspensionReason}
+                onChange={(e) => setSuspensionReason(e.target.value)}
+                rows={3}
+                placeholder="اكتب سبب إيقاف المجموعة هنا..."
+                className="w-full p-3 rounded-xl border border-slate-200 text-xs focus:border-rose-600 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setSuspendModalGroup(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleSuspendGroup}
+                disabled={actionLoadingId === suspendModalGroup.id}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                {actionLoadingId === suspendModalGroup.id ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <span>تأكيد الإيقاف وحجب المجموعة</span>
                 )}
               </button>
             </div>
