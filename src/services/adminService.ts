@@ -10,7 +10,17 @@ import {
   AdminTutorFullDetail,
   AdminTutorSavePayload,
   TutorApplicationRecord,
+  AdminPlatformStatistics,
+  AdminStatisticsDataHealth,
+  AdminStatisticsDataHealthError,
+  AdminStatisticsDrilldownRequest,
+  AdminStatisticsDrilldownResponse,
 } from '../types';
+import {
+  RawStatisticsDataset,
+  computePlatformStatisticsFromDataset,
+  computeStatisticsDrilldownFromDataset,
+} from '../utils/adminStatisticsClassifier';
 
 export interface AdminTutorListItem {
   id: string;
@@ -1284,5 +1294,296 @@ export const AdminService = {
 
     return data || [];
   },
-};
 
+  // Cache for raw statistics dataset when migration RPC is not yet deployed
+  _rawStatsCache: null as {
+    timestamp: number;
+    dataset: RawStatisticsDataset;
+    health: AdminStatisticsDataHealth;
+  } | null,
+
+  async _fetchRawStatisticsDataset(
+    forceRefresh = false,
+    rpcErrorMsg?: string
+  ): Promise<{ dataset: RawStatisticsDataset; health: AdminStatisticsDataHealth }> {
+    const now = Date.now();
+    if (!forceRefresh && this._rawStatsCache && now - this._rawStatsCache.timestamp < 60_000) {
+      return {
+        dataset: this._rawStatsCache.dataset,
+        health: this._rawStatsCache.health,
+      };
+    }
+
+    // Do NOT filter reference tables by is_active = true so historical records linked to inactive items are preserved
+    const [
+      subjectsRes,
+      stagesRes,
+      gradesRes,
+      curriculaRes,
+      courseOptionsRes,
+      quranLevelsRes,
+      quranAgeGroupsRes,
+      tutorsRes,
+      schoolOfferingsRes,
+      quranOfferingsRes,
+      applicationsRes,
+      privateBookingsRes,
+      groupEnrollmentsRes,
+      classesMetadataRpcRes,
+    ] = await Promise.all([
+      supabase.from('subjects').select('id, name, english_name, category, display_order, is_active').order('display_order', { ascending: true }),
+      supabase.from('educational_stages').select('id, name, grades_desc, display_order, is_active').order('display_order', { ascending: true }),
+      supabase.from('educational_grades').select('id, stage_id, name, display_order, is_active').order('display_order', { ascending: true }),
+      supabase.from('curriculum_types').select('id, name, description, display_order, is_active').order('display_order', { ascending: true }),
+      supabase.from('school_course_options').select('id, grade_id, subject_id, curriculum_id, is_active'),
+      supabase.from('quran_levels').select('id, name, description, display_order, is_active').order('display_order', { ascending: true }),
+      supabase.from('quran_age_groups').select('id, name, age_range, display_order, is_active').order('display_order', { ascending: true }),
+      supabase.from('tutors').select('id, name, honorific, headline, is_published, created_at'),
+      supabase.from('tutor_school_offerings').select('id, tutor_id, course_option_id'),
+      supabase.from('tutor_quran_offerings').select('id, tutor_id, age_group_id, level_id'),
+      supabase.from('tutor_applications').select('id, reference_code, user_id, full_name, phone, track, status, school_course_option_ids, school_specializations, quran_offerings, quran_age_groups, quran_levels, created_at'),
+      supabase.rpc('admin_get_private_bookings', { p_status: null, p_tutor_id: null }),
+      supabase.rpc('admin_get_group_enrollments', { p_status: null, p_group_id: null, p_tutor_id: null }),
+      supabase.rpc('admin_get_classes_specialization_metadata'),
+    ]);
+
+    // 1. Reference tables are strictly mandatory; never turn failed reference tables into empty arrays
+    const refErrors: string[] = [];
+    if (subjectsRes.error) refErrors.push(`subjects: ${subjectsRes.error.message}`);
+    if (stagesRes.error) refErrors.push(`educational_stages: ${stagesRes.error.message}`);
+    if (gradesRes.error) refErrors.push(`educational_grades: ${gradesRes.error.message}`);
+    if (curriculaRes.error) refErrors.push(`curriculum_types: ${curriculaRes.error.message}`);
+    if (courseOptionsRes.error) refErrors.push(`school_course_options: ${courseOptionsRes.error.message}`);
+    if (quranLevelsRes.error) refErrors.push(`quran_levels: ${quranLevelsRes.error.message}`);
+    if (quranAgeGroupsRes.error) refErrors.push(`quran_age_groups: ${quranAgeGroupsRes.error.message}`);
+
+    if (refErrors.length > 0) {
+      throw new Error(`تعذر تحميل الجداول المرجعية الأساسية للإحصائيات: ${refErrors.join(' | ')}`);
+    }
+
+    const errors: AdminStatisticsDataHealthError[] = [];
+
+    if (rpcErrorMsg) {
+      errors.push({
+        source: 'RPC: admin_get_platform_statistics',
+        message: `لم يتم تطبيق دالة التجميع المرجعية في قاعدة البيانات أو تعذر استدعاؤها (${rpcErrorMsg}).`,
+        affectedMetrics: 'التجميع المباشر داخل قاعدة البيانات ودوال الفحص الصفحي (Drilldown RPC)',
+      });
+    }
+
+    // 2. Check Tutors & Offerings source
+    let tutorsAvailable = true;
+    if (tutorsRes.error || schoolOfferingsRes.error || quranOfferingsRes.error) {
+      tutorsAvailable = false;
+      const msg = [
+        tutorsRes.error?.message,
+        schoolOfferingsRes.error?.message,
+        quranOfferingsRes.error?.message,
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      errors.push({
+        source: 'بيانات المعلمين وتخصصاتهم المعتمدة',
+        message: `فشل تحميل مصدر المعلمين أو عروض المواد (${msg}).`,
+        affectedMetrics: 'أعداد المعلمين المعتمدين والمنشورين وتغطية المواد',
+      });
+    }
+
+    // 3. Check Applications source
+    let applicationsAvailable = true;
+    if (applicationsRes.error) {
+      applicationsAvailable = false;
+      errors.push({
+        source: 'جدول طلبات انضمام المعلمين (tutor_applications)',
+        message: `فشل تحميل طلبات الانضمام (${applicationsRes.error.message}).`,
+        affectedMetrics: 'أعداد المتقدمين قيد المراجعة، استكمال البيانات، المقبولين، المرفوضين، والمسودات',
+      });
+    }
+
+    // 4. Check Classes Specialization Metadata RPC & Bookings/Enrollments RPCs
+    // Never fall back to guessing or partial group queries without reference foreign keys
+    let subscriptionsAvailable = true;
+    let supplySlotsAvailable = true;
+
+    if (classesMetadataRpcRes.error || !classesMetadataRpcRes.data) {
+      subscriptionsAvailable = false;
+      supplySlotsAvailable = false;
+      errors.push({
+        source: 'RPC: admin_get_classes_specialization_metadata',
+        message: `دالة البيانات المرجعية للحصص والمجموعات غير متوفرة أو لم يتم تطبيق Migration الإحصائيات (${classesMetadataRpcRes.error?.message || 'لا توجد استجابة'}).`,
+        affectedMetrics: 'جميع مؤشرات حجوزات الخاص، اشتراكات المجموعات، المجموعات النشطة، والمواعيد المتاحة',
+      });
+    } else {
+      if (privateBookingsRes.error || groupEnrollmentsRes.error) {
+        subscriptionsAvailable = false;
+        const msg = [privateBookingsRes.error?.message, groupEnrollmentsRes.error?.message]
+          .filter(Boolean)
+          .join(' | ');
+        errors.push({
+          source: 'RPC: admin_get_private_bookings / admin_get_group_enrollments',
+          message: `فشل تحميل سجلات الحجوزات الخاصة أو اشتراكات المجموعات (${msg}).`,
+          affectedMetrics: 'أعداد الحجوزات والاشتراكات (المؤكدة، المكتملة، قيد الانتظار، والملغاة)',
+        });
+      }
+    }
+
+    if (!tutorsAvailable && !applicationsAvailable && !subscriptionsAvailable) {
+      throw new Error(
+        `تعذر تحميل كافة مصادر الإحصائيات الأساسية: ${errors.map((e) => e.message).join(' — ')}`
+      );
+    }
+
+    const classesMeta =
+      !classesMetadataRpcRes.error && classesMetadataRpcRes.data ? classesMetadataRpcRes.data : null;
+    const metaPrivateSlots: any[] =
+      supplySlotsAvailable && Array.isArray(classesMeta?.private_slots)
+        ? classesMeta.private_slots
+        : [];
+    const metaGroups: any[] =
+      supplySlotsAvailable && Array.isArray(classesMeta?.groups) ? classesMeta.groups : [];
+    const metaTrialSummary = supplySlotsAvailable ? classesMeta?.trial_summary || null : null;
+
+    const dataset: RawStatisticsDataset = {
+      subjects: subjectsRes.data as any[],
+      stages: stagesRes.data as any[],
+      grades: gradesRes.data as any[],
+      curricula: curriculaRes.data as any[],
+      courseOptions: courseOptionsRes.data as any[],
+      quranLevels: quranLevelsRes.data as any[],
+      quranAgeGroups: quranAgeGroupsRes.data as any[],
+      tutors: tutorsAvailable ? (tutorsRes.data as any[]) : [],
+      schoolOfferings: tutorsAvailable ? (schoolOfferingsRes.data as any[]) : [],
+      quranOfferings: tutorsAvailable ? (quranOfferingsRes.data as any[]) : [],
+      applications: applicationsAvailable ? (applicationsRes.data as any[]) : [],
+      privateSlots: metaPrivateSlots,
+      privateBookings: subscriptionsAvailable
+        ? ((privateBookingsRes.data as any[]) || []).map((pb: any) => ({
+            ...pb,
+            id: pb.id || pb.booking_id,
+          }))
+        : [],
+      groups: metaGroups,
+      groupEnrollments: subscriptionsAvailable
+        ? ((groupEnrollmentsRes.data as any[]) || []).map((ge: any) => ({
+            ...ge,
+            id: ge.id || ge.enrollment_id,
+          }))
+        : [],
+      trialSummary: metaTrialSummary
+        ? {
+            total_slots: Number(metaTrialSummary.total_slots || 0),
+            available_future_slots: Number(metaTrialSummary.available_future_slots || 0),
+            booked_slots: Number(metaTrialSummary.booked_slots || 0),
+            suspended_slots: Number(metaTrialSummary.suspended_slots || 0),
+          }
+        : undefined,
+    };
+
+    const health: AdminStatisticsDataHealth = {
+      mode: 'partial_sources',
+      rpcMigrationApplied: false,
+      isComplete:
+        tutorsAvailable && applicationsAvailable && subscriptionsAvailable && supplySlotsAvailable,
+      tutorsAvailable,
+      applicationsAvailable,
+      subscriptionsAvailable,
+      supplySlotsAvailable,
+      errors,
+    };
+
+    this._rawStatsCache = { timestamp: now, dataset, health };
+    return { dataset, health };
+  },
+
+  /**
+   * 29. Admin Platform Statistics (Tutors, Applicants, Subscriptions by Subject & Specialization)
+   * Primary path: Calls server-side aggregated RPC `admin_get_platform_statistics`
+   * without downloading raw booking/enrollment/application tables into the browser.
+   * If the RPC is not applied or a source fails, surfaces explicit `dataHealth` errors
+   * and disables affected indicators rather than showing misleading zeros.
+   */
+  async getPlatformStatistics(options?: { forceRefresh?: boolean }): Promise<AdminPlatformStatistics> {
+    if (options?.forceRefresh) {
+      this._rawStatsCache = null;
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_get_platform_statistics');
+    if (!rpcError && rpcData && typeof rpcData === 'object' && 'overview' in rpcData) {
+      return {
+        ...(rpcData as AdminPlatformStatistics),
+        dataHealth: {
+          mode: 'rpc',
+          rpcMigrationApplied: true,
+          isComplete: true,
+          tutorsAvailable: true,
+          applicationsAvailable: true,
+          subscriptionsAvailable: true,
+          supplySlotsAvailable: true,
+          errors: [],
+        },
+      };
+    }
+
+    if (rpcError?.message?.includes('غير مصرح')) {
+      throw new Error(rpcError.message);
+    }
+
+    const { dataset, health } = await this._fetchRawStatisticsDataset(
+      Boolean(options?.forceRefresh),
+      rpcError?.message || 'الدالة admin_get_platform_statistics غير موجودة'
+    );
+    const computed = computePlatformStatisticsFromDataset(dataset);
+    return {
+      ...computed,
+      dataHealth: health,
+    };
+  },
+
+  /**
+   * 30. Admin Statistics Paginated Drilldown
+   * Fetches detailed records on demand (with pagination) when an admin inspects a specific
+   * subject, specialization, Quran program/age group, stage, curriculum, or unclassified bucket.
+   */
+  async getStatisticsDrilldown(
+    request: AdminStatisticsDrilldownRequest
+  ): Promise<AdminStatisticsDrilldownResponse> {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_get_statistics_drilldown', {
+      p_entity_type: request.entityType,
+      p_track: request.track || 'all',
+      p_subject_id: request.subjectId || null,
+      p_stage_id: request.stageId || null,
+      p_grade_id: request.gradeId || null,
+      p_curriculum_id: request.curriculumId || null,
+      p_course_option_id: request.courseOptionId || null,
+      p_quran_level_id: request.quranLevelId || null,
+      p_quran_age_group_id: request.quranAgeGroupId || null,
+      p_status_filter: request.statusFilter || null,
+      p_page: request.page ?? 1,
+      p_page_size: request.pageSize ?? 20,
+    });
+
+    if (!rpcError && rpcData && typeof rpcData === 'object' && 'entityType' in rpcData) {
+      return rpcData as AdminStatisticsDrilldownResponse;
+    }
+
+    if (rpcError?.message?.includes('غير مصرح')) {
+      throw new Error(rpcError.message);
+    }
+
+    const { dataset, health } = await this._fetchRawStatisticsDataset(false);
+
+    if (request.entityType === 'tutors' && !health.tutorsAvailable) {
+      throw new Error('بيانات المعلمين غير مكتملة بسبب فشل تحميل المصدر الأساسي.');
+    }
+    if (request.entityType === 'applicants' && !health.applicationsAvailable) {
+      throw new Error('بيانات طلبات الانضمام غير مكتملة بسبب فشل تحميل المصدر الأساسي.');
+    }
+    if (request.entityType === 'subscriptions' && !health.subscriptionsAvailable) {
+      throw new Error(
+        'بيانات الاشتراكات والحجوزات غير مكتملة — يجب تطبيق Migration الإحصائيات لتوفير المعرفات المرجعية للحصص والمجموعات.'
+      );
+    }
+
+    return computeStatisticsDrilldownFromDataset(dataset, request);
+  },
+};

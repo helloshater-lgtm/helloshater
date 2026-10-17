@@ -500,4 +500,357 @@ export interface TutorGroupEnrollment {
   updatedAt: string;
 }
 
+export interface AdminStatTutorRef {
+  id: string;
+  name: string;
+  honorific: string;
+  headline?: string;
+  isPublished: boolean;
+  createdAt?: string;
+}
+
+export interface AdminStatApplicantRef {
+  id: string;
+  referenceCode?: string;
+  fullName: string;
+  phone: string;
+  track?: TrackType;
+  status: string;
+  createdAt: string;
+}
+
+export interface AdminStatSubscriptionRef {
+  id: string;
+  kind: 'private' | 'group';
+  studentName: string;
+  tutorId: string;
+  tutorName?: string;
+  specializationLabel?: string;
+  groupTitle?: string | null;
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+  createdAt: string;
+}
+
+export interface AdminStatUnclassifiedRef {
+  id: string;
+  category:
+    | 'unassigned_tutor'
+    | 'tutor_offering'
+    | 'application'
+    | 'group'
+    | 'private_slot'
+    | 'private_booking'
+    | 'group_enrollment';
+  title: string;
+  subtitle?: string;
+  reason: string;
+  createdAt?: string;
+  entityId?: string;
+}
+
+export interface AdminUnclassifiedSummary {
+  unassignedTutorsCount: number;
+  unclassifiedTutorOfferingsCount: number;
+  unclassifiedApplicationsCount: number;
+  unclassifiedGroupsCount: number;
+  unclassifiedPrivateSlotsCount: number;
+  unclassifiedPrivateBookingsCount: number;
+  unclassifiedGroupEnrollmentsCount: number;
+  totalUnclassifiedCount: number;
+}
+
+export interface AdminStatisticsDataHealthError {
+  source: string;
+  message: string;
+  affectedMetrics: string;
+}
+
+export interface AdminStatisticsDataHealth {
+  mode: 'rpc' | 'partial_sources';
+  rpcMigrationApplied: boolean;
+  isComplete: boolean;
+  tutorsAvailable: boolean;
+  applicationsAvailable: boolean;
+  subscriptionsAvailable: boolean;
+  supplySlotsAvailable: boolean;
+  errors: AdminStatisticsDataHealthError[];
+}
+
+export interface AdminSubjectStatItem {
+  subjectId: string;
+  subjectName: string;
+  englishName?: string;
+  category: 'core' | 'languages' | 'sciences' | 'social' | 'quran';
+  track: TrackType;
+  isActive?: boolean;
+  // Tutors (distinct per subject)
+  totalTutors: number;
+  publishedTutors: number;
+  unpublishedTutors: number;
+  tutorsList?: AdminStatTutorRef[];
+  approvedOfferingsCount: number;
+  coveredCourseOptionsCount: number;
+  publishedCoveredCourseOptionsCount: number;
+  totalCourseOptionsCount: number;
+  // Applicants (distinct per subject)
+  totalApplicants: number; // submitted + needs_info + approved + rejected (excludes drafts)
+  pendingApplicants: number; // submitted + needs_info
+  submittedApplicants: number;
+  needsInfoApplicants: number;
+  approvedApplicants: number;
+  rejectedApplicants: number;
+  draftApplicants: number;
+  // Subscriptions & Bookings (strictly separated by status)
+  confirmedPrivateBookings: number;
+  completedPrivateBookings: number;
+  pendingPrivateBookings: number;
+  cancelledPrivateBookings: number;
+  totalPrivateBookings: number;
+  confirmedGroupEnrollments: number;
+  completedGroupEnrollments: number;
+  pendingGroupEnrollments: number;
+  cancelledGroupEnrollments: number;
+  totalGroupEnrollments: number;
+  confirmedSubscriptions: number;
+  completedSubscriptions: number;
+  pendingSubscriptions: number;
+  cancelledSubscriptions: number;
+  // Unique students (null when no reliable student identity exists)
+  uniqueConfirmedStudents: number | null;
+  // Available supply
+  activeGroupsCount: number;
+  totalGroupsCount: number;
+  availablePrivateSlotsCount: number;
+}
+
+export interface AdminQuranProgramStatItem {
+  levelId: string;
+  levelName: string;
+  description: string;
+  isActive?: boolean;
+  totalTutors: number;
+  publishedTutors: number;
+  unpublishedTutors: number;
+  tutorsList?: AdminStatTutorRef[];
+  totalApplicants: number;
+  pendingApplicants: number;
+  submittedApplicants: number;
+  needsInfoApplicants: number;
+  approvedApplicants: number;
+  rejectedApplicants: number;
+  draftApplicants: number;
+  confirmedPrivateBookings: number;
+  completedPrivateBookings: number;
+  pendingPrivateBookings: number;
+  cancelledPrivateBookings: number;
+  confirmedGroupEnrollments: number;
+  completedGroupEnrollments: number;
+  pendingGroupEnrollments: number;
+  cancelledGroupEnrollments: number;
+  confirmedSubscriptions: number;
+  completedSubscriptions: number;
+  pendingSubscriptions: number;
+  cancelledSubscriptions: number;
+  uniqueConfirmedStudents: number | null;
+  activeGroupsCount: number;
+  availablePrivateSlotsCount: number;
+}
+
+export interface AdminQuranAgeGroupStatItem {
+  ageGroupId: string;
+  ageGroupName: string;
+  ageRange: string;
+  isActive?: boolean;
+  totalTutors: number;
+  publishedTutors: number;
+  unpublishedTutors: number;
+  totalApplicants: number;
+  pendingApplicants: number;
+  approvedApplicants: number;
+  rejectedApplicants: number;
+  confirmedSubscriptions: number;
+  completedSubscriptions: number;
+  pendingSubscriptions: number;
+  cancelledSubscriptions: number;
+  uniqueConfirmedStudents: number | null;
+}
+
+export interface AdminStageStatItem {
+  stageId: string;
+  stageName: string;
+  gradesDesc: string;
+  isActive?: boolean;
+  totalTutors: number;
+  publishedTutors: number;
+  unpublishedTutors: number;
+  totalApplicants: number;
+  pendingApplicants: number;
+  approvedApplicants: number;
+  rejectedApplicants: number;
+  confirmedSubscriptions: number;
+  completedSubscriptions: number;
+  pendingSubscriptions: number;
+  cancelledSubscriptions: number;
+  uniqueConfirmedStudents: number | null;
+  activeGroupsCount: number;
+  availablePrivateSlotsCount: number;
+}
+
+export interface AdminCurriculumStatItem {
+  curriculumId: string;
+  curriculumName: string;
+  isActive?: boolean;
+  totalTutors: number;
+  publishedTutors: number;
+  unpublishedTutors: number;
+  totalApplicants: number;
+  pendingApplicants: number;
+  approvedApplicants: number;
+  rejectedApplicants: number;
+  confirmedSubscriptions: number;
+  completedSubscriptions: number;
+  pendingSubscriptions: number;
+  cancelledSubscriptions: number;
+  uniqueConfirmedStudents: number | null;
+}
+
+export interface AdminDetailedSpecializationStatItem {
+  id: string;
+  track: TrackType;
+  label: string;
+  isActive?: boolean;
+  // School taxonomy
+  stageId?: string;
+  stageName?: string;
+  gradeId?: string;
+  gradeName?: string;
+  subjectId?: string;
+  subjectName?: string;
+  curriculumId?: string;
+  curriculumName?: string;
+  // Quran taxonomy
+  levelId?: string;
+  levelName?: string;
+  ageGroupId?: string;
+  ageGroupName?: string;
+  // Tutors
+  totalTutors: number;
+  publishedTutors: number;
+  unpublishedTutors: number;
+  tutorsList?: AdminStatTutorRef[];
+  // Applicants
+  totalApplicants: number;
+  pendingApplicants: number;
+  submittedApplicants: number;
+  needsInfoApplicants: number;
+  approvedApplicants: number;
+  rejectedApplicants: number;
+  draftApplicants: number;
+  // Subscriptions (strictly separated by status)
+  confirmedPrivateBookings: number;
+  completedPrivateBookings: number;
+  pendingPrivateBookings: number;
+  cancelledPrivateBookings: number;
+  confirmedGroupEnrollments: number;
+  completedGroupEnrollments: number;
+  pendingGroupEnrollments: number;
+  cancelledGroupEnrollments: number;
+  confirmedSubscriptions: number;
+  completedSubscriptions: number;
+  pendingSubscriptions: number;
+  cancelledSubscriptions: number;
+  uniqueConfirmedStudents: number | null;
+  activeGroupsCount: number;
+  availablePrivateSlotsCount: number;
+}
+
+export interface AdminStatisticsDrilldownRequest {
+  entityType: 'tutors' | 'applicants' | 'subscriptions' | 'unclassified';
+  title?: string;
+  track?: 'all' | 'school' | 'quran';
+  subjectId?: string | null;
+  stageId?: string | null;
+  gradeId?: string | null;
+  curriculumId?: string | null;
+  courseOptionId?: string | null;
+  quranLevelId?: string | null;
+  quranAgeGroupId?: string | null;
+  statusFilter?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface AdminStatisticsDrilldownResponse {
+  entityType: 'tutors' | 'applicants' | 'subscriptions' | 'unclassified';
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  tutors?: AdminStatTutorRef[];
+  applicants?: AdminStatApplicantRef[];
+  subscriptions?: AdminStatSubscriptionRef[];
+  unclassifiedItems?: AdminStatUnclassifiedRef[];
+}
+
+export interface AdminPlatformStatistics {
+  overview: {
+    // Tutors
+    totalTutors: number;
+    publishedTutors: number;
+    unpublishedTutors: number;
+    schoolTutorsCount: number;
+    quranTutorsCount: number;
+    unassignedTutorsCount: number;
+    // Applications
+    totalSubmittedApplications: number; // excludes drafts
+    totalAllApplications: number; // includes drafts
+    pendingApplications: number; // submitted + needs_info
+    submittedOnlyApplications: number;
+    needsInfoApplications: number;
+    approvedApplications: number;
+    rejectedApplications: number;
+    draftApplications: number;
+    schoolSubmittedApplications: number;
+    quranSubmittedApplications: number;
+    // Subscriptions & Bookings (strictly separated by status)
+    confirmedSubscriptions: number;
+    completedSubscriptions: number;
+    pendingSubscriptions: number;
+    cancelledSubscriptions: number;
+    confirmedPrivateBookings: number;
+    completedPrivateBookings: number;
+    pendingPrivateBookings: number;
+    cancelledPrivateBookings: number;
+    confirmedGroupEnrollments: number;
+    completedGroupEnrollments: number;
+    pendingGroupEnrollments: number;
+    cancelledGroupEnrollments: number;
+    // Unique Students (null when no reliable student identity exists)
+    uniqueConfirmedStudents: number | null;
+    uniqueStudentsAvailable: boolean;
+    uniqueStudentsUnavailableReason?: string;
+    // Supply & Slots
+    activeGroupsCount: number;
+    totalGroupsCount: number;
+    availablePrivateSlotsCount: number;
+    availableTrialSlotsCount: number;
+    bookedTrialSlotsCount: number;
+    // Coverage & Classification alerts
+    subjectsWithoutPublishedTutors: number;
+    specializationsWithoutPublishedTutors: number;
+    subjectsWithPendingApplicants: number;
+    unmappedBookingsCount: number;
+    unclassifiedSummary: AdminUnclassifiedSummary;
+  };
+  dataHealth?: AdminStatisticsDataHealth;
+  subjectsStats: AdminSubjectStatItem[];
+  quranSummary: AdminSubjectStatItem;
+  quranLevelsStats: AdminQuranProgramStatItem[];
+  quranAgeGroupsStats: AdminQuranAgeGroupStatItem[];
+  stagesStats: AdminStageStatItem[];
+  curriculaStats: AdminCurriculumStatItem[];
+  detailedSpecializations: AdminDetailedSpecializationStatItem[];
+  generatedAt: string;
+}
+
+
 
