@@ -3,7 +3,7 @@
  * Main Application Orchestrator
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   SearchCriteria,
   Tutor,
@@ -15,6 +15,11 @@ import {
   QuranLevel,
 } from './types';
 import { DataService } from './services/dataService';
+import {
+  TutorApplicationService,
+  TutorAccountNavStatus,
+  TUTOR_STATE_CHANGED_EVENT,
+} from './services/tutorApplicationService';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { WhatsAppFloatingButton } from './components/WhatsAppFloatingButton';
@@ -23,6 +28,7 @@ import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
 import { AdminDashboardView } from './components/admin/AdminDashboardView';
 import { TutorDashboardView } from './components/tutor/TutorDashboardView';
+import { TutorAuthModal } from './components/tutor/TutorAuthModal';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import {
   trackPageView,
@@ -38,6 +44,10 @@ export default function App() {
   const [currentTutor, setCurrentTutor] = useState<Tutor | null>(null);
   const [isTutorLoading, setIsTutorLoading] = useState<boolean>(false);
   const [tutorNotFound, setTutorNotFound] = useState<boolean>(false);
+
+  // Tutor account status for Header & mobile menu
+  const [tutorNavStatus, setTutorNavStatus] = useState<TutorAccountNavStatus>('loading');
+  const [isHeaderAuthModalOpen, setIsHeaderAuthModalOpen] = useState<boolean>(false);
 
   const [savedCriteria, setSavedCriteria] = useState<SearchCriteria | null>(null);
   const [savedResults, setSavedResults] = useState<Tutor[]>([]);
@@ -65,6 +75,86 @@ export default function App() {
       setQuranLevels(qLvls);
     });
   }, []);
+
+  // View navigation helper
+  const handleNavigate = useCallback((view: AppView) => {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
+    setCurrentView(view);
+    if (view === 'home') {
+      window.location.hash = '';
+    } else if (view === 'join-as-tutor') {
+      window.location.hash = '#join-as-tutor';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (view === 'tutor-dashboard') {
+      window.location.hash = '#tutor-dashboard';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (view === 'admin') {
+      window.location.hash = '#admin';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, []);
+
+  // Verify tutor session & application status and keep Header button updated
+  const refreshTutorAccountStatus = useCallback(
+    async (navigateAfterAuth: boolean = false) => {
+      try {
+        const resolved = await TutorApplicationService.resolveAccountNavState();
+        setTutorNavStatus(resolved.status);
+
+        if (navigateAfterAuth) {
+          if (resolved.status === 'approved_tutor') {
+            handleNavigate('tutor-dashboard');
+          } else if (
+            resolved.status === 'no_application' ||
+            resolved.status === 'unapproved_application'
+          ) {
+            handleNavigate('join-as-tutor');
+          }
+        }
+      } catch {
+        setTutorNavStatus('unauthenticated');
+      }
+    },
+    [handleNavigate]
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+
+    TutorApplicationService.resolveAccountNavState()
+      .then((res) => {
+        if (isMounted) setTutorNavStatus(res.status);
+      })
+      .catch(() => {
+        if (isMounted) setTutorNavStatus('unauthenticated');
+      });
+
+    const unsubscribeAuth = TutorApplicationService.onAuthStateChange((user) => {
+      if (!isMounted) return;
+      if (!user) {
+        setTutorNavStatus('unauthenticated');
+        setIsHeaderAuthModalOpen(false);
+      } else {
+        setIsHeaderAuthModalOpen(false);
+        refreshTutorAccountStatus(false);
+      }
+    });
+
+    const handleTutorStateEvent = () => {
+      if (!isMounted) return;
+      refreshTutorAccountStatus(false);
+    };
+
+    window.addEventListener(TUTOR_STATE_CHANGED_EVENT, handleTutorStateEvent);
+
+    return () => {
+      isMounted = false;
+      unsubscribeAuth();
+      window.removeEventListener(TUTOR_STATE_CHANGED_EVENT, handleTutorStateEvent);
+    };
+  }, [refreshTutorAccountStatus]);
 
   // Sync with window.location.hash for shareable links & browser back navigation
   useEffect(() => {
@@ -180,26 +270,6 @@ export default function App() {
     }, 50);
   };
 
-  // View navigation helper
-  const handleNavigate = (view: AppView) => {
-    if (typeof document !== 'undefined') {
-      document.body.style.overflow = '';
-    }
-    setCurrentView(view);
-    if (view === 'home') {
-      window.location.hash = '';
-    } else if (view === 'join-as-tutor') {
-      window.location.hash = '#join-as-tutor';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else if (view === 'tutor-dashboard') {
-      window.location.hash = '#tutor-dashboard';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else if (view === 'admin') {
-      window.location.hash = '#admin';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  };
-
   const handleScrollToSelector = () => {
     document.getElementById('tutor-selector-section')?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -224,6 +294,8 @@ export default function App() {
         currentView={currentView}
         onNavigate={handleNavigate}
         onScrollToSelector={handleScrollToSelector}
+        tutorNavStatus={tutorNavStatus}
+        onOpenTutorAuth={() => setIsHeaderAuthModalOpen(true)}
       />
 
       {/* Main View Router */}
@@ -303,6 +375,17 @@ export default function App() {
           <AdminDashboardView onNavigateHome={() => handleNavigate('home')} />
         )}
       </main>
+
+      {/* Global Header Tutor Auth Modal */}
+      <TutorAuthModal
+        isOpen={isHeaderAuthModalOpen}
+        onClose={() => setIsHeaderAuthModalOpen(false)}
+        initialMode="signin"
+        onSuccess={() => {
+          setIsHeaderAuthModalOpen(false);
+          refreshTutorAccountStatus(true);
+        }}
+      />
 
       {/* Global Footer */}
       <Footer onNavigate={handleNavigate} />

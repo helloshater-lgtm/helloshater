@@ -209,7 +209,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isSubmittingDraft, setIsSubmittingDraft] = useState(false);
 
-  // Load Data
+  // Load Data & Verify Eligibility
   const loadPortalData = async () => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -266,7 +266,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       setContext(null);
       try {
         const app = await TutorApplicationService.getMyApplication();
-        setHasExistingApplication(Boolean(app));
+        setHasExistingApplication(Boolean(app && app.status !== 'draft'));
       } catch {
         setHasExistingApplication(false);
       }
@@ -713,7 +713,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     return (
       <div className="max-w-4xl mx-auto py-16 px-4 text-center space-y-4" dir="rtl">
         <Loader2 className="w-10 h-10 text-[#0D4E8B] animate-spin mx-auto" />
-        <p className="text-sm font-bold text-[#64748B]">جاري تحميل لوحة المعلم...</p>
+        <p className="text-sm font-bold text-[#64748B]">جاري التحقق من أهلية الحساب وتحميل لوحة المعلم...</p>
       </div>
     );
   }
@@ -725,10 +725,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <GraduationCap className="w-7 h-7" />
         </div>
         <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
-          تسجيل الدخول إلى لوحة المعلم
+          لوحة المعلم مخصصة للمعلمين المعتمدين
         </h2>
         <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed">
-          يرجى تسجيل الدخول بحساب المعلم الخاص بك لإدارة المواعيد والمجموعات أو متابعة حالة طلب الانضمام.
+          يرجى تسجيل الدخول بحساب المعلم الخاص بك للتحقق من أهليتك والوصول إلى لوحة المعلم أو متابعة طلبك.
         </p>
         <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
           <button
@@ -737,7 +737,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             className="px-5 py-2.5 rounded-xl bg-[#0D4E8B] text-white text-xs sm:text-sm font-bold hover:bg-[#003767] transition-all flex items-center gap-2 cursor-pointer"
           >
             <LogIn className="w-4 h-4" />
-            <span>تسجيل الدخول</span>
+            <span>دخول المعلمين</span>
           </button>
           <button
             type="button"
@@ -766,13 +766,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       <div className="max-w-xl mx-auto my-12 sm:my-16 p-6 sm:p-8 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center space-y-4" dir="rtl">
         <AlertCircle className="w-12 h-12 text-amber-500 mx-auto" />
         <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
-          {hasExistingApplication ? 'طلب انضمامك قيد المتابعة' : 'لوحة المعلم غير متاحة حالياً'}
+          {hasExistingApplication ? 'طلب انضمامك قيد المتابعة' : 'لوحة المعلم مخصصة للمعلمين المعتمدين فقط'}
         </h2>
         <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed">
-          {errorMessage ||
-            (hasExistingApplication
-              ? 'حسابك مرتبط بطلب انضمام لم يتم اعتماده كمعلم بعد. يمكنك استعراض حالة طلبك أو استكمال بياناته من صفحة انضمام المعلمين.'
-              : 'حسابك غير مرتبط بملف معلم معتمد في منصة شاطر. يمكنك تقديم طلب انضمام جديد أو إعادة المحاولة.')}
+          {hasExistingApplication
+            ? 'حسابك الحالي مرتبط بطلب انضمام لم يتم اعتماده بعد. لا يمكن فتح لوحة المعلم إلا بعد اعتماد الطلب وربطه بملف معلم، ويمكنك متابعة حالة طلبك الحالية.'
+            : 'حسابك الحالي غير مرتبط بملف معلم معتمد ولا يحتوي على طلب مرسل. يرجى استكمال تقديم طلب الانضمام أولاً.'}
         </p>
         <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
           <button
@@ -786,7 +785,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             }}
             className="px-5 py-2.5 rounded-xl bg-[#0D4E8B] text-white text-xs sm:text-sm font-bold hover:bg-[#003767] transition-all cursor-pointer"
           >
-            {hasExistingApplication ? 'عرض حالة طلب الانضمام' : 'تقديم طلب انضمام كمعلم'}
+            {hasExistingApplication ? 'متابعة طلبي' : 'استكمال التقديم'}
           </button>
           <button
             type="button"
@@ -803,6 +802,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           >
             <LogOut className="w-4 h-4" />
             <span>تسجيل الخروج</span>
+          </button>
+          <button
+            type="button"
+            onClick={onNavigateHome}
+            className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all cursor-pointer"
+          >
+            العودة للرئيسية
           </button>
         </div>
       </div>

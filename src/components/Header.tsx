@@ -1,15 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { trackWhatsAppClicked } from '../services/analytics';
-import { Menu, X, MessageCircle } from 'lucide-react';
+import { TutorAccountNavStatus } from '../services/tutorApplicationService';
+import { Menu, X, MessageCircle, Loader2 } from 'lucide-react';
 
 interface HeaderProps {
   currentView: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard';
   onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard') => void;
   onScrollToSelector?: () => void;
+  tutorNavStatus: TutorAccountNavStatus;
+  onOpenTutorAuth: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
+export const Header: React.FC<HeaderProps> = ({
+  currentView,
+  onNavigate,
+  tutorNavStatus,
+  onOpenTutorAuth,
+}) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const whatsappContactUrl = `https://wa.me/${SHATIR_CONFIG.adminWhatsAppNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
@@ -53,9 +61,36 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
     }
   };
 
-  const handleJoinTutorClick = () => {
+  const getTutorButtonLabel = (): string => {
+    switch (tutorNavStatus) {
+      case 'approved_tutor':
+        return 'لوحة المعلم';
+      case 'unapproved_application':
+        return 'متابعة طلبي';
+      case 'no_application':
+        return 'استكمال التقديم';
+      case 'unauthenticated':
+      default:
+        return 'دخول المعلمين';
+    }
+  };
+
+  const isTutorButtonActive =
+    (tutorNavStatus === 'approved_tutor' && currentView === 'tutor-dashboard') ||
+    ((tutorNavStatus === 'no_application' || tutorNavStatus === 'unapproved_application') &&
+      currentView === 'join-as-tutor');
+
+  const handleTutorButtonClick = () => {
     setIsMobileMenuOpen(false);
-    onNavigate('join-as-tutor');
+    if (tutorNavStatus === 'loading') return;
+
+    if (tutorNavStatus === 'unauthenticated') {
+      onOpenTutorAuth();
+    } else if (tutorNavStatus === 'approved_tutor') {
+      onNavigate('tutor-dashboard');
+    } else {
+      onNavigate('join-as-tutor');
+    }
   };
 
   return (
@@ -103,32 +138,27 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
             كيف تعمل شاطر؟
           </a>
 
-          <button
-            type="button"
-            onClick={handleJoinTutorClick}
-            className={`transition-colors py-1 cursor-pointer ${
-              currentView === 'join-as-tutor'
-                ? 'text-[#0D4E8B] border-b-2 border-[#0D4E8B]'
-                : 'text-[#1F2A44] hover:text-[#0D4E8B]'
-            }`}
-          >
-            انضم كمعلم
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsMobileMenuOpen(false);
-              onNavigate('tutor-dashboard');
-            }}
-            className={`transition-colors py-1 cursor-pointer ${
-              currentView === 'tutor-dashboard'
-                ? 'text-[#0D4E8B] border-b-2 border-[#0D4E8B]'
-                : 'text-[#1F2A44] hover:text-[#0D4E8B]'
-            }`}
-          >
-            لوحة المعلم
-          </button>
+          {tutorNavStatus === 'loading' ? (
+            <span
+              className="inline-flex items-center gap-1.5 text-[#64748B] py-1 text-xs font-bold select-none"
+              aria-live="polite"
+            >
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0D4E8B]" />
+              <span>جاري التحقق...</span>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleTutorButtonClick}
+              className={`transition-colors py-1 cursor-pointer ${
+                isTutorButtonActive
+                  ? 'text-[#0D4E8B] border-b-2 border-[#0D4E8B]'
+                  : 'text-[#1F2A44] hover:text-[#0D4E8B]'
+              }`}
+            >
+              {getTutorButtonLabel()}
+            </button>
+          )}
 
           <a
             href={whatsappContactUrl}
@@ -167,32 +197,27 @@ export const Header: React.FC<HeaderProps> = ({ currentView, onNavigate }) => {
             كيف تعمل شاطر؟
           </a>
 
-          <button
-            type="button"
-            onClick={handleJoinTutorClick}
-            className={`w-full text-right block px-3 py-2.5 rounded-xl text-sm font-['Cairo'] font-bold transition-colors cursor-pointer ${
-              currentView === 'join-as-tutor'
-                ? 'bg-[#F0F6FD] text-[#0D4E8B]'
-                : 'text-[#1F2A44] hover:bg-[#F0F6FD] hover:text-[#0D4E8B]'
-            }`}
-          >
-            انضم كمعلم
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsMobileMenuOpen(false);
-              onNavigate('tutor-dashboard');
-            }}
-            className={`w-full text-right block px-3 py-2.5 rounded-xl text-sm font-['Cairo'] font-bold transition-colors cursor-pointer ${
-              currentView === 'tutor-dashboard'
-                ? 'bg-[#F0F6FD] text-[#0D4E8B]'
-                : 'text-[#1F2A44] hover:bg-[#F0F6FD] hover:text-[#0D4E8B]'
-            }`}
-          >
-            لوحة المعلم
-          </button>
+          {tutorNavStatus === 'loading' ? (
+            <div
+              className="w-full text-right flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-['Cairo'] font-bold text-[#64748B]"
+              aria-live="polite"
+            >
+              <Loader2 className="w-4 h-4 animate-spin text-[#0D4E8B]" />
+              <span>جاري التحقق من حالة الحساب...</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleTutorButtonClick}
+              className={`w-full text-right block px-3 py-2.5 rounded-xl text-sm font-['Cairo'] font-bold transition-colors cursor-pointer ${
+                isTutorButtonActive
+                  ? 'bg-[#F0F6FD] text-[#0D4E8B]'
+                  : 'text-[#1F2A44] hover:bg-[#F0F6FD] hover:text-[#0D4E8B]'
+              }`}
+            >
+              {getTutorButtonLabel()}
+            </button>
+          )}
 
           <a
             href={whatsappContactUrl}

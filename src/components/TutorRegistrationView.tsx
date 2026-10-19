@@ -379,7 +379,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       setCurrentUser(user);
       if (user) {
         setIsAuthModalOpen(false);
-        loadMyApplication(false);
+        loadMyApplication(true);
       } else {
         setDbApplication(null);
         setIsTutorPublished(null);

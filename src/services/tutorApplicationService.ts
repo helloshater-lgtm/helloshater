@@ -4,8 +4,23 @@ import {
   TutorApplicationRecord,
   TutorApplicationStatus,
 } from '../types';
+import { TutorPortalService } from './tutorPortalService';
 
 export const TUTOR_POLICY_VERSION = 'v1.0';
+export const TUTOR_STATE_CHANGED_EVENT = 'shatir:tutor-state-changed';
+
+export type TutorAccountNavStatus =
+  | 'loading'
+  | 'unauthenticated'
+  | 'no_application'
+  | 'unapproved_application'
+  | 'approved_tutor';
+
+export function notifyTutorStateChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(TUTOR_STATE_CHANGED_EVENT));
+  }
+}
 
 export const TutorApplicationService = {
   /**
@@ -14,6 +29,63 @@ export const TutorApplicationService = {
   async getCurrentUser() {
     const { data: { user } } = await supabase.auth.getUser();
     return user;
+  },
+
+  /**
+   * Resolve the exact tutor account & application status for Header/Navigation & Eligibility
+   * - 'unauthenticated': غير مسجل («دخول المعلمين»)
+   * - 'no_application': مسجل دون طلب («استكمال التقديم»)
+   * - 'unapproved_application': لديه طلب غير معتمد («متابعة طلبي»)
+   * - 'approved_tutor': مرتبط بملف معلم معتمد («لوحة المعلم»)
+   */
+  async resolveAccountNavState(): Promise<{
+    status: Exclude<TutorAccountNavStatus, 'loading'>;
+    user: any | null;
+    application: TutorApplicationRecord | null;
+    tutorId: string | null;
+  }> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return {
+        status: 'unauthenticated',
+        user: null,
+        application: null,
+        tutorId: null,
+      };
+    }
+
+    const [portalOutcome, appOutcome] = await Promise.allSettled([
+      TutorPortalService.getMyContext(),
+      this.getMyApplication(),
+    ]);
+
+    const portalCtx = portalOutcome.status === 'fulfilled' ? portalOutcome.value : null;
+    const app = appOutcome.status === 'fulfilled' ? appOutcome.value : null;
+
+    if (portalCtx?.tutor?.id) {
+      return {
+        status: 'approved_tutor',
+        user,
+        application: app,
+        tutorId: portalCtx.tutor.id,
+      };
+    }
+
+    if (app && app.status !== 'draft') {
+      return {
+        status: 'unapproved_application',
+        user,
+        application: app,
+        tutorId: null,
+      };
+    }
+
+    return {
+      status: 'no_application',
+      user,
+      application: app,
+      tutorId: null,
+    };
   },
 
   /**
@@ -57,6 +129,7 @@ export const TutorApplicationService = {
       throw new Error(`تعذر إنشاء الحساب: ${error.message}`);
     }
 
+    notifyTutorStateChanged();
     return data.user;
   },
 
@@ -77,6 +150,7 @@ export const TutorApplicationService = {
       throw new Error(`تعذر تسجيل الدخول: ${error.message}`);
     }
 
+    notifyTutorStateChanged();
     return data.user;
   },
 
@@ -85,6 +159,7 @@ export const TutorApplicationService = {
    */
   async signOut() {
     await supabase.auth.signOut();
+    notifyTutorStateChanged();
   },
 
   /**
@@ -110,11 +185,13 @@ export const TutorApplicationService = {
       .from('tutor_applications')
       .select('*')
       .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error) {
       console.warn('Error fetching tutor application:', error);
-      return null;
+      throw new Error(`تعذر تحميل بيانات طلب الانضمام: ${error.message}`);
     }
 
     if (!data) return null;
@@ -179,7 +256,9 @@ export const TutorApplicationService = {
     );
 
     if (!rpcError && rpcData) {
-      return this.mapDatabaseRowToRecord(rpcData);
+      const record = this.mapDatabaseRowToRecord(rpcData);
+      notifyTutorStateChanged();
+      return record;
     }
 
     // 2. If RPC is not yet executed in DB, provide resilient fallback
@@ -249,7 +328,9 @@ export const TutorApplicationService = {
         resultData = data;
       }
 
-      return this.mapDatabaseRowToRecord(resultData);
+      const record = this.mapDatabaseRowToRecord(resultData);
+      notifyTutorStateChanged();
+      return record;
     }
 
     throw new Error(rpcError?.message || 'تعذر حفظ بيانات الطلب.');

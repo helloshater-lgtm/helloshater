@@ -37,6 +37,17 @@ export const TutorPortalService = {
       return rpcData as TutorPortalContext;
     }
 
+    const isRpcMissing =
+      rpcError &&
+      (rpcError.code === '42883' ||
+        rpcError.code === 'PGRST202' ||
+        rpcError.message?.includes('Could not find the function') ||
+        rpcError.message?.includes('does not exist'));
+
+    if (rpcError && !isRpcMissing) {
+      throw new Error(rpcError.message || 'حسابك غير مرتبط بطلب معتمد أو ملف معلم مفعل في منصة شاطر.');
+    }
+
     // Fallback if migration 007 is not yet applied in remote database
     // Query approved tutor application for current user
     const { data: appData, error: appError } = await supabase
