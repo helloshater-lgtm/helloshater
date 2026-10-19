@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, ShieldCheck, FileText, CheckCircle2 } from 'lucide-react';
 
 interface TutorCooperationPolicyModalProps {
@@ -16,19 +17,33 @@ export const TutorCooperationPolicyModal: React.FC<TutorCooperationPolicyModalPr
   onAccept,
   isAccepted = false,
 }) => {
+  useEffect(() => {
+    if (!isOpen || typeof document === 'undefined') return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow || '';
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  return (
+  const modalNode = (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="tutor-policy-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto"
       dir="rtl"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
     >
-      <div className="bg-white w-full max-w-2xl rounded-2xl sm:rounded-3xl shadow-2xl border border-[#CBD5E1] flex flex-col max-h-[90vh] overflow-hidden">
+      <div className="bg-white w-full max-w-2xl my-auto rounded-2xl sm:rounded-3xl shadow-2xl border border-[#CBD5E1] flex flex-col max-h-[90dvh] overflow-hidden">
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F8FAFD]">
+        <div className="p-4 sm:p-5 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F8FAFD] shrink-0">
           <div className="flex items-center gap-2.5">
             <span className="w-8 h-8 rounded-xl bg-[#0D4E8B]/10 text-[#0D4E8B] flex items-center justify-center shrink-0">
               <FileText className="w-4 h-4" />
@@ -141,7 +156,7 @@ export const TutorCooperationPolicyModal: React.FC<TutorCooperationPolicyModalPr
         </div>
 
         {/* Footer actions */}
-        <div className="p-4 sm:p-5 border-t border-[#E2E8F0] bg-[#F8FAFD] flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="p-4 sm:p-5 border-t border-[#E2E8F0] bg-[#F8FAFD] flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <div className="text-xs text-[#64748B] text-center sm:text-right">
             الموافقة على هذه السياسة متطلب إلزامي لاستكمال طلب الانضمام.
           </div>
@@ -172,4 +187,7 @@ export const TutorCooperationPolicyModal: React.FC<TutorCooperationPolicyModalPr
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };
+

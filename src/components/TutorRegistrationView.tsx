@@ -16,6 +16,7 @@ import { supabase } from '../lib/supabase';
 import { DataService } from '../services/dataService';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { TutorApplicationService } from '../services/tutorApplicationService';
+import { TutorPortalService } from '../services/tutorPortalService';
 import { TutorAuthModal } from './tutor/TutorAuthModal';
 import {
   TutorCooperationPolicyModal,
@@ -56,6 +57,7 @@ import {
   Camera,
   UploadCloud,
   Image as ImageIcon,
+  RefreshCw,
 } from 'lucide-react';
 
 export const COUNTRY_OPTIONS = [
@@ -331,6 +333,8 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
   // Teacher Supabase Auth & Application Database State
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isLoadingAccount, setIsLoadingAccount] = useState<boolean>(true);
+  const [accountLoadError, setAccountLoadError] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signup');
   const [dbApplication, setDbApplication] = useState<any>(null);
@@ -355,28 +359,78 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
   // Initialize Auth & listen to changes
   useEffect(() => {
-    TutorApplicationService.getCurrentUser().then((user) => {
-      setCurrentUser(user);
-      if (user) {
-        loadMyApplication();
-      }
-    });
+    let isMounted = true;
+    TutorApplicationService.getCurrentUser()
+      .then((user) => {
+        if (!isMounted) return;
+        setCurrentUser(user);
+        if (user) {
+          loadMyApplication(false);
+        } else {
+          setIsLoadingAccount(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setIsLoadingAccount(false);
+      });
 
     const unsubscribe = TutorApplicationService.onAuthStateChange((user) => {
+      if (!isMounted) return;
       setCurrentUser(user);
       if (user) {
-        loadMyApplication();
+        setIsAuthModalOpen(false);
+        loadMyApplication(false);
       } else {
         setDbApplication(null);
+        setIsTutorPublished(null);
+        setApplicantTutorId(null);
+        setAccountLoadError(null);
+        setShowNoticeScreen(false);
+        setIsAuthModalOpen(false);
+        setIsPolicyModalOpen(false);
+        setIsLoadingAccount(false);
+        if (typeof document !== 'undefined') {
+          document.body.style.overflow = '';
+        }
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      if (typeof document !== 'undefined') {
+        document.body.style.overflow = '';
+      }
+    };
   }, []);
 
-  const loadMyApplication = async () => {
+  const loadMyApplication = async (redirectIfApproved: boolean = false) => {
+    setIsLoadingAccount(true);
+    setAccountLoadError(null);
+    setIsAuthModalOpen(false);
+
     try {
-      const app = await TutorApplicationService.getMyApplication();
+      const [appOutcome, portalOutcome] = await Promise.allSettled([
+        TutorApplicationService.getMyApplication(),
+        TutorPortalService.getMyContext(),
+      ]);
+
+      const portalCtx = portalOutcome.status === 'fulfilled' ? portalOutcome.value : null;
+      const app = appOutcome.status === 'fulfilled' ? appOutcome.value : null;
+
+      if (appOutcome.status === 'rejected' && !portalCtx?.tutor) {
+        const errMsg =
+          (appOutcome.reason as any)?.message ||
+          'تعذر تحميل بيانات الحساب وطلب الانضمام. يرجى التحقق من الاتصال والمحاولة مرة أخرى.';
+        setAccountLoadError(errMsg);
+        return;
+      }
+
+      if (portalCtx?.tutor) {
+        setApplicantTutorId(portalCtx.tutor.id);
+        setIsTutorPublished(Boolean(portalCtx.tutor.isPublished));
+      }
+
       if (app) {
         setDbApplication(app);
         // Fill form data from DB record
@@ -416,7 +470,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
         }
 
         // Check real-time tutor publication status if approved and linked to tutor record
-        if (app.applicantTutorId) {
+        if (app.applicantTutorId && !portalCtx?.tutor) {
           setApplicantTutorId(app.applicantTutorId);
           supabase
             .from('tutors')
@@ -441,19 +495,45 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           app.status === 'rejected'
         ) {
           setShowNoticeScreen(true);
+        } else {
+          setShowNoticeScreen(false);
         }
+      } else {
+        setDbApplication(null);
+        setShowNoticeScreen(false);
       }
-    } catch (err) {
+
+      // If account is linked to an approved tutor (published or unpublished) and either
+      // user just signed in or has no separate non-approved application to edit, open TutorDashboardView
+      if (portalCtx?.tutor && (redirectIfApproved || !app || app.status === 'approved')) {
+        if (onNavigateToDashboard) {
+          onNavigateToDashboard();
+        } else {
+          window.location.hash = '#tutor-dashboard';
+        }
+        return;
+      }
+    } catch (err: any) {
       console.error('Error loading my tutor application:', err);
+      setAccountLoadError(err?.message || 'تعذر تحميل بيانات الحساب. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsLoadingAccount(false);
     }
   };
 
   const handleTeacherSignOut = async () => {
+    setIsAuthModalOpen(false);
+    setIsPolicyModalOpen(false);
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
     await TutorApplicationService.signOut();
     setCurrentUser(null);
     setDbApplication(null);
     setIsTutorPublished(null);
     setApplicantTutorId(null);
+    setAccountLoadError(null);
+    setShowNoticeScreen(false);
   };
 
   // Save draft to Supabase DB
@@ -1006,8 +1086,56 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
     setTimeout(() => setCopiedMessage(false), 2500);
   };
 
+  if (isLoadingAccount) {
+    return (
+      <div className="w-full max-w-xl mx-auto py-16 px-4 text-center" dir="rtl">
+        <div className="bg-white rounded-3xl border border-[#E2E8F0] shadow-xs p-8 space-y-4">
+          <Loader2 className="w-10 h-10 text-[#0D4E8B] animate-spin mx-auto" />
+          <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44]">
+            جاري التحقق من حساب المعلم وتحميل البيانات...
+          </h2>
+          <p className="text-xs text-[#64748B]">يرجى الانتظار لحظات</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (accountLoadError) {
+    return (
+      <div className="w-full max-w-xl mx-auto py-16 px-4 text-center" dir="rtl">
+        <div className="bg-white rounded-3xl border border-rose-200 shadow-xs p-6 sm:p-8 space-y-4">
+          <AlertCircle className="w-12 h-12 text-rose-600 mx-auto" />
+          <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44]">
+            تعذر تحميل بيانات الحساب
+          </h2>
+          <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed">{accountLoadError}</p>
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => loadMyApplication(true)}
+              className="px-5 py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>إعادة المحاولة</span>
+            </button>
+            {currentUser && (
+              <button
+                type="button"
+                onClick={handleTeacherSignOut}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs sm:text-sm font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>تسجيل الخروج</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="w-full max-w-4xl mx-auto py-6 sm:py-10 px-4 sm:px-6 animate-fade-in" dir="rtl">
+    <div className="w-full max-w-4xl mx-auto py-6 sm:py-10 px-4 sm:px-6" dir="rtl">
       {/* Teacher Account Header & Status Card */}
       <div className="mb-6 bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -2583,8 +2711,9 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
         onClose={() => setIsAuthModalOpen(false)}
         initialMode={authModalMode}
         onSuccess={(user) => {
+          setIsAuthModalOpen(false);
           setCurrentUser(user);
-          loadMyApplication();
+          loadMyApplication(true);
         }}
       />
     </div>

@@ -69,6 +69,9 @@ export default function App() {
   // Sync with window.location.hash for shareable links & browser back navigation
   useEffect(() => {
     const handleHashChange = () => {
+      if (typeof document !== 'undefined') {
+        document.body.style.overflow = '';
+      }
       const hash = window.location.hash;
       if (hash.startsWith('#tutor/')) {
         const id = hash.replace('#tutor/', '');
@@ -145,6 +148,9 @@ export default function App() {
 
   // Handle Tutor Card Click from Search Results
   const handleSelectTutor = (tutorId: string) => {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
     setSavedScrollPosition(window.scrollY);
     setSelectedTutorId(tutorId);
     setCurrentView('tutor-profile');
@@ -154,6 +160,9 @@ export default function App() {
 
   // Back button in Tutor Profile View returns to preserved search state
   const handleBackToResults = () => {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
     setSelectedTutorId(null);
     setCurrentTutor(null);
     setCurrentView('home');
@@ -173,6 +182,9 @@ export default function App() {
 
   // View navigation helper
   const handleNavigate = (view: AppView) => {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
     setCurrentView(view);
     if (view === 'home') {
       window.location.hash = '';
@@ -282,6 +294,7 @@ export default function App() {
         {currentView === 'tutor-dashboard' && (
           <TutorDashboardView
             onNavigateHome={() => handleNavigate('home')}
+            onNavigateToJoin={() => handleNavigate('join-as-tutor')}
             onNavigateToPublicProfile={(tutorId) => handleSelectTutor(tutorId)}
           />
         )}

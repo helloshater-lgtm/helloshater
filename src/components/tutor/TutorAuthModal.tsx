@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { TutorApplicationService } from '../../services/tutorApplicationService';
 import {
   X,
   Mail,
   Lock,
   User,
-  ArrowRight,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -33,6 +33,23 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode);
+      setErrorMessage(null);
+      setSuccessMessage(null);
+    }
+  }, [isOpen, initialMode]);
+
+  useEffect(() => {
+    if (!isOpen || typeof document === 'undefined') return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow || '';
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -80,18 +97,12 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
     try {
       if (mode === 'signup') {
         const user = await TutorApplicationService.signUp(email, password, fullName);
-        setSuccessMessage('تم إنشاء حساب المعلم بنجاح! جاري تحويلك لمتابعة الطلب...');
-        setTimeout(() => {
-          onSuccess(user);
-          onClose();
-        }, 1000);
+        onClose();
+        onSuccess(user);
       } else {
         const user = await TutorApplicationService.signIn(email, password);
-        setSuccessMessage('تم تسجيل الدخول بنجاح!');
-        setTimeout(() => {
-          onSuccess(user);
-          onClose();
-        }, 600);
+        onClose();
+        onSuccess(user);
       }
     } catch (err: any) {
       setErrorMessage(err?.message || 'حدث خطأ أثناء المصادقة.');
@@ -100,21 +111,29 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in" dir="rtl">
-      <div className="bg-white w-full max-w-md rounded-3xl border border-[#E2E8F0] shadow-xl overflow-hidden relative">
+  const modalNode = (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto"
+      dir="rtl"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isLoading) {
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white w-full max-w-md my-auto max-h-[90dvh] flex flex-col rounded-3xl border border-[#E2E8F0] shadow-xl overflow-hidden relative">
         {/* Close Button */}
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 left-4 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+          className="absolute top-4 left-4 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer z-10"
           aria-label="إغلاق"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Header */}
-        <div className="p-6 pb-4 text-center border-b border-[#F1F5F9] bg-[#F8F9FC]">
+        <div className="p-6 pb-4 text-center border-b border-[#F1F5F9] bg-[#F8F9FC] shrink-0">
           <div className="w-12 h-12 rounded-2xl bg-[#0D4E8B]/10 text-[#0D4E8B] mx-auto flex items-center justify-center mb-3">
             <GraduationCap className="w-6 h-6" />
           </div>
@@ -129,7 +148,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
             {mode === 'signup'
               ? 'أنشئ حسابك لتقديم طلب الانضمام ومتابعة حالة المراجعة'
               : mode === 'signin'
-              ? 'سجّل الدخول لمتابعة طلبك وتعديل البيانات المطلوبة'
+              ? 'سجّل الدخول لمتابعة طلبك أو الدخول إلى لوحة المعلم'
               : 'أدخل بريدك الإلكتروني المسجل وسنرسل لك رابط التعيين'}
           </p>
 
@@ -171,7 +190,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           {/* Error Message */}
           {errorMessage && (
             <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
@@ -313,4 +332,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };
+
