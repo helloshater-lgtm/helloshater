@@ -109,6 +109,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
 
     try {
       await AdminService.reviewApplication(applicationId, targetStatus, decisionNotes.trim());
+      await loadApplication();
       setSuccessMessage(
         targetStatus === 'needs_info'
           ? 'تم إرسال طلب استكمال البيانات للمعلم بنجاح. يستطيع المعلم الآن تعديل طلبه.'
@@ -116,7 +117,6 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
       );
       setActionType('idle');
       setDecisionNotes('');
-      await loadApplication();
     } catch (err: any) {
       setErrorMessage(err?.message || 'فشل تنفيذ القرار الإداري.');
     } finally {
@@ -465,7 +465,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
                 disabled={isProcessing}
                 onClick={() => {
                   if (actionType === 'approve') handleApproveAction();
-                  else handleReviewAction(actionType as any);
+                  else handleReviewAction(actionType === 'reject' ? 'rejected' : 'needs_info');
                 }}
                 className={`px-4 py-2 rounded-xl text-white text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-xs disabled:opacity-50 ${
                   actionType === 'approve'

@@ -712,40 +712,33 @@ export const AdminService = {
 
   /**
    * 13. Applications: Review action (Needs Info or Reject)
+   * Uses the administrative RPC `admin_review_tutor_application` exclusively (no direct table UPDATE fallback).
    */
   async reviewApplication(
     applicationId: string,
     status: 'needs_info' | 'rejected',
     adminNotes: string
   ): Promise<void> {
+    if (status !== 'needs_info' && status !== 'rejected') {
+      throw new Error('الحالة المحددة غير صالحة لهذه العملية.');
+    }
+
     if (!adminNotes || !adminNotes.trim()) {
       throw new Error('يرجى تدوين الملاحظات والتوجيهات للمعلم.');
     }
 
-    // Try RPC first
-    const { error: rpcError } = await supabase.rpc('admin_review_tutor_application', {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_review_tutor_application', {
       p_application_id: applicationId,
       p_status: status,
       p_admin_notes: adminNotes.trim(),
     });
 
     if (rpcError) {
-      // Fallback direct update with RLS (if RPC is not yet executed in DB)
-      const { data: { user } } = await supabase.auth.getUser();
-      const { error: updateError } = await supabase
-        .from('tutor_applications')
-        .update({
-          status,
-          admin_notes: adminNotes.trim(),
-          reviewed_at: new Date().toISOString(),
-          reviewed_by: user?.id || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', applicationId);
+      throw new Error(`تعذر تحديث حالة الطلب: ${rpcError.message}`);
+    }
 
-      if (updateError) {
-        throw new Error(`تعذر تحديث حالة الطلب: ${updateError.message}`);
-      }
+    if (!rpcData || rpcData.success !== true || rpcData.status !== status) {
+      throw new Error('تعذر تأكيد حفظ قرار المراجعة في قاعدة البيانات.');
     }
   },
 
