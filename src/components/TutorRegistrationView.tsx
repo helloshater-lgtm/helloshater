@@ -1194,7 +1194,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                 className="px-3.5 py-2 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <Users className="w-3.5 h-3.5" />
-                <span>إنشاء حساب كمعلم</span>
+                <span>إنشاء حساب جديد</span>
               </button>
             </div>
           )}

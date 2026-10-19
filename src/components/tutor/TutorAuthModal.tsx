@@ -168,7 +168,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
                     : 'text-[#64748B] hover:text-[#1F2A44]'
                 }`}
               >
-                حساب جديد
+                إنشاء حساب جديد
               </button>
               <button
                 type="button"

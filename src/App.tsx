@@ -28,7 +28,6 @@ import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
 import { AdminDashboardView } from './components/admin/AdminDashboardView';
 import { TutorDashboardView } from './components/tutor/TutorDashboardView';
-import { TutorAuthModal } from './components/tutor/TutorAuthModal';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import {
   trackPageView,
@@ -47,7 +46,6 @@ export default function App() {
 
   // Tutor account status for Header & mobile menu
   const [tutorNavStatus, setTutorNavStatus] = useState<TutorAccountNavStatus>('loading');
-  const [isHeaderAuthModalOpen, setIsHeaderAuthModalOpen] = useState<boolean>(false);
 
   const [savedCriteria, setSavedCriteria] = useState<SearchCriteria | null>(null);
   const [savedResults, setSavedResults] = useState<Tutor[]>([]);
@@ -135,9 +133,7 @@ export default function App() {
       if (!isMounted) return;
       if (!user) {
         setTutorNavStatus('unauthenticated');
-        setIsHeaderAuthModalOpen(false);
       } else {
-        setIsHeaderAuthModalOpen(false);
         refreshTutorAccountStatus(false);
       }
     });
@@ -295,7 +291,6 @@ export default function App() {
         onNavigate={handleNavigate}
         onScrollToSelector={handleScrollToSelector}
         tutorNavStatus={tutorNavStatus}
-        onOpenTutorAuth={() => setIsHeaderAuthModalOpen(true)}
       />
 
       {/* Main View Router */}
@@ -375,17 +370,6 @@ export default function App() {
           <AdminDashboardView onNavigateHome={() => handleNavigate('home')} />
         )}
       </main>
-
-      {/* Global Header Tutor Auth Modal */}
-      <TutorAuthModal
-        isOpen={isHeaderAuthModalOpen}
-        onClose={() => setIsHeaderAuthModalOpen(false)}
-        initialMode="signin"
-        onSuccess={() => {
-          setIsHeaderAuthModalOpen(false);
-          refreshTutorAccountStatus(true);
-        }}
-      />
 
       {/* Global Footer */}
       <Footer onNavigate={handleNavigate} />

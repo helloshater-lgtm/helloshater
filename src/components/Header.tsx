@@ -9,14 +9,12 @@ interface HeaderProps {
   onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard') => void;
   onScrollToSelector?: () => void;
   tutorNavStatus: TutorAccountNavStatus;
-  onOpenTutorAuth: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentView,
   onNavigate,
   tutorNavStatus,
-  onOpenTutorAuth,
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -71,22 +69,19 @@ export const Header: React.FC<HeaderProps> = ({
         return 'استكمال التقديم';
       case 'unauthenticated':
       default:
-        return 'دخول المعلمين';
+        return 'انضم كمعلم';
     }
   };
 
   const isTutorButtonActive =
     (tutorNavStatus === 'approved_tutor' && currentView === 'tutor-dashboard') ||
-    ((tutorNavStatus === 'no_application' || tutorNavStatus === 'unapproved_application') &&
-      currentView === 'join-as-tutor');
+    (tutorNavStatus !== 'approved_tutor' && currentView === 'join-as-tutor');
 
   const handleTutorButtonClick = () => {
     setIsMobileMenuOpen(false);
     if (tutorNavStatus === 'loading') return;
 
-    if (tutorNavStatus === 'unauthenticated') {
-      onOpenTutorAuth();
-    } else if (tutorNavStatus === 'approved_tutor') {
+    if (tutorNavStatus === 'approved_tutor') {
       onNavigate('tutor-dashboard');
     } else {
       onNavigate('join-as-tutor');
