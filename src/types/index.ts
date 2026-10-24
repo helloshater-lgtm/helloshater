@@ -411,6 +411,10 @@ export interface TutorPrivateSlot {
   id: string;
   tutorId?: string;
   specializationLabel: string;
+  offeringCourseOptionId?: string | null;
+  quranAgeGroupId?: string | null;
+  quranLevelId?: string | null;
+  allowedSpecializations?: ApprovedSpecializationItem[];
   slotDate: string;
   startTime: string;
   endTime: string;
@@ -420,6 +424,7 @@ export interface TutorPrivateSlot {
   currency: string;
   isAvailable: boolean;
   adminSuspended?: boolean;
+  adminSuspensionNotes?: string | null;
   isBooked: boolean;
   bookedAt?: string | null;
   createdAt?: string;
@@ -466,6 +471,11 @@ export interface TutorPrivateBooking {
   id: string;
   slotId: string;
   tutorId: string;
+  offeringCourseOptionId?: string | null;
+  quranAgeGroupId?: string | null;
+  quranLevelId?: string | null;
+  specializationLabel?: string | null;
+  slotAllowedSpecializations?: ApprovedSpecializationItem[];
   studentName: string;
   guardianName: string;
   phoneNumber: string;

@@ -1123,9 +1123,119 @@ export const AdminService = {
   },
 
   /**
+   * 19.2 Admin get private slot details by ID (including allowedSpecializations)
+   */
+  async getPrivateSlotById(slotId: string): Promise<{
+    id: string;
+    tutorId: string;
+    tutorName: string;
+    specializationLabel: string;
+    offeringCourseOptionId?: string | null;
+    quranAgeGroupId?: string | null;
+    quranLevelId?: string | null;
+    allowedSpecializations: Array<{
+      id: string;
+      track: 'school' | 'quran';
+      courseOptionId?: string;
+      ageGroupId?: string;
+      levelId?: string;
+      label: string;
+    }>;
+    slotDate: string;
+    startTime: string;
+    endTime: string;
+    timezone: string;
+    durationMinutes: number;
+    priceAmount: number;
+    currency: string;
+    isAvailable: boolean;
+    isBooked: boolean;
+    adminSuspended: boolean;
+  } | null> {
+    const trimmed = slotId.trim();
+    if (!trimmed) return null;
+    const { data, error } = await supabase.rpc('admin_get_private_slot_by_id', {
+      p_slot_id: trimmed,
+    });
+    if (error || !data) return null;
+    const rawAllowed = Array.isArray(data.allowedSpecializations) ? data.allowedSpecializations : [];
+    const allowedSpecializations = rawAllowed
+      .map((item: any) => {
+        if (!item || typeof item !== 'object') return null;
+        const courseOptionId = item.courseOptionId || item.offeringCourseOptionId || undefined;
+        const ageGroupId = item.ageGroupId || item.quranAgeGroupId || undefined;
+        const levelId = item.levelId || item.quranLevelId || undefined;
+        const track: 'school' | 'quran' =
+          item.track === 'quran' || (!courseOptionId && ageGroupId && levelId) ? 'quran' : 'school';
+        return {
+          id:
+            item.id ||
+            (track === 'school'
+              ? `school-${courseOptionId}`
+              : `quran-${ageGroupId}-${levelId}`),
+          track,
+          courseOptionId: track === 'school' ? courseOptionId : undefined,
+          ageGroupId: track === 'quran' ? ageGroupId : undefined,
+          levelId: track === 'quran' ? levelId : undefined,
+          label: item.label || data.specializationLabel || '',
+        };
+      })
+      .filter(Boolean) as Array<{
+      id: string;
+      track: 'school' | 'quran';
+      courseOptionId?: string;
+      ageGroupId?: string;
+      levelId?: string;
+      label: string;
+    }>;
+
+    return {
+      ...data,
+      allowedSpecializations,
+    };
+  },
+
+  /**
    * 20. Admin confirm private booking
    */
-  async confirmPrivateBooking(bookingId: string): Promise<void> {
+  async confirmPrivateBooking(
+    bookingId: string,
+    chosenSpecialization?: {
+      offeringCourseOptionId?: string | null;
+      quranAgeGroupId?: string | null;
+      quranLevelId?: string | null;
+    }
+  ): Promise<void> {
+    const hasSpecSelection = Boolean(
+      chosenSpecialization &&
+        (chosenSpecialization.offeringCourseOptionId ||
+          (chosenSpecialization.quranAgeGroupId && chosenSpecialization.quranLevelId))
+    );
+
+    if (hasSpecSelection) {
+      const { error } = await supabase.rpc('admin_confirm_private_booking', {
+        p_booking_id: bookingId,
+        p_offering_course_option_id: chosenSpecialization?.offeringCourseOptionId || null,
+        p_quran_age_group_id: chosenSpecialization?.quranAgeGroupId || null,
+        p_quran_level_id: chosenSpecialization?.quranLevelId || null,
+      });
+
+      if (!error) return;
+
+      const msg = String(error.message || '');
+      if (
+        error.code === '42883' ||
+        error.code === 'PGRST202' ||
+        msg.includes('p_offering_course_option_id')
+      ) {
+        throw new Error(
+          'تأكيد الحجز بتخصص بديل محدد يتطلب تطبيق تحديث قاعدة البيانات (Migration 013) أولاً.'
+        );
+      }
+
+      throw new Error(`تعذر تأكيد حجز الحصة الخاصة: ${error.message}`);
+    }
+
     const { error } = await supabase.rpc('admin_confirm_private_booking', {
       p_booking_id: bookingId,
     });
@@ -1191,8 +1301,28 @@ export const AdminService = {
     phoneNumber: string;
     agreedPrice: number;
     notes?: string;
-  }): Promise<{ bookingId: string; alreadyExists?: boolean }> {
-    const { slotId, studentName, guardianName, phoneNumber, agreedPrice, notes } = params;
+    offeringCourseOptionId?: string | null;
+    quranAgeGroupId?: string | null;
+    quranLevelId?: string | null;
+    isMultiSpecializationSlot?: boolean;
+  }): Promise<{ bookingId: string; alreadyExists?: boolean; alreadyConfirmed?: boolean; specializationLabel?: string }> {
+    const {
+      slotId,
+      studentName,
+      guardianName,
+      phoneNumber,
+      agreedPrice,
+      notes,
+      offeringCourseOptionId,
+      quranAgeGroupId,
+      quranLevelId,
+      isMultiSpecializationSlot,
+    } = params;
+
+    const hasExplicitSpecialization = Boolean(
+      offeringCourseOptionId || (quranAgeGroupId && quranLevelId)
+    );
+
     const { data, error } = await supabase.rpc('admin_create_private_booking', {
       p_slot_id: slotId,
       p_student_name: studentName.trim(),
@@ -1200,13 +1330,79 @@ export const AdminService = {
       p_phone_number: phoneNumber.trim(),
       p_agreed_price: agreedPrice,
       p_notes: notes?.trim() || null,
+      p_offering_course_option_id: offeringCourseOptionId || null,
+      p_quran_age_group_id: quranAgeGroupId || null,
+      p_quran_level_id: quranLevelId || null,
     });
 
-    if (error) {
-      throw new Error(`فشل تسجيل طلب حجز الحصة الخاصة: ${error.message}`);
+    if (!error) {
+      if (
+        !data ||
+        data.success !== true ||
+        typeof data.bookingId !== 'string' ||
+        data.bookingId.trim().length === 0
+      ) {
+        throw new Error(
+          'فشل تسجيل طلب حجز الحصة الخاصة: استجابة الخادم غير مكتملة أو لا تتضمن معرف الحجز.'
+        );
+      }
+
+      return {
+        bookingId: data.bookingId.trim(),
+        alreadyExists: Boolean(data.alreadyExists),
+        alreadyConfirmed: Boolean(data.alreadyConfirmed),
+        specializationLabel: data.specializationLabel,
+      };
     }
 
-    return { bookingId: data?.bookingId, alreadyExists: data?.alreadyExists };
+    const msg = String(error.message || '');
+    const isMissingNewSignature =
+      error.code === '42883' ||
+      error.code === 'PGRST202' ||
+      msg.includes('p_offering_course_option_id');
+
+    if (isMissingNewSignature) {
+      if (isMultiSpecializationSlot && hasExplicitSpecialization) {
+        throw new Error(
+          'حفظ التخصص البديل المختار في الحجز يتطلب تطبيق تحديث قاعدة البيانات (Migration 013) أولاً.'
+        );
+      }
+
+      const { data: fallbackData, error: fallbackError } = await supabase.rpc(
+        'admin_create_private_booking',
+        {
+          p_slot_id: slotId,
+          p_student_name: studentName.trim(),
+          p_guardian_name: guardianName.trim(),
+          p_phone_number: phoneNumber.trim(),
+          p_agreed_price: agreedPrice,
+          p_notes: notes?.trim() || null,
+        }
+      );
+
+      if (fallbackError) {
+        throw new Error(`فشل تسجيل طلب حجز الحصة الخاصة: ${fallbackError.message}`);
+      }
+
+      if (
+        !fallbackData ||
+        fallbackData.success !== true ||
+        typeof fallbackData.bookingId !== 'string' ||
+        fallbackData.bookingId.trim().length === 0
+      ) {
+        throw new Error(
+          'فشل تسجيل طلب حجز الحصة الخاصة: استجابة الخادم غير مكتملة أو لا تتضمن معرف الحجز.'
+        );
+      }
+
+      return {
+        bookingId: fallbackData.bookingId.trim(),
+        alreadyExists: Boolean(fallbackData.alreadyExists),
+        alreadyConfirmed: Boolean(fallbackData.alreadyConfirmed),
+      };
+    }
+
+    throw new Error(`فشل تسجيل طلب حجز الحصة الخاصة: ${error.message}`);
   },
 
   /**

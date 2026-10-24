@@ -63,6 +63,48 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
   const [newBookingPhone, setNewBookingPhone] = useState('');
   const [newBookingAgreedPrice, setNewBookingAgreedPrice] = useState<number>(150);
   const [newBookingNotes, setNewBookingNotes] = useState('');
+  const [newBookingSpecCode, setNewBookingSpecCode] = useState('');
+  const [newBookingSlotInfo, setNewBookingSlotInfo] = useState<any | null>(null);
+  const [isLookingUpSlot, setIsLookingUpSlot] = useState(false);
+  const [confirmSpecByBookingId, setConfirmSpecByBookingId] = useState<Record<string, string>>({});
+
+  const parseSpecializationCode = (code: string): {
+    offeringCourseOptionId?: string | null;
+    quranAgeGroupId?: string | null;
+    quranLevelId?: string | null;
+  } => {
+    const trimmed = (code || '').trim();
+    if (!trimmed) return {};
+    if (trimmed.startsWith('school:')) {
+      const optionId = trimmed.slice('school:'.length).trim();
+      return optionId ? { offeringCourseOptionId: optionId, quranAgeGroupId: null, quranLevelId: null } : {};
+    }
+    if (trimmed.startsWith('quran:')) {
+      const parts = trimmed.split(':');
+      if (parts.length >= 3 && parts[1] && parts[2]) {
+        return {
+          offeringCourseOptionId: null,
+          quranAgeGroupId: parts[1].trim(),
+          quranLevelId: parts[2].trim(),
+        };
+      }
+    }
+    return {};
+  };
+
+  const getSpecItemCode = (item: any): string => {
+    if (!item) return '';
+    const courseOptionId = item.courseOptionId || item.offeringCourseOptionId || item.offering_course_option_id;
+    const ageGroupId = item.ageGroupId || item.quranAgeGroupId || item.quran_age_group_id;
+    const levelId = item.levelId || item.quranLevelId || item.quran_level_id;
+    if ((item.track === 'school' || courseOptionId) && courseOptionId) {
+      return `school:${courseOptionId}`;
+    }
+    if ((item.track === 'quran' || (ageGroupId && levelId)) && ageGroupId && levelId) {
+      return `quran:${ageGroupId}:${levelId}`;
+    }
+    return '';
+  };
 
   // New Group Enrollment form
   const [newEnrollmentGroupId, setNewEnrollmentGroupId] = useState('');
@@ -99,13 +141,72 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
     setStatusFilter('all');
   }, [subTab]);
 
+  // Lookup slot info when Admin enters a valid Slot UUID in the New Private Booking modal
+  useEffect(() => {
+    const trimmed = newBookingSlotId.trim();
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!trimmed || !uuidRegex.test(trimmed)) {
+      setNewBookingSlotInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLookingUpSlot(true);
+    AdminService.getPrivateSlotById(trimmed)
+      .then((info) => {
+        if (cancelled) return;
+        setNewBookingSlotInfo(info);
+        if (info) {
+          if (typeof info.priceAmount === 'number' && info.priceAmount >= 0) {
+            setNewBookingAgreedPrice(info.priceAmount);
+          }
+          const specs = Array.isArray(info.allowedSpecializations) ? info.allowedSpecializations : [];
+          if (specs.length === 1) {
+            setNewBookingSpecCode(getSpecItemCode(specs[0]));
+          } else if (specs.length > 1) {
+            // Keep existing selection only if it matches one of the slot's alternatives
+            const validCodes = specs.map(getSpecItemCode).filter(Boolean);
+            setNewBookingSpecCode((prev) => (validCodes.includes(prev) ? prev : ''));
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setNewBookingSlotInfo(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLookingUpSlot(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [newBookingSlotId]);
+
   // Handle Private Booking Confirmation
-  const handleConfirmPrivate = async (id: string) => {
+  const handleConfirmPrivate = async (booking: any) => {
+    const id = booking.id;
+    const slotSpecs = Array.isArray(booking.slot_allowed_specializations)
+      ? booking.slot_allowed_specializations
+      : [];
+    const hasSavedSpec =
+      Boolean(booking.offering_course_option_id) ||
+      Boolean(booking.quran_age_group_id && booking.quran_level_id);
+    const chosenCode = confirmSpecByBookingId[id] || '';
+    const parsedSpec = parseSpecializationCode(chosenCode);
+
+    if (slotSpecs.length > 1 && !hasSavedSpec && !parsedSpec.offeringCourseOptionId && !parsedSpec.quranAgeGroupId) {
+      setErrorMessage('هذا الموعد يقبل أكثر من تخصص بديل؛ يرجى اختيار التخصص الذي سيُؤكَّد عليه الحجز أولاً.');
+      return;
+    }
+
     setActionLoadingId(id);
     setErrorMessage(null);
     try {
-      await AdminService.confirmPrivateBooking(id);
-      setSuccessMessage('تم تأكيد حجز الحصة الخاصة بنجاح وقفل الموعد.');
+      await AdminService.confirmPrivateBooking(
+        id,
+        parsedSpec.offeringCourseOptionId || parsedSpec.quranAgeGroupId ? parsedSpec : undefined
+      );
+      setSuccessMessage('تم تأكيد حجز الحصة الخاصة بنجاح وقفل الموعد بالكامل.');
       await loadData();
     } catch (err: any) {
       setErrorMessage(err.message || 'فشل تأكيد الحجز.');
@@ -223,6 +324,21 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
       setErrorMessage('يرجى ملء جميع الحقول المطلوبة (معرف الموعد، اسم الطالب، الهاتف).');
       return;
     }
+
+    const slotSpecs = Array.isArray(newBookingSlotInfo?.allowedSpecializations)
+      ? newBookingSlotInfo.allowedSpecializations
+      : [];
+    const parsedSpec = parseSpecializationCode(newBookingSpecCode);
+
+    if (
+      slotSpecs.length > 1 &&
+      !parsedSpec.offeringCourseOptionId &&
+      !(parsedSpec.quranAgeGroupId && parsedSpec.quranLevelId)
+    ) {
+      setErrorMessage('هذا الموعد متاح لأكثر من تخصص بديل؛ يرجى تحديد التخصص الذي اختاره ولي الأمر.');
+      return;
+    }
+
     setActionLoadingId('new_booking');
     setErrorMessage(null);
     try {
@@ -233,10 +349,15 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
         phoneNumber: newBookingPhone.trim(),
         agreedPrice: newBookingAgreedPrice,
         notes: newBookingNotes.trim() || undefined,
+        offeringCourseOptionId: parsedSpec.offeringCourseOptionId ?? null,
+        quranAgeGroupId: parsedSpec.quranAgeGroupId ?? null,
+        quranLevelId: parsedSpec.quranLevelId ?? null,
       });
 
-      if (res.alreadyExists) {
-        setSuccessMessage('تم العثور على طلب الحجز مسبقاً (إعادة طلب مطابقة).');
+      if (res.alreadyConfirmed) {
+        setSuccessMessage('تم العثور على حجز مؤكد بالفعل لهذا الموعد والطالب (دون تعديل).');
+      } else if (res.alreadyExists) {
+        setSuccessMessage('تم العثور على طلب حجز مسبقاً وتحديث بيانات الاتفاق بنجاح.');
       } else {
         setSuccessMessage('تم تسجيل طلب حجز الحصة الخاصة بنجاح.');
       }
@@ -246,6 +367,8 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
       setNewBookingGuardianName('');
       setNewBookingPhone('');
       setNewBookingNotes('');
+      setNewBookingSpecCode('');
+      setNewBookingSlotInfo(null);
       await loadData();
     } catch (err: any) {
       setErrorMessage(err.message || 'فشل إنشاء طلب الحجز.');
@@ -694,7 +817,40 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-bold text-[#0D4E8B]">{b.tutor_name}</div>
-                          <div className="text-[11px] text-slate-500">{b.specialization_label}</div>
+                          <div className="text-[11px] text-slate-600 font-bold">{b.specialization_label}</div>
+                          {b.status === 'pending' &&
+                            Array.isArray(b.slot_allowed_specializations) &&
+                            b.slot_allowed_specializations.length > 1 && (
+                              <div className="mt-1.5">
+                                <select
+                                  value={
+                                    confirmSpecByBookingId[b.id] ??
+                                    (b.offering_course_option_id
+                                      ? `school:${b.offering_course_option_id}`
+                                      : b.quran_age_group_id && b.quran_level_id
+                                      ? `quran:${b.quran_age_group_id}:${b.quran_level_id}`
+                                      : '')
+                                  }
+                                  onChange={(e) =>
+                                    setConfirmSpecByBookingId((prev) => ({
+                                      ...prev,
+                                      [b.id]: e.target.value,
+                                    }))
+                                  }
+                                  className="w-full max-w-[220px] p-1 rounded-lg border border-blue-200 bg-blue-50/50 text-[10px] font-bold text-[#0D4E8B] focus:outline-none"
+                                >
+                                  <option value="">-- اختر التخصص لتأكيد الحجز --</option>
+                                  {b.slot_allowed_specializations.map((spec: any, idx: number) => {
+                                    const code = getSpecItemCode(spec);
+                                    return (
+                                      <option key={`${code}-${idx}`} value={code}>
+                                        {spec.label}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </div>
+                            )}
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-bold text-[#1F2A44]">{b.slot_date}</div>
@@ -732,7 +888,7 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                               <button
                                 type="button"
                                 disabled={actionLoadingId === b.id}
-                                onClick={() => handleConfirmPrivate(b.id)}
+                                onClick={() => handleConfirmPrivate(b)}
                                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-all cursor-pointer shadow-xs"
                               >
                                 {actionLoadingId === b.id ? (
@@ -1067,7 +1223,65 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
                   placeholder="e.g. 748b6139-38b4-419b-a0ea-4396c561bcfc"
                   className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-mono focus:border-[#0D4E8B] focus:outline-none"
                 />
+                {isLookingUpSlot && (
+                  <p className="text-[11px] text-[#0D4E8B] mt-1 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>جاري التحقق من بيانات الموعد والتخصصات المتاحة...</span>
+                  </p>
+                )}
+                {newBookingSlotInfo && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-[11px] space-y-1">
+                    <div className="font-bold text-[#0D4E8B]">
+                      المعلم: {newBookingSlotInfo.tutorName} — التاريخ: {newBookingSlotInfo.slotDate} ({newBookingSlotInfo.startTime?.substring(0, 5)} - {newBookingSlotInfo.endTime?.substring(0, 5)})
+                    </div>
+                    <div className="text-slate-600">
+                      السعر المعلن للموعد: <span className="font-bold">{newBookingSlotInfo.priceAmount} {newBookingSlotInfo.currency}</span> | الحالة: <span className="font-bold">{newBookingSlotInfo.status}</span>
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {newBookingSlotInfo &&
+              Array.isArray(newBookingSlotInfo.allowedSpecializations) &&
+              newBookingSlotInfo.allowedSpecializations.length > 0 ? (
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    التخصص الذي اختاره الطالب لهذا الموعد {newBookingSlotInfo.allowedSpecializations.length > 1 ? '*' : ''}
+                  </label>
+                  <select
+                    required={newBookingSlotInfo.allowedSpecializations.length > 1}
+                    value={newBookingSpecCode}
+                    onChange={(e) => setNewBookingSpecCode(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-[#1F2A44] focus:border-[#0D4E8B] focus:outline-none bg-white"
+                  >
+                    {newBookingSlotInfo.allowedSpecializations.length > 1 && (
+                      <option value="">-- اختر التخصص المطلوب من بدائل الموعد --</option>
+                    )}
+                    {newBookingSlotInfo.allowedSpecializations.map((spec: any, idx: number) => {
+                      const code = getSpecItemCode(spec);
+                      return (
+                        <option key={`${code}-${idx}`} value={code}>
+                          {spec.label} ({code})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    كود التخصص المختار من رسالة واتساب (اختياري للموعد ذي التخصص الواحد، ومطلوب عند تعدد البدائل)
+                  </label>
+                  <input
+                    type="text"
+                    value={newBookingSpecCode}
+                    onChange={(e) => setNewBookingSpecCode(e.target.value)}
+                    placeholder="school:<uuid> أو quran:<age_group_id>:<level_id>"
+                    dir="ltr"
+                    className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-mono focus:border-[#0D4E8B] focus:outline-none"
+                  />
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>

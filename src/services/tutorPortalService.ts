@@ -19,6 +19,149 @@ import {
   TutorGroup,
 } from '../types';
 
+export function deduplicateSpecializationItems(
+  items: ApprovedSpecializationItem[]
+): ApprovedSpecializationItem[] {
+  const seen = new Set<string>();
+  const result: ApprovedSpecializationItem[] = [];
+
+  for (const rawItem of items) {
+    if (!rawItem || typeof rawItem !== 'object') continue;
+    const item = rawItem as any;
+    const courseOptionId = item.courseOptionId || item.offeringCourseOptionId || undefined;
+    const ageGroupId = item.ageGroupId || item.quranAgeGroupId || undefined;
+    const levelId = item.levelId || item.quranLevelId || undefined;
+
+    const hasSchoolIds = Boolean(courseOptionId);
+    const hasQuranIds = Boolean(ageGroupId || levelId);
+    const isSchool = item.track === 'school' || hasSchoolIds;
+    const isQuran = item.track === 'quran' || hasQuranIds;
+
+    if ((isSchool && isQuran) || (hasSchoolIds && hasQuranIds)) {
+      throw new Error('تناقض في بيانات التخصص: لا يمكن الجمع بين المسار المدرسي والقرآني في نفس البديل.');
+    }
+
+    let key = '';
+    let normalizedItem: ApprovedSpecializationItem | null = null;
+    if (isSchool && courseOptionId && !hasQuranIds) {
+      key = `school:${courseOptionId}`;
+      normalizedItem = {
+        ...item,
+        id: item.id || `school-${courseOptionId}`,
+        track: 'school',
+        courseOptionId: String(courseOptionId),
+        ageGroupId: undefined,
+        levelId: undefined,
+      };
+    } else if (isQuran && ageGroupId && levelId && !hasSchoolIds) {
+      key = `quran:${ageGroupId}:${levelId}`;
+      normalizedItem = {
+        ...item,
+        id: item.id || `quran-${ageGroupId}-${levelId}`,
+        track: 'quran',
+        courseOptionId: undefined,
+        ageGroupId: String(ageGroupId),
+        levelId: String(levelId),
+      };
+    }
+
+    if (normalizedItem && key && !seen.has(key)) {
+      seen.add(key);
+      result.push(normalizedItem);
+    }
+  }
+
+  return result;
+}
+
+export function normalizeSlotAllowedSpecializations(rawSlot: any): ApprovedSpecializationItem[] {
+  if (!rawSlot) return [];
+
+  const primaryCourseId = rawSlot.offering_course_option_id || rawSlot.offeringCourseOptionId || rawSlot.courseOptionId || null;
+  const primaryAgeId = rawSlot.quran_age_group_id || rawSlot.quranAgeGroupId || rawSlot.ageGroupId || null;
+  const primaryLevelId = rawSlot.quran_level_id || rawSlot.quranLevelId || rawSlot.levelId || null;
+  const primaryLabel = rawSlot.specialization_label || rawSlot.specializationLabel || '';
+
+  let primaryItem: ApprovedSpecializationItem | null = null;
+  if (primaryCourseId && !primaryAgeId && !primaryLevelId) {
+    primaryItem = {
+      id: `school-${primaryCourseId}`,
+      track: 'school',
+      courseOptionId: String(primaryCourseId),
+      label: primaryLabel || 'تخصص مدرسي',
+    };
+  } else if (!primaryCourseId && primaryAgeId && primaryLevelId) {
+    primaryItem = {
+      id: `quran-${primaryAgeId}-${primaryLevelId}`,
+      track: 'quran',
+      ageGroupId: String(primaryAgeId),
+      levelId: String(primaryLevelId),
+      label: primaryLabel || 'قرآن وتأسيس',
+    };
+  }
+
+  const rawList = Array.isArray(rawSlot.allowed_specializations)
+    ? rawSlot.allowed_specializations
+    : Array.isArray(rawSlot.allowedSpecializations)
+    ? rawSlot.allowedSpecializations
+    : [];
+
+  if (rawList.length > 0) {
+    const mapped: ApprovedSpecializationItem[] = [];
+    if (primaryItem) {
+      mapped.push(primaryItem);
+    }
+    for (const item of rawList) {
+      if (!item || typeof item !== 'object') continue;
+      const courseOptionId =
+        item.courseOptionId || item.offeringCourseOptionId || item.offering_course_option_id || null;
+      const ageGroupId = item.ageGroupId || item.quranAgeGroupId || item.quran_age_group_id || null;
+      const levelId = item.levelId || item.quranLevelId || item.quran_level_id || null;
+      const track =
+        item.track === 'school' || item.track === 'quran'
+          ? item.track
+          : courseOptionId
+          ? 'school'
+          : ageGroupId && levelId
+          ? 'quran'
+          : null;
+
+      if (track === 'school' && courseOptionId && !ageGroupId && !levelId) {
+        mapped.push({
+          id: item.id || `school-${courseOptionId}`,
+          track: 'school',
+          courseOptionId: String(courseOptionId),
+          label: item.label || primaryLabel || 'تخصص مدرسي',
+        });
+      } else if (track === 'quran' && ageGroupId && levelId && !courseOptionId) {
+        mapped.push({
+          id: item.id || `quran-${ageGroupId}-${levelId}`,
+          track: 'quran',
+          ageGroupId: String(ageGroupId),
+          levelId: String(levelId),
+          label: item.label || primaryLabel || 'قرآن وتأسيس',
+        });
+      }
+    }
+    if (mapped.length > 0) {
+      return deduplicateSpecializationItems(mapped);
+    }
+  }
+
+  return primaryItem ? [primaryItem] : [];
+}
+
+export function isMissingMultiSpecRpcError(rpcError: any): boolean {
+  if (!rpcError) return false;
+  const msg = String(rpcError.message || '');
+  return (
+    rpcError.code === '42883' ||
+    rpcError.code === 'PGRST202' ||
+    msg.includes('p_allowed_specializations') ||
+    msg.includes('Could not find the function')
+  );
+}
+
 export const TutorPortalService = {
   /**
    * 1. Get current tutor portal context
@@ -321,6 +464,24 @@ export const TutorPortalService = {
   },
 
   /**
+   * Helper to resolve a signed preview URL for avatar paths in tutor-avatars-pending
+   */
+  async getSignedAvatarUrl(path: string | null | undefined): Promise<string | null> {
+    if (!path) return null;
+    if (path.startsWith('pending/')) {
+      try {
+        const { data } = await supabase.storage
+          .from('tutor-avatars-pending')
+          .createSignedUrl(path, 3600);
+        return data?.signedUrl || null;
+      } catch {
+        return null;
+      }
+    }
+    return path;
+  },
+
+  /**
    * 6. Submit profile draft for administrative review
    * Saves the permanent private storagePath (not temporary Signed URL)
    */
@@ -466,84 +627,122 @@ export const TutorPortalService = {
    */
   async getMyPrivateSlots(): Promise<TutorPrivateSlot[]> {
     const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_get_my_private_slots');
-    if (!rpcError && rpcData) {
-      return (rpcData as any[]).map((s) => ({
-        id: s.id,
-        specializationLabel: s.specialization_label,
-        slotDate: s.slot_date,
-        startTime: s.start_time,
-        endTime: s.end_time,
-        timezone: s.timezone || 'Africa/Cairo',
-        durationMinutes: s.duration_minutes,
-        priceAmount: s.price_amount,
-        currency: s.currency || 'ج.م',
-        isAvailable: Boolean(s.is_available),
-        adminSuspended: Boolean(s.admin_suspended),
-        isBooked: Boolean(s.is_booked),
-        bookedAt: s.booked_at,
-        createdAt: s.created_at,
-      }));
+    if (rpcError) {
+      throw new Error(`تعذر تحميل المواعيد الخاصة: ${rpcError.message}`);
     }
 
-    // Fallback: direct select if RPC not yet deployed
-    const context = await this.getMyContext();
-    const { data, error } = await supabase
-      .from('tutor_private_slots')
-      .select('id, specialization_label, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency, is_available, admin_suspended, is_booked, booked_at, created_at')
-      .eq('tutor_id', context.tutor.id)
-      .order('slot_date', { ascending: true })
-      .order('start_time', { ascending: true });
-
-    if (error) {
-      // Table might not exist yet before migration
-      return [];
-    }
-
-    return (data || []).map((s: any) => ({
+    return ((rpcData as any[]) || []).map((s) => ({
       id: s.id,
       specializationLabel: s.specialization_label,
+      offeringCourseOptionId: s.offering_course_option_id ?? null,
+      quranAgeGroupId: s.quran_age_group_id ?? null,
+      quranLevelId: s.quran_level_id ?? null,
+      allowedSpecializations: normalizeSlotAllowedSpecializations(s),
       slotDate: s.slot_date,
       startTime: s.start_time,
       endTime: s.end_time,
       timezone: s.timezone || 'Africa/Cairo',
-      durationMinutes: s.duration_minutes,
-      priceAmount: s.price_amount,
+      durationMinutes: Number(s.duration_minutes),
+      priceAmount: Number(s.price_amount),
       currency: s.currency || 'ج.م',
       isAvailable: Boolean(s.is_available),
       adminSuspended: Boolean(s.admin_suspended),
+      adminSuspensionNotes: s.admin_suspension_notes ?? null,
       isBooked: Boolean(s.is_booked),
-      bookedAt: s.booked_at,
+      bookedAt: s.booked_at ?? null,
       createdAt: s.created_at,
     }));
   },
 
   async createPrivateSlots(params: {
-    specialization: ApprovedSpecializationItem;
+    specialization?: ApprovedSpecializationItem;
+    specializations?: ApprovedSpecializationItem[];
     durationMinutes: number;
     priceAmount: number;
     currency?: string;
     timezone?: string;
     slots: Array<{ date: string; startTime: string; endTime: string }>;
   }): Promise<{ insertedCount: number }> {
-    const { specialization, durationMinutes, priceAmount, currency = 'ج.م', timezone = 'Africa/Cairo', slots } = params;
+    const { durationMinutes, priceAmount, currency = 'ج.م', timezone = 'Africa/Cairo', slots } = params;
+    const rawSpecs: ApprovedSpecializationItem[] =
+      params.specializations && params.specializations.length > 0
+        ? params.specializations
+        : params.specialization
+        ? [params.specialization]
+        : [];
 
-    const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_create_private_slots', {
-      p_specialization_label: specialization.label,
-      p_duration_minutes: durationMinutes,
-      p_price_amount: priceAmount,
-      p_currency: currency,
-      p_slots: slots,
-      p_offering_course_option_id: specialization.courseOptionId || null,
-      p_quran_age_group_id: specialization.ageGroupId || null,
-      p_quran_level_id: specialization.levelId || null,
-      p_timezone: timezone,
-    });
+    const allSpecs = deduplicateSpecializationItems(rawSpecs);
 
-    if (rpcError) {
-      throw new Error(`تعذر حفظ المواعيد الخاصة: ${rpcError.message}`);
+    if (allSpecs.length === 0) {
+      throw new Error('يرجى اختيار تخصص معتمد واحد على الأقل للموعد الخاص.');
     }
 
-    return { insertedCount: rpcData?.insertedCount || slots.length };
+    if (!Array.isArray(slots) || slots.length === 0) {
+      throw new Error('يرجى تحديد موعد واحد على الأقل للإضافة.');
+    }
+
+    if (durationMinutes == null || Number.isNaN(Number(durationMinutes)) || durationMinutes < 30 || durationMinutes > 120) {
+      throw new Error('مدة الحصة الخاصة مطلوبة ويجب أن تكون بين 30 و 120 دقيقة.');
+    }
+
+    if (priceAmount == null || Number.isNaN(Number(priceAmount)) || priceAmount < 0) {
+      throw new Error('سعر الحصة الخاصة مطلوب ويجب أن يكون قيمة موجبة أو صفراً.');
+    }
+
+    const primarySpec = allSpecs[0];
+    const allowedSpecsPayload = allSpecs.map((s) => ({
+      id: s.id,
+      track: s.track,
+      courseOptionId: s.track === 'school' ? s.courseOptionId || null : null,
+      ageGroupId: s.track === 'quran' ? s.ageGroupId || null : null,
+      levelId: s.track === 'quran' ? s.levelId || null : null,
+      label: s.label,
+    }));
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_create_private_slots', {
+      p_specialization_label: primarySpec.label,
+      p_duration_minutes: Math.round(Number(durationMinutes)),
+      p_price_amount: Math.round(Number(priceAmount)),
+      p_currency: currency,
+      p_slots: slots,
+      p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
+      p_quran_age_group_id: primarySpec.track === 'quran' ? primarySpec.ageGroupId || null : null,
+      p_quran_level_id: primarySpec.track === 'quran' ? primarySpec.levelId || null : null,
+      p_timezone: timezone,
+      p_allowed_specializations: allowedSpecsPayload,
+    });
+
+    if (!rpcError) {
+      return { insertedCount: rpcData?.insertedCount || slots.length };
+    }
+
+    if (isMissingMultiSpecRpcError(rpcError)) {
+      if (allSpecs.length > 1) {
+        throw new Error(
+          'إتاحة الموعد الخاص لأكثر من تخصص بديل تتطلب تطبيق تحديث قاعدة البيانات (Migration 013) أولاً. يرجى اختيار تخصص واحد فقط حالياً لحين تطبيق التحديث.'
+        );
+      }
+
+      const { data: fallbackData, error: fallbackError } = await supabase.rpc('tutor_create_private_slots', {
+        p_specialization_label: primarySpec.label,
+        p_duration_minutes: Math.round(Number(durationMinutes)),
+        p_price_amount: Math.round(Number(priceAmount)),
+        p_currency: currency,
+        p_slots: slots,
+        p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
+        p_quran_age_group_id: primarySpec.track === 'quran' ? primarySpec.ageGroupId || null : null,
+        p_quran_level_id: primarySpec.track === 'quran' ? primarySpec.levelId || null : null,
+        p_timezone: timezone,
+      });
+
+      if (fallbackError) {
+        throw new Error(`تعذر حفظ المواعيد الخاصة: ${fallbackError.message}`);
+      }
+
+      return { insertedCount: fallbackData?.insertedCount || slots.length };
+    }
+
+    throw new Error(`تعذر حفظ المواعيد الخاصة: ${rpcError.message}`);
   },
 
   async deletePrivateSlot(slotId: string): Promise<void> {
@@ -563,26 +762,87 @@ export const TutorPortalService = {
     endTime: string;
     durationMinutes: number;
     priceAmount: number;
-    specialization: ApprovedSpecializationItem;
+    specialization?: ApprovedSpecializationItem;
+    specializations?: ApprovedSpecializationItem[];
     timezone?: string;
   }): Promise<void> {
-    const { slotId, slotDate, startTime, endTime, durationMinutes, priceAmount, specialization, timezone = 'Africa/Cairo' } = params;
+    const { slotId, slotDate, startTime, endTime, durationMinutes, priceAmount, timezone = 'Africa/Cairo' } = params;
+    const rawSpecs: ApprovedSpecializationItem[] =
+      params.specializations && params.specializations.length > 0
+        ? params.specializations
+        : params.specialization
+        ? [params.specialization]
+        : [];
+
+    const allSpecs = deduplicateSpecializationItems(rawSpecs);
+
+    if (allSpecs.length === 0) {
+      throw new Error('يرجى اختيار تخصص معتمد واحد على الأقل للموعد الخاص.');
+    }
+
+    if (durationMinutes == null || Number.isNaN(Number(durationMinutes)) || durationMinutes < 30 || durationMinutes > 120) {
+      throw new Error('مدة الحصة الخاصة مطلوبة ويجب أن تكون بين 30 و 120 دقيقة.');
+    }
+
+    if (priceAmount == null || Number.isNaN(Number(priceAmount)) || priceAmount < 0) {
+      throw new Error('سعر الحصة الخاصة مطلوب ويجب أن يكون قيمة موجبة أو صفراً.');
+    }
+
+    const primarySpec = allSpecs[0];
+    const allowedSpecsPayload = allSpecs.map((s) => ({
+      id: s.id,
+      track: s.track,
+      courseOptionId: s.track === 'school' ? s.courseOptionId || null : null,
+      ageGroupId: s.track === 'quran' ? s.ageGroupId || null : null,
+      levelId: s.track === 'quran' ? s.levelId || null : null,
+      label: s.label,
+    }));
+
     const { error: rpcError } = await supabase.rpc('tutor_update_private_slot', {
       p_slot_id: slotId,
       p_slot_date: slotDate,
       p_start_time: startTime,
       p_end_time: endTime,
-      p_duration_minutes: durationMinutes,
-      p_price_amount: priceAmount,
-      p_offering_course_option_id: specialization.courseOptionId || null,
-      p_quran_age_group_id: specialization.ageGroupId || null,
-      p_quran_level_id: specialization.levelId || null,
+      p_duration_minutes: Math.round(Number(durationMinutes)),
+      p_price_amount: Math.round(Number(priceAmount)),
       p_timezone: timezone,
+      p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
+      p_quran_age_group_id: primarySpec.track === 'quran' ? primarySpec.ageGroupId || null : null,
+      p_quran_level_id: primarySpec.track === 'quran' ? primarySpec.levelId || null : null,
+      p_allowed_specializations: allowedSpecsPayload,
     });
 
-    if (rpcError) {
-      throw new Error(`تعذر تعديل الموعد الخاص: ${rpcError.message}`);
+    if (!rpcError) {
+      return;
     }
+
+    if (isMissingMultiSpecRpcError(rpcError)) {
+      if (allSpecs.length > 1) {
+        throw new Error(
+          'تعديل الموعد الخاص ليشمل أكثر من تخصص بديل يتطلب تطبيق تحديث قاعدة البيانات (Migration 013) أولاً. يرجى اختيار تخصص واحد فقط حالياً لحين تطبيق التحديث.'
+        );
+      }
+
+      const { error: fallbackError } = await supabase.rpc('tutor_update_private_slot', {
+        p_slot_id: slotId,
+        p_slot_date: slotDate,
+        p_start_time: startTime,
+        p_end_time: endTime,
+        p_duration_minutes: Math.round(Number(durationMinutes)),
+        p_price_amount: Math.round(Number(priceAmount)),
+        p_timezone: timezone,
+        p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
+        p_quran_age_group_id: primarySpec.track === 'quran' ? primarySpec.ageGroupId || null : null,
+        p_quran_level_id: primarySpec.track === 'quran' ? primarySpec.levelId || null : null,
+      });
+
+      if (fallbackError) {
+        throw new Error(`تعذر تعديل الموعد الخاص: ${fallbackError.message}`);
+      }
+      return;
+    }
+
+    throw new Error(`تعذر تعديل الموعد الخاص: ${rpcError.message}`);
   },
 
   /**

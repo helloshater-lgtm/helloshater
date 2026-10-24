@@ -49,6 +49,21 @@ interface TutorDashboardViewProps {
   onNavigateToPublicProfile?: (tutorId: string) => void;
 }
 
+// Helper to retain tutor's preferred slot price independently of profile rate
+const getStoredPrivatePrice = (tutorId: string, defaultPrice: number): number => {
+  try {
+    const val = localStorage.getItem(`shatir_tutor_private_price_${tutorId}`);
+    if (val && !isNaN(Number(val)) && Number(val) > 0) return Number(val);
+  } catch {}
+  return defaultPrice;
+};
+
+const storePrivatePrice = (tutorId: string, price: number) => {
+  try {
+    if (price > 0) localStorage.setItem(`shatir_tutor_private_price_${tutorId}`, String(price));
+  } catch {}
+};
+
 export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   onNavigateHome,
   onNavigateToJoin,
@@ -94,10 +109,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     setNewTrialEnd(add20Minutes(val));
   };
 
-  // 2. Private Slots State (1:1 paid sessions)
+  // 2. Private Slots State (1:1 paid sessions with multi-specialization support)
   const [privateSlots, setPrivateSlots] = useState<TutorPrivateSlot[]>([]);
   const [isLoadingPrivate, setIsLoadingPrivate] = useState(false);
-  const [selectedSpecId, setSelectedSpecId] = useState<string>('');
+  const [selectedSpecIds, setSelectedSpecIds] = useState<string[]>([]);
   const [privateDurationMinutes, setPrivateDurationMinutes] = useState<number>(50);
   const [privatePriceAmount, setPrivatePriceAmount] = useState<number>(150);
   const [privateCurrency, setPrivateCurrency] = useState<string>('ج.م');
@@ -197,7 +212,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [editSlotEnd, setEditSlotEnd] = useState('');
   const [editSlotDuration, setEditSlotDuration] = useState(60);
   const [editSlotPrice, setEditSlotPrice] = useState(150);
-  const [editSlotSpecId, setEditSlotSpecId] = useState('');
+  const [editSlotSpecIds, setEditSlotSpecIds] = useState<string[]>([]);
   const [isUpdatingSlot, setIsUpdatingSlot] = useState(false);
 
   // 4. Profile Draft State
@@ -207,6 +222,8 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [draftAvatarPath, setDraftAvatarPath] = useState<string | null>(null);
   const [draftAvatarPreview, setDraftAvatarPreview] = useState<string | null>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
+  const [avatarUploadSuccess, setAvatarUploadSuccess] = useState<string | null>(null);
   const [isSubmittingDraft, setIsSubmittingDraft] = useState(false);
 
   // Load Data & Verify Eligibility
@@ -235,23 +252,17 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
       if (existingDraft?.avatarUrl) {
         setDraftAvatarPath(existingDraft.avatarUrl);
-        if (existingDraft.avatarUrl.startsWith('pending/')) {
-          supabase.storage
-            .from('tutor-avatars-pending')
-            .createSignedUrl(existingDraft.avatarUrl, 3600)
-            .then(({ data }) => {
-              if (data?.signedUrl) setDraftAvatarPreview(data.signedUrl);
-            });
-        } else {
-          setDraftAvatarPreview(existingDraft.avatarUrl);
-        }
+        TutorPortalService.getSignedAvatarUrl(existingDraft.avatarUrl).then((url) => {
+          if (url) setDraftAvatarPreview(url);
+        });
       } else {
         setDraftAvatarPath(null);
         setDraftAvatarPreview(null);
       }
 
-      // Initial rate and currency defaults
-      setPrivatePriceAmount(tutor.hourlyRateMin || 150);
+      // Retain tutor's preferred slot price from storage/session if previously set, else profile default
+      const preferredPrice = getStoredPrivatePrice(tutor.id, tutor.hourlyRateMin || 150);
+      setPrivatePriceAmount(preferredPrice);
       setPrivateCurrency(tutor.currency || 'ج.م');
       setPrivateDurationMinutes(tutor.sessionDurationMinutes || 50);
 
@@ -282,7 +293,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       const specs = await TutorPortalService.getMySpecializations();
       setSpecializations(specs);
       if (specs.length > 0) {
-        setSelectedSpecId(specs[0].id);
+        setSelectedSpecIds((prev) => (prev.length > 0 ? prev : specs.map((s) => s.id)));
         setGroupSpecId(specs[0].id);
       }
     } catch (err) {
@@ -410,12 +421,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     }
   };
 
-  // 2. Handlers for Private Slots (1:1)
+  // 2. Handlers for Private Slots (1:1 with multi-specialization support)
   const handleSavePrivateSlots = async (e: React.FormEvent) => {
     e.preventDefault();
-    const chosenSpec = specializations.find((s) => s.id === selectedSpecId);
-    if (!chosenSpec) {
-      setErrorMessage('يرجى اختيار تخصص معتمد أولاً.');
+    const chosenSpecs = specializations.filter((s) => selectedSpecIds.includes(s.id));
+    if (chosenSpecs.length === 0) {
+      setErrorMessage('يرجى اختيار تخصص معتمد واحد على الأقل للموعد الخاص.');
       return;
     }
 
@@ -435,7 +446,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
     try {
       const res = await TutorPortalService.createPrivateSlots({
-        specialization: chosenSpec,
+        specializations: chosenSpecs,
         durationMinutes: privateDurationMinutes,
         priceAmount: privatePriceAmount,
         currency: privateCurrency,
@@ -443,8 +454,20 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         slots: previewPrivateSlots,
       });
 
-      setSuccessMessage(`تم حفظ ${res.insertedCount} موعداً خاصاً بنجاح! تظهر الآن لأولياء الأمور لحجز الحصص الفردية.`);
-      setTimeout(() => setSuccessMessage(null), 5000);
+      // Retain the tutor's chosen price in storage so form does not revert to 150
+      if (context?.tutor?.id) {
+        storePrivatePrice(context.tutor.id, privatePriceAmount);
+      }
+
+      const specsNotice =
+        chosenSpecs.length > 1
+          ? `مع ${chosenSpecs.length} تخصصات بديلة لنفس الموعد`
+          : `لتخصص ${chosenSpecs[0].label}`;
+
+      setSuccessMessage(
+        `تم حفظ ${res.insertedCount} موعداً خاصاً بنجاح بسعر ${privatePriceAmount} ${privateCurrency} (${specsNotice})! تم تفريغ التاريخ والوقت ليكون النموذج جاهزاً لإضافة موعد آخر جديد.`
+      );
+      setTimeout(() => setSuccessMessage(null), 7000);
       await loadPrivateSlots();
       setPrivateSingleDate('');
       setPrivateRepeatUntilDate('');
@@ -475,9 +498,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const handleUpdatePrivateSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPrivateSlot) return;
-    const chosenSpec = specializations.find((s) => s.id === editSlotSpecId);
-    if (!chosenSpec) {
-      setErrorMessage('يرجى اختيار تخصص معتمد للموعد.');
+    const chosenSpecs = specializations.filter((s) => editSlotSpecIds.includes(s.id));
+    if (chosenSpecs.length === 0) {
+      setErrorMessage('يرجى اختيار تخصص معتمد واحد على الأقل للموعد الخاص.');
       return;
     }
 
@@ -493,10 +516,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         endTime: editSlotEnd,
         durationMinutes: editSlotDuration,
         priceAmount: editSlotPrice,
-        specialization: chosenSpec,
+        specializations: chosenSpecs,
+        timezone: editingPrivateSlot.timezone || 'Africa/Cairo',
       });
 
-      setSuccessMessage('تم تعديل الموعد الخاص بنجاح.');
+      setSuccessMessage('تم تعديل الموعد الخاص وتحديث التخصصات المعتمدة بنجاح.');
       setTimeout(() => setSuccessMessage(null), 4000);
       setEditingPrivateSlot(null);
       await loadPrivateSlots();
@@ -666,24 +690,41 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsUploadingAvatar(true);
+    setAvatarUploadError(null);
+    setAvatarUploadSuccess(null);
     setErrorMessage(null);
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setAvatarUploadError('نوع الملف غير مدعوم. يرجى اختيار صورة بصيغة JPG أو PNG أو WebP.');
+      return;
+    }
+
+    const maxSize = 2 * 1024 * 1024; // 2MB
+    if (file.size > maxSize) {
+      setAvatarUploadError('حجم الصورة كبير جداً (أكثر من 2 ميجابايت). يرجى اختيار صورة أصغر حجماً.');
+      return;
+    }
+
+    // Instant local preview for immediate visual feedback
+    const localUrl = URL.createObjectURL(file);
+    setDraftAvatarPreview(localUrl);
+    setIsUploadingAvatar(true);
 
     try {
       const uploaded = await TutorPortalService.uploadDraftAvatar(file);
       setDraftAvatarPath(uploaded.storagePath);
       setDraftAvatarPreview(uploaded.previewSignedUrl);
-      setSuccessMessage('تم رفع الصورة المقترحة بنجاح! سيتم إرسالها للمراجعة مع حفظ التعديلات.');
-      setTimeout(() => setSuccessMessage(null), 4000);
+      setAvatarUploadSuccess('تم رفع الصورة بنجاح وتجهيزها! اضغط زر (إرسال مقترح التعديل للمراجعة) لاعتمادها رسمياً من الإدارة.');
     } catch (err: any) {
-      setErrorMessage(err?.message || 'فشل رفع الصورة المقترحة.');
+      setAvatarUploadError(err?.message || 'فشل رفع الصورة المقترحة.');
     } finally {
       setIsUploadingAvatar(false);
     }
   };
 
-  const handleSubmitProfileDraft = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitProfileDraft = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!draftHeadline.trim() || draftHeadline.trim().length < 10) {
       setErrorMessage('العنوان التعريفي مطلوب ويجب أن يحتوي على 10 أحرف على الأقل.');
       return;
@@ -692,6 +733,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     setIsSubmittingDraft(true);
     setErrorMessage(null);
     setSuccessMessage(null);
+    setAvatarUploadError(null);
 
     try {
       await TutorPortalService.submitProfileDraft({
@@ -700,7 +742,8 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         helpChildQuote: draftQuote.trim() || null,
         helpChildSummary: draftSummary.trim() || null,
       });
-      setSuccessMessage('تم إرسال مقترح التعديل بنجاح لإدارة شاطر للمراجعة والاعتماد!');
+      setSuccessMessage('تم إرسال مقترح التعديل بنجاح لإدارة شاطر للمراجعة والاعتماد! تظهر حالة المقترح الآن: «بانتظار اعتماد الإدارة».');
+      setAvatarUploadSuccess(null);
       await loadPortalData();
     } catch (err: any) {
       setErrorMessage(err?.message || 'فشل إرسال مقترح تعديل الملف.');
@@ -907,8 +950,112 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         </div>
       )}
 
-      {/* 2. Navigation Tabs (5 Clear Sections) */}
-      <div className="flex items-center gap-2 border-b border-[#CBD5E1] pb-2 overflow-x-auto">
+      {/* 2. Responsive Navigation Bar: Full visibility on mobile & desktop */}
+      {/* Mobile-First Schedule Grid (Visible on mobile, no hidden scroll) */}
+      <div className="sm:hidden space-y-2">
+        <div className="flex items-center justify-between text-xs font-bold text-[#64748B] px-1">
+          <span className="flex items-center gap-1.5 text-[#1F2A44]">
+            <Calendar className="w-3.5 h-3.5 text-[#0D4E8B]" />
+            <span>أقسام المواعيد والجدول:</span>
+          </span>
+          <span className="text-[10px] text-[#0D4E8B]">اضغط لاختيار القسم</span>
+        </div>
+
+        {/* 3 Main Schedule Sections */}
+        <div className="grid grid-cols-3 gap-2">
+          {/* 1. Free Trials */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('trials')}
+            className={`p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between min-h-[72px] ${
+              activeTab === 'trials'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
+                : 'bg-white text-[#1F2A44] border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <Clock3 className={`w-4 h-4 mb-1 ${activeTab === 'trials' ? 'text-white' : 'text-[#0D4E8B]'}`} />
+            <span className="text-[11px] font-bold font-['Cairo'] leading-tight">التجارب المجانية</span>
+            <span className={`text-[10px] mt-0.5 px-2 py-0.2 rounded-full font-bold ${
+              activeTab === 'trials' ? 'bg-white/20 text-white' : 'bg-blue-50 text-[#0D4E8B]'
+            }`}>
+              {trialSlots.length} موعد
+            </span>
+          </button>
+
+          {/* 2. Paid Private Slots (1:1) */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('private')}
+            className={`p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between min-h-[72px] ${
+              activeTab === 'private'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
+                : 'bg-white text-[#1F2A44] border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <DollarSign className={`w-4 h-4 mb-1 ${activeTab === 'private' ? 'text-white' : 'text-emerald-600]'}`} />
+            <span className="text-[11px] font-bold font-['Cairo'] leading-tight">الحصص الخاصة</span>
+            <span className={`text-[10px] mt-0.5 px-2 py-0.2 rounded-full font-bold ${
+              activeTab === 'private' ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-700'
+            }`}>
+              {privateSlots.length} موعد
+            </span>
+          </button>
+
+          {/* 3. Small Groups */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('groups')}
+            className={`p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between min-h-[72px] ${
+              activeTab === 'groups'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
+                : 'bg-white text-[#1F2A44] border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <Users className={`w-4 h-4 mb-1 ${activeTab === 'groups' ? 'text-white' : 'text-purple-600'}`} />
+            <span className="text-[11px] font-bold font-['Cairo'] leading-tight">المجموعات</span>
+            <span className={`text-[10px] mt-0.5 px-2 py-0.2 rounded-full font-bold ${
+              activeTab === 'groups' ? 'bg-white/20 text-white' : 'bg-purple-50 text-purple-700'
+            }`}>
+              {groups.length} مجموعة
+            </span>
+          </button>
+        </div>
+
+        {/* 2 Profile & Overview Buttons */}
+        <div className="grid grid-cols-2 gap-2 pt-0.5">
+          <button
+            type="button"
+            onClick={() => setActiveTab('profile-draft')}
+            className={`py-2 px-3 rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeTab === 'profile-draft'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs font-bold'
+                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="text-xs font-bold font-['Cairo']">اقتراح تعديل الملف</span>
+            {pendingDraft && (
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="يوجد مقترح معلق" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={`py-2 px-3 rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeTab === 'overview'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs font-bold'
+                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <GraduationCap className="w-3.5 h-3.5" />
+            <span className="text-xs font-bold font-['Cairo']">تخصصاتي وملفي</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Desktop Navigation Tabs */}
+      <div className="hidden sm:flex items-center gap-2 border-b border-[#CBD5E1] pb-2 overflow-x-auto">
         {/* Tab 1: Trials */}
         <button
           type="button"
@@ -1241,37 +1388,87 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </div>
             ) : (
               <form onSubmit={handleSavePrivateSlots} className="space-y-4">
-                {/* 1. Specialization Selection */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="sm:col-span-2 space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">
-                      التخصص المعتمد <span className="text-rose-500">*</span>
-                    </label>
-                    <select
-                      value={selectedSpecId}
-                      onChange={(e) => setSelectedSpecId(e.target.value)}
-                      required
-                      className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs font-bold text-[#1F2A44] focus:border-[#0D4E8B] outline-none bg-white"
-                    >
-                      {specializations.map((spec) => (
-                        <option key={spec.id} value={spec.id}>
-                          {spec.label}
-                        </option>
-                      ))}
-                    </select>
+                {/* 1. Multi-Specialization Selection */}
+                <div className="space-y-2 p-4 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <label className="text-xs font-bold text-[#1F2A44] flex items-center gap-1.5">
+                        <BookOpen className="w-4 h-4 text-[#0D4E8B]" />
+                        <span>التخصصات المعتمدة المتاحة لهذا الموعد <span className="text-rose-500">*</span></span>
+                      </label>
+                      <p className="text-[11px] text-[#64748B] mt-0.5">
+                        يمكنك اختيار أكثر من تخصص بديل لنفس الحصة، وعند حجز أي مادة منها يُقفل الموعد كاملاً لمنع التعارض.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSpecIds(specializations.map((s) => s.id))}
+                        className="px-2.5 py-1 text-[11px] font-bold text-[#0D4E8B] hover:bg-blue-50 rounded-lg transition-all border border-blue-200 cursor-pointer"
+                      >
+                        تحديد الكل
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (specializations.length > 0) setSelectedSpecIds([specializations[0].id]);
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-all border border-slate-200 cursor-pointer"
+                      >
+                        الأول فقط
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">التوقيت المعتمد</label>
-                    <select
-                      value={privateTimezone}
-                      onChange={(e) => setPrivateTimezone(e.target.value)}
-                      className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
-                    >
-                      <option value="Africa/Cairo">بتوقيت القاهرة (مصر)</option>
-                      <option value="Asia/Riyadh">بتوقيت مكة المكرمة (السعودية)</option>
-                    </select>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    {specializations.map((spec) => {
+                      const isChecked = selectedSpecIds.includes(spec.id);
+                      return (
+                        <div
+                          key={spec.id}
+                          onClick={() => {
+                            if (isChecked) {
+                              if (selectedSpecIds.length > 1) {
+                                setSelectedSpecIds(selectedSpecIds.filter((id) => id !== spec.id));
+                              }
+                            } else {
+                              setSelectedSpecIds([...selectedSpecIds, spec.id]);
+                            }
+                          }}
+                          className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex items-start gap-2.5 ${
+                            isChecked
+                              ? 'bg-blue-50/70 border-[#0D4E8B] text-[#0D4E8B] shadow-xs'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {}} // handled by tile click
+                            className="w-4 h-4 rounded text-[#0D4E8B] focus:ring-[#0D4E8B] mt-0.5 shrink-0 pointer-events-none"
+                          />
+                          <div className="space-y-0.5">
+                            <span className="font-bold block leading-tight">{spec.label}</span>
+                            <span className={`text-[10px] inline-block px-1.5 py-0.2 rounded font-medium ${
+                              spec.track === 'school' ? 'bg-blue-100/70 text-[#0D4E8B]' : 'bg-emerald-100/70 text-emerald-800'
+                            }`}>
+                              {spec.track === 'school' ? 'المسار المدرسي' : 'قرآن وتأسيس'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
+
+                  {selectedSpecIds.length > 1 && (
+                    <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-[11px] flex items-start gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[#0D4E8B] shrink-0 mt-0.5" />
+                      <span className="leading-relaxed">
+                        تم تحديد {selectedSpecIds.length} تخصصات بديلة لنفس وقت الحصة (سعة الموعد طالب واحد فقط 1:1). السعر والمدة المحددان أدناه ينطبقان على جميع بدائل هذا الموعد؛ وإذا كان أحد التخصصات يتطلب سعراً أو مدة مختلفة، يُرجى إضافته كموعد مستقل بإعداداته الخاصة.
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* 2. Duration & Price */}
@@ -1294,7 +1491,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-[#1F2A44] block">
-                      سعر الحصة
+                      سعر الحصة الخاصة
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -1302,42 +1499,62 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         min={0}
                         step={10}
                         value={privatePriceAmount}
-                        onChange={(e) => setPrivatePriceAmount(Number(e.target.value))}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setPrivatePriceAmount(val);
+                          if (context?.tutor?.id) storePrivatePrice(context.tutor.id, val);
+                        }}
                         required
                         className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
                       />
                       <span className="text-xs font-bold text-[#64748B] shrink-0">{privateCurrency}</span>
                     </div>
+                    <p className="text-[10px] text-[#64748B]">
+                      سعر الحصة هنا مستقل عن الملف التعريفي ويُحفظ تلقائياً في جلستك لمواعيدك القادمة.
+                    </p>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">
-                      نمط الإضافة
-                    </label>
-                    <div className="grid grid-cols-2 gap-2 h-10">
-                      <button
-                        type="button"
-                        onClick={() => setPrivateSchedulingMode('single')}
-                        className={`rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          privateSchedulingMode === 'single'
-                            ? 'bg-[#0D4E8B] text-white shadow-xs'
-                            : 'bg-slate-100 text-[#64748B] hover:bg-slate-200'
-                        }`}
-                      >
-                        موعد منفرد
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPrivateSchedulingMode('weekly_repeat')}
-                        className={`rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          privateSchedulingMode === 'weekly_repeat'
-                            ? 'bg-[#0D4E8B] text-white shadow-xs'
-                            : 'bg-slate-100 text-[#64748B] hover:bg-slate-200'
-                        }`}
-                      >
-                        تكرار أسبوعي
-                      </button>
-                    </div>
+                    <label className="text-xs font-bold text-[#1F2A44] block">التوقيت المعتمد</label>
+                    <select
+                      value={privateTimezone}
+                      onChange={(e) => setPrivateTimezone(e.target.value)}
+                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                    >
+                      <option value="Africa/Cairo">بتوقيت القاهرة (مصر)</option>
+                      <option value="Asia/Riyadh">بتوقيت مكة المكرمة (السعودية)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Scheduling Mode Switcher */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#1F2A44] block">
+                    نمط الإضافة
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 h-10 max-w-sm">
+                    <button
+                      type="button"
+                      onClick={() => setPrivateSchedulingMode('single')}
+                      className={`rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        privateSchedulingMode === 'single'
+                          ? 'bg-[#0D4E8B] text-white shadow-xs'
+                          : 'bg-slate-100 text-[#64748B] hover:bg-slate-200'
+                      }`}
+                    >
+                      موعد منفرد
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrivateSchedulingMode('weekly_repeat')}
+                      className={`rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        privateSchedulingMode === 'weekly_repeat'
+                          ? 'bg-[#0D4E8B] text-white shadow-xs'
+                          : 'bg-slate-100 text-[#64748B] hover:bg-slate-200'
+                      }`}
+                    >
+                      تكرار أسبوعي
+                    </button>
                   </div>
                 </div>
 
@@ -1549,14 +1766,25 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                             <span className="font-mono text-xs text-[#64748B]" dir="ltr">
                               {slot.startTime.substring(0, 5)} - {slot.endTime.substring(0, 5)}
                             </span>
-                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-[10px] text-slate-700 font-bold">
-                              {slot.durationMinutes} دقيقة • {slot.priceAmount} {slot.currency}
+                            <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-[11px] text-[#0D4E8B] font-bold border border-blue-200">
+                              السعر المحفوظ: {slot.priceAmount} {slot.currency} ({slot.durationMinutes} دقيقة)
                             </span>
                           </div>
 
                           <p className="text-xs text-[#0D4E8B] font-bold">
                             {slot.specializationLabel}
                           </p>
+
+                          {slot.allowedSpecializations && slot.allowedSpecializations.length > 1 && (
+                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                              <span className="text-[10px] font-bold text-slate-500">التخصصات البديلة المتاحة:</span>
+                              {slot.allowedSpecializations.map((spec: any, sIdx: number) => (
+                                <span key={sIdx} className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-medium">
+                                  {spec.label || spec.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
 
                           <div className="flex items-center gap-2 pt-0.5">
                             {slot.isBooked ? (
@@ -1582,6 +1810,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                               </span>
                             )}
                           </div>
+
+                          {slot.adminSuspended && slot.adminSuspensionNotes && (
+                            <p className="text-[11px] text-rose-700 bg-rose-50/70 border border-rose-100 rounded-lg px-2.5 py-1 mt-1">
+                              <span className="font-bold">سبب الإيقاف الإداري: </span>
+                              {slot.adminSuspensionNotes}
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -1597,9 +1832,44 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                               setEditSlotEnd(slot.endTime.substring(0, 5));
                               setEditSlotDuration(slot.durationMinutes);
                               setEditSlotPrice(slot.priceAmount);
-                              const matchSpec = specializations.find((s) => s.label === slot.specializationLabel);
-                              if (matchSpec) setEditSlotSpecId(matchSpec.id);
-                              else if (specializations.length > 0) setEditSlotSpecId(specializations[0].id);
+
+                              const slotAllowed = Array.isArray(slot.allowedSpecializations)
+                                ? slot.allowedSpecializations
+                                : [];
+                              const matchedIds: string[] = [];
+                              slotAllowed.forEach((allowedItem) => {
+                                const found = specializations.find(
+                                  (sp) =>
+                                    sp.id === allowedItem.id ||
+                                    (allowedItem.courseOptionId &&
+                                      sp.courseOptionId === allowedItem.courseOptionId) ||
+                                    (allowedItem.ageGroupId &&
+                                      allowedItem.levelId &&
+                                      sp.ageGroupId === allowedItem.ageGroupId &&
+                                      sp.levelId === allowedItem.levelId) ||
+                                    sp.label === allowedItem.label
+                                );
+                                if (found && !matchedIds.includes(found.id)) {
+                                  matchedIds.push(found.id);
+                                }
+                              });
+
+                              if (matchedIds.length > 0) {
+                                setEditSlotSpecIds(matchedIds);
+                              } else {
+                                const matchSpec = specializations.find(
+                                  (s) =>
+                                    (slot.offeringCourseOptionId &&
+                                      s.courseOptionId === slot.offeringCourseOptionId) ||
+                                    (slot.quranAgeGroupId &&
+                                      slot.quranLevelId &&
+                                      s.ageGroupId === slot.quranAgeGroupId &&
+                                      s.levelId === slot.quranLevelId) ||
+                                    s.label === slot.specializationLabel
+                                );
+                                if (matchSpec) setEditSlotSpecIds([matchSpec.id]);
+                                else if (specializations.length > 0) setEditSlotSpecIds([specializations[0].id]);
+                              }
                             }}
                             className="px-2.5 py-1.5 rounded-xl border border-blue-200 text-[#0D4E8B] hover:bg-blue-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
                           >
@@ -2270,41 +2540,118 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSubmitProfileDraft} className="space-y-5">
-            {/* Proposed Avatar Upload */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-[#1F2A44] block">
-                الصورة الشخصية المقترحة (اختياري)
-              </label>
-
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-2xl overflow-hidden border border-[#CBD5E1] bg-slate-50 shrink-0">
-                  {draftAvatarPreview ? (
-                    <img src={draftAvatarPreview} alt="صورة مقترحة" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-400">
-                      <Camera className="w-6 h-6" />
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-1">
-                  <label className="px-3 py-2 rounded-xl border border-[#CBD5E1] hover:bg-slate-50 text-xs font-bold text-[#1F2A44] transition-all cursor-pointer inline-flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>{isUploadingAvatar ? 'جاري الرفع...' : 'اختيار صورة جديدة'}</span>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={handleAvatarFileChange}
-                      disabled={isUploadingAvatar}
-                      className="hidden"
-                    />
+          <form onSubmit={handleSubmitProfileDraft} className="space-y-6">
+            {/* Proposed Avatar Upload Section */}
+            <div className="p-5 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-1.5">
+                    <Camera className="w-4 h-4 text-[#0D4E8B]" />
+                    <span>الصورة الشخصية لملف المعلم</span>
                   </label>
-                  <p className="text-[11px] text-[#64748B]">
-                    صيغ مدعومة: JPG أو PNG أو WebP بحد أقصى 2 ميجابايت.
+                  <p className="text-[11px] text-[#64748B] mt-0.5">
+                    اختر صورة شخصية مهنية واضحة، تخضع لمراجعة سريعة من الإدارة قبل نشرها للجمهور.
                   </p>
                 </div>
+
+                {pendingDraft?.avatarUrl && (
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-900 border border-amber-200 flex items-center gap-1">
+                    <Clock3 className="w-3.5 h-3.5 text-amber-600" />
+                    <span>بانتظار اعتماد الإدارة</span>
+                  </span>
+                )}
               </div>
+
+              {/* Side-by-side: Current vs Proposed Avatar */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                {/* 1. Current Published Avatar */}
+                <div className="p-4 rounded-xl bg-white border border-[#CBD5E1] flex items-center gap-3">
+                  <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
+                    {tutor.avatarUrl ? (
+                      <img src={tutor.avatarUrl} alt={tutor.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <User className="w-8 h-8 text-slate-400" />
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-slate-500 block">الصورة الحالية في ملفك:</span>
+                    <span className="text-xs font-bold text-[#1F2A44] block">
+                      {tutor.avatarUrl ? 'معتمدة ومنشورة للجمهور' : 'لا توجد صورة معتمدة'}
+                    </span>
+                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full inline-block font-bold">
+                      النسخة المنشورة
+                    </span>
+                  </div>
+                </div>
+
+                {/* 2. Proposed Avatar (with upload & preview) */}
+                <div className="p-4 rounded-xl bg-white border border-[#CBD5E1] flex items-center gap-3 relative">
+                  <div className="relative w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
+                    {draftAvatarPreview ? (
+                      <img src={draftAvatarPreview} alt="صورة مقترحة" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-slate-400">
+                        <Camera className="w-7 h-7" />
+                      </div>
+                    )}
+
+                    {isUploadingAvatar && (
+                      <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center text-white">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5 flex-1">
+                    <span className="text-[10px] font-bold text-[#0D4E8B] block">الصورة المقترحة الجديدة:</span>
+                    <label className="px-3 py-1.5 rounded-xl border border-[#0D4E8B] bg-blue-50/70 hover:bg-blue-100/70 text-xs font-bold text-[#0D4E8B] transition-all cursor-pointer inline-flex items-center gap-1.5">
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>{isUploadingAvatar ? 'جاري الرفع...' : 'اختيار صورة جديدة'}</span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={handleAvatarFileChange}
+                        disabled={isUploadingAvatar}
+                        className="hidden"
+                      />
+                    </label>
+                    <p className="text-[10px] text-[#64748B]">
+                      صيغ مدعومة: JPG أو PNG أو WebP بحد أقصى 2 ميجابايت.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Upload Error Banner if any */}
+              {avatarUploadError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span className="font-bold">{avatarUploadError}</span>
+                </div>
+              )}
+
+              {/* Upload Success Banner with direct submit CTA */}
+              {avatarUploadSuccess && (
+                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="font-bold">{avatarUploadSuccess}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSubmitProfileDraft()}
+                    disabled={isSubmittingDraft || !draftHeadline.trim() || draftHeadline.trim().length < 10}
+                    className="px-3 py-1.5 rounded-lg bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 self-end sm:self-auto cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingDraft ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5" />
+                    )}
+                    <span>إرسال الصورة للمراجعة الآن</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Headline */}
@@ -2392,19 +2739,50 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             </h3>
 
             <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">التخصص المعتمد *</label>
-                <select
-                  value={editSlotSpecId}
-                  onChange={(e) => setEditSlotSpecId(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 font-bold focus:border-[#0D4E8B] focus:outline-none"
-                >
-                  {specializations.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-bold text-slate-700 block">
+                    التخصصات المعتمدة المتاحة لهذا الموعد *
+                  </label>
+                  <span className="text-[10px] font-bold text-[#0D4E8B]">
+                    محدد ({editSlotSpecIds.length})
+                  </span>
+                </div>
+                <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+                  {specializations.map((s) => {
+                    const isChecked = editSlotSpecIds.includes(s.id);
+                    return (
+                      <div
+                        key={s.id}
+                        onClick={() => {
+                          if (isChecked) {
+                            if (editSlotSpecIds.length > 1) {
+                              setEditSlotSpecIds(editSlotSpecIds.filter((id) => id !== s.id));
+                            }
+                          } else {
+                            setEditSlotSpecIds([...editSlotSpecIds, s.id]);
+                          }
+                        }}
+                        className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center gap-2 ${
+                          isChecked
+                            ? 'bg-blue-50 border-[#0D4E8B] text-[#0D4E8B] font-bold'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {}}
+                          className="w-4 h-4 rounded text-[#0D4E8B] pointer-events-none shrink-0"
+                        />
+                        <span className="leading-snug">{s.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  السعر والمدة المحددان أدناه ينطبقان على جميع التخصصات البديلة المختارة لهذا الموعد.
+                </p>
               </div>
 
               <div>

@@ -170,9 +170,11 @@ export function buildTutorFollowUpWhatsAppUrl(referenceCode: string, applicantNa
  * Builds WhatsApp coordination URL for Paid Private 1:1 Session
  */
 export function buildPrivateSessionBookingWhatsAppUrl(params: {
+  slotId?: string;
   tutorName: string;
   tutorHonorific: string;
   specializationLabel: string;
+  chosenSpecializationCode?: string;
   slotDate: string;
   startTime: string;
   endTime: string;
@@ -182,15 +184,24 @@ export function buildPrivateSessionBookingWhatsAppUrl(params: {
   currency: string;
 }, customNumber?: string): string {
   const number = (customNumber || SHATIR_CONFIG.adminWhatsAppNumber).replace(/[^0-9]/g, '');
+  const detailsLines = [
+    `• المعلم: ${params.tutorHonorific} ${params.tutorName}`,
+    `• التخصص المختار: ${params.specializationLabel}`,
+    `• موعد الحصة: ${params.slotDate} (من ${params.startTime} إلى ${params.endTime} - ${params.timezone})`,
+    `• مدة الحصة: ${params.durationMinutes} دقيقة`,
+    `• سعر الحصة: ${params.priceAmount} ${params.currency}`,
+  ];
+  if (params.slotId) {
+    detailsLines.push(`• معرف الموعد (Slot ID): ${params.slotId}`);
+  }
+  if (params.chosenSpecializationCode) {
+    detailsLines.push(`• رمز التخصص المختار: ${params.chosenSpecializationCode}`);
+  }
   const message = [
     `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
     `أود حجز وتثبيت حصة خاصة فردية (1:1) لطفلي مع التفاصيل التالية:`,
     ``,
-    `• المعلم: ${params.tutorHonorific} ${params.tutorName}`,
-    `• التخصص: ${params.specializationLabel}`,
-    `• موعد الحصة: ${params.slotDate} (من ${params.startTime} إلى ${params.endTime} - ${params.timezone})`,
-    `• مدة الحصة: ${params.durationMinutes} دقيقة`,
-    `• سعر الحصة: ${params.priceAmount} ${params.currency}`,
+    ...detailsLines,
     ``,
     `أرجو تأكيد الحجز وموافاتي بطريقة السداد المعتمدة والتنسيق المباشر. شكراً لكم!`,
   ].join('\n');

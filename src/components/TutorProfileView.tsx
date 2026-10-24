@@ -65,6 +65,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
   // Paid Private Slots & Educational Groups for public display
   const [publicPrivateSlots, setPublicPrivateSlots] = useState<any[]>([]);
+  const [selectedSpecBySlotId, setSelectedSpecBySlotId] = useState<Record<string, string>>({});
   const [publicGroups, setPublicGroups] = useState<any[]>([]);
   const [isLoadingOffers, setIsLoadingOffers] = useState(false);
 
@@ -191,7 +192,26 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     ]).then(([privateRes, groupsRes]) => {
       if (!isMounted) return;
       if (privateRes.status === 'fulfilled') {
-        setPublicPrivateSlots(privateRes.value || []);
+        const slots = privateRes.value || [];
+        setPublicPrivateSlots(slots);
+        const initialSelections: Record<string, string> = {};
+        slots.forEach((slot: any) => {
+          const specs = Array.isArray(slot.allowedSpecializations) ? slot.allowedSpecializations : [];
+          if (specs.length > 0) {
+            const matchedSpec = specs.find((sp: any) => {
+              const lbl = String(sp.label || '');
+              if (subjectName && gradeName && lbl.includes(subjectName) && lbl.includes(gradeName)) {
+                return true;
+              }
+              if (quranLevelName && lbl.includes(quranLevelName)) {
+                return true;
+              }
+              return false;
+            });
+            initialSelections[slot.id] = (matchedSpec || specs[0]).id;
+          }
+        });
+        setSelectedSpecBySlotId(initialSelections);
       }
       if (groupsRes.status === 'fulfilled') {
         setPublicGroups(groupsRes.value || []);
@@ -201,14 +221,26 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [tutor.id]);
+  }, [tutor.id, subjectName, gradeName, quranLevelName]);
 
   const handleBookPrivateSlot = (slot: any) => {
     trackWhatsAppClicked('private_slot_booking');
+    const specs = Array.isArray(slot.allowedSpecializations) ? slot.allowedSpecializations : [];
+    const selectedId = selectedSpecBySlotId[slot.id];
+    const chosenSpec = specs.find((s: any) => s.id === selectedId) || specs[0] || null;
+    const chosenLabel = chosenSpec?.label || slot.specializationLabel;
+    const chosenCode = chosenSpec?.courseOptionId
+      ? `school:${chosenSpec.courseOptionId}`
+      : chosenSpec?.ageGroupId && chosenSpec?.levelId
+      ? `quran:${chosenSpec.ageGroupId}:${chosenSpec.levelId}`
+      : undefined;
+
     const url = buildPrivateSessionBookingWhatsAppUrl({
+      slotId: slot.id,
       tutorName: tutor.name,
       tutorHonorific: tutor.honorific,
-      specializationLabel: slot.specializationLabel,
+      specializationLabel: chosenLabel,
+      chosenSpecializationCode: chosenCode,
       slotDate: slot.slotDate,
       startTime: slot.startTime,
       endTime: slot.endTime,
@@ -680,46 +712,103 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  {publicPrivateSlots.map((slot) => (
-                    <div
-                      key={slot.id}
-                      className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] hover:border-[#CBD5E1] transition-all flex flex-col justify-between gap-3"
-                    >
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                            {new Date(slot.slotDate).toLocaleDateString('ar-EG', {
-                              weekday: 'long',
-                              day: 'numeric',
-                              month: 'short',
-                            })}
-                          </span>
-                          <span className="font-mono text-xs text-[#0D4E8B] font-bold" dir="ltr">
-                            {slot.startTime.substring(0, 5)} - {slot.endTime.substring(0, 5)}
-                          </span>
-                        </div>
+                  {publicPrivateSlots.map((slot) => {
+                    const specs = Array.isArray(slot.allowedSpecializations) ? slot.allowedSpecializations : [];
+                    const isMultiSpec = specs.length > 1;
+                    const activeSpecId = selectedSpecBySlotId[slot.id] || specs[0]?.id || '';
+                    const activeSpec = specs.find((s: any) => s.id === activeSpecId) || specs[0];
 
-                        <p className="text-xs text-[#0D4E8B] font-bold">
-                          {slot.specializationLabel}
-                        </p>
-
-                        <div className="flex items-center gap-2 text-[11px] text-[#64748B]">
-                          <span>المدة: {slot.durationMinutes} دقيقة</span>
-                          <span>•</span>
-                          <span className="font-bold text-[#1F2A44]">{slot.priceAmount} {slot.currency}</span>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleBookPrivateSlot(slot)}
-                        className="w-full py-2 px-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    return (
+                      <div
+                        key={slot.id}
+                        className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] hover:border-[#CBD5E1] transition-all flex flex-col justify-between gap-3"
                       >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>طلب تثبيت هذا الموعد الخاص</span>
-                      </button>
-                    </div>
-                  ))}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
+                              {new Date(slot.slotDate).toLocaleDateString('ar-EG', {
+                                weekday: 'long',
+                                day: 'numeric',
+                                month: 'short',
+                              })}
+                            </span>
+                            <span className="font-mono text-xs text-[#0D4E8B] font-bold" dir="ltr">
+                              {slot.startTime.substring(0, 5)} - {slot.endTime.substring(0, 5)}
+                            </span>
+                          </div>
+
+                          {isMultiSpec ? (
+                            <div className="space-y-1.5 pt-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-[11px] font-bold text-[#0D4E8B]">
+                                  اختر التخصص المطلوب لهذا الموعد ({specs.length} بدائل متاحة):
+                                </span>
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                {specs.map((sp: any) => {
+                                  const isSelected = sp.id === activeSpecId;
+                                  return (
+                                    <button
+                                      key={sp.id}
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedSpecBySlotId((prev) => ({
+                                          ...prev,
+                                          [slot.id]: sp.id,
+                                        }))
+                                      }
+                                      className={`w-full text-right px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                                        isSelected
+                                          ? 'bg-blue-50 border-[#0D4E8B] text-[#0D4E8B]'
+                                          : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                                      }`}
+                                    >
+                                      <span className="leading-snug">{sp.label}</span>
+                                      <span
+                                        className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                                          isSelected
+                                            ? 'border-[#0D4E8B] bg-[#0D4E8B] text-white'
+                                            : 'border-slate-300 bg-white'
+                                        }`}
+                                      >
+                                        {isSelected && <Check className="w-2.5 h-2.5" />}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[10px] text-[#64748B] leading-relaxed">
+                                عند تأكيد الحجز يُقفل هذا الموعد بالكامل للتخصص المختار، وينطبق عليه نفس السعر والمدة المحددين أدناه.
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-[#0D4E8B] font-bold">
+                              {activeSpec?.label || slot.specializationLabel}
+                            </p>
+                          )}
+
+                          <div className="flex items-center gap-2 text-[11px] text-[#64748B] pt-0.5">
+                            <span>المدة: {slot.durationMinutes} دقيقة</span>
+                            <span>•</span>
+                            <span className="font-bold text-[#1F2A44]">{slot.priceAmount} {slot.currency}</span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleBookPrivateSlot(slot)}
+                          className="w-full py-2 px-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>
+                            {isMultiSpec && activeSpec
+                              ? `طلب تثبيت الموعد (${activeSpec.label.split(' - ')[0]})`
+                              : 'طلب تثبيت هذا الموعد الخاص'}
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

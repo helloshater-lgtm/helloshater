@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { normalizeSlotAllowedSpecializations } from './tutorPortalService';
 import {
   Stage,
   Grade,
@@ -567,41 +568,29 @@ export const SupabaseDataService = {
       });
 
       if (!rpcError && rpcData) {
-        return rpcData.map((row: any) => ({
-          id: row.id,
-          specializationLabel: row.specialization_label,
-          slotDate: row.slot_date,
-          startTime: row.start_time,
-          endTime: row.end_time,
-          timezone: row.timezone || 'Africa/Cairo',
-          durationMinutes: row.duration_minutes,
-          priceAmount: row.price_amount,
-          currency: row.currency || 'ج.م',
-        }));
+        return rpcData.map((row: any) => {
+          const normalized = normalizeSlotAllowedSpecializations(row);
+          return {
+            id: row.id,
+            specializationLabel: row.specialization_label,
+            allowedSpecializations:
+              normalized.length > 0
+                ? normalized
+                : row.specialization_label
+                ? [{ id: `legacy-${row.id}`, track: 'school', label: row.specialization_label }]
+                : [],
+            slotDate: row.slot_date,
+            startTime: row.start_time,
+            endTime: row.end_time,
+            timezone: row.timezone || 'Africa/Cairo',
+            durationMinutes: Number(row.duration_minutes),
+            priceAmount: Number(row.price_amount),
+            currency: row.currency || 'ج.م',
+          };
+        });
       }
 
-      // Fallback: direct select
-      const { data, error } = await supabase
-        .from('tutor_private_slots')
-        .select('id, specialization_label, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency')
-        .eq('tutor_id', tutorId)
-        .eq('is_available', true)
-        .eq('is_booked', false)
-        .order('slot_date', { ascending: true })
-        .order('start_time', { ascending: true });
-
-      if (error) return [];
-      return (data || []).map((row: any) => ({
-        id: row.id,
-        specializationLabel: row.specialization_label,
-        slotDate: row.slot_date,
-        startTime: row.start_time,
-        endTime: row.end_time,
-        timezone: row.timezone || 'Africa/Cairo',
-        durationMinutes: row.duration_minutes,
-        priceAmount: row.price_amount,
-        currency: row.currency || 'ج.م',
-      }));
+      return [];
     } catch {
       return [];
     }
