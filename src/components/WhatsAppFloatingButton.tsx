@@ -2,7 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { trackWhatsAppClicked } from '../services/analytics';
 
-export const WhatsAppFloatingButton: React.FC = () => {
+interface WhatsAppFloatingButtonProps {
+  hideOnMobileSticky?: boolean;
+}
+
+export const WhatsAppFloatingButton: React.FC<WhatsAppFloatingButtonProps> = ({
+  hideOnMobileSticky = false,
+}) => {
   const [isHidden, setIsHidden] = useState(false);
   const cleanNumber = SHATIR_CONFIG.adminWhatsAppNumber.replace(/[^0-9]/g, '');
   const greetingText = 'السلام عليكم ورحمة الله، أود الاستفسار عن منصة شاطر كلاسيز والخدمات التعليمية المتاحة.';
@@ -64,7 +70,9 @@ export const WhatsAppFloatingButton: React.FC = () => {
   return (
     <aside
       aria-label="تواصل مباشر عبر واتساب"
-      className={`fixed left-3.5 sm:left-6 z-40 flex items-center transition-all duration-300 ${
+      className={`fixed left-3.5 sm:left-6 z-40 ${
+        hideOnMobileSticky ? 'hidden lg:flex' : 'flex'
+      } items-center transition-all duration-300 ${
         isHidden
           ? 'opacity-0 pointer-events-none translate-y-4 scale-90'
           : 'opacity-100 pointer-events-auto translate-y-0 scale-100'

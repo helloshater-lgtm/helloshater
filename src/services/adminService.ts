@@ -21,6 +21,12 @@ import {
   computePlatformStatisticsFromDataset,
   computeStatisticsDrilldownFromDataset,
 } from '../utils/adminStatisticsClassifier';
+import {
+  CANONICAL_QURAN_AGE_GROUPS,
+  CANONICAL_QURAN_LEVELS,
+  normalizeLegacyAgeGroupText,
+  resolveSpecializationLabel,
+} from '../utils/formatters';
 
 export interface AdminTutorListItem {
   id: string;
@@ -1177,7 +1183,11 @@ export const AdminService = {
           courseOptionId: track === 'school' ? courseOptionId : undefined,
           ageGroupId: track === 'quran' ? ageGroupId : undefined,
           levelId: track === 'quran' ? levelId : undefined,
-          label: item.label || data.specializationLabel || '',
+          label: resolveSpecializationLabel({
+            specializationLabel: item.label || data.specializationLabel || '',
+            quranAgeGroupId: track === 'quran' ? ageGroupId : null,
+            quranLevelId: track === 'quran' ? levelId : null,
+          }),
         };
       })
       .filter(Boolean) as Array<{
@@ -1191,6 +1201,11 @@ export const AdminService = {
 
     return {
       ...data,
+      specializationLabel: resolveSpecializationLabel({
+        specializationLabel: data.specializationLabel,
+        quranAgeGroupId: data.quranAgeGroupId || data.quran_age_group_id,
+        quranLevelId: data.quranLevelId || data.quran_level_id,
+      }),
       allowedSpecializations,
     };
   },
@@ -1448,7 +1463,14 @@ export const AdminService = {
       return [];
     }
 
-    return data || [];
+    return ((data as any[]) || []).map((row) => ({
+      ...row,
+      specializationLabel: resolveSpecializationLabel({
+        specializationLabel: row.specializationLabel || row.specialization_label,
+        quranAgeGroupId: row.quranAgeGroupId || row.quran_age_group_id,
+        quranLevelId: row.quranLevelId || row.quran_level_id,
+      }),
+    }));
   },
 
   /**
@@ -1481,7 +1503,14 @@ export const AdminService = {
       return [];
     }
 
-    return data || [];
+    return ((data as any[]) || []).map((row) => ({
+      ...row,
+      specializationLabel: resolveSpecializationLabel({
+        specializationLabel: row.specializationLabel || row.specialization_label,
+        quranAgeGroupId: row.quranAgeGroupId || row.quran_age_group_id,
+        quranLevelId: row.quranLevelId || row.quran_level_id,
+      }),
+    }));
   },
 
   // Cache for raw statistics dataset when migration RPC is not yet deployed
@@ -1638,8 +1667,19 @@ export const AdminService = {
       grades: gradesRes.data as any[],
       curricula: curriculaRes.data as any[],
       courseOptions: courseOptionsRes.data as any[],
-      quranLevels: quranLevelsRes.data as any[],
-      quranAgeGroups: quranAgeGroupsRes.data as any[],
+      quranLevels: ((quranLevelsRes.data as any[]) || []).map((ql) => {
+        const canonical = CANONICAL_QURAN_LEVELS[ql.id];
+        return canonical
+          ? { ...ql, name: canonical.name, description: canonical.description }
+          : ql;
+      }),
+      quranAgeGroups: ((quranAgeGroupsRes.data as any[]) || []).map((ag) => {
+        if (ag.id === 'age_adults') return ag;
+        const canonical = CANONICAL_QURAN_AGE_GROUPS[ag.id];
+        return canonical
+          ? { ...ag, name: canonical.name, age_range: canonical.ageRange }
+          : { ...ag, name: normalizeLegacyAgeGroupText(ag.name) };
+      }),
       tutors: tutorsAvailable ? (tutorsRes.data as any[]) : [],
       schoolOfferings: tutorsAvailable ? (schoolOfferingsRes.data as any[]) : [],
       quranOfferings: tutorsAvailable ? (quranOfferingsRes.data as any[]) : [],
@@ -1698,8 +1738,35 @@ export const AdminService = {
 
     const { data: rpcData, error: rpcError } = await supabase.rpc('admin_get_platform_statistics');
     if (!rpcError && rpcData && typeof rpcData === 'object' && 'overview' in rpcData) {
+      const rawStats = rpcData as AdminPlatformStatistics;
       return {
-        ...(rpcData as AdminPlatformStatistics),
+        ...rawStats,
+        detailedSpecializations: (rawStats.detailedSpecializations || []).map((spec) => {
+          const cAg = spec.ageGroupId ? CANONICAL_QURAN_AGE_GROUPS[spec.ageGroupId] : undefined;
+          const cLvl = spec.levelId ? CANONICAL_QURAN_LEVELS[spec.levelId] : undefined;
+          return {
+            ...spec,
+            label: normalizeLegacyAgeGroupText(spec.label),
+            ageGroupName: cAg ? cAg.name : normalizeLegacyAgeGroupText(spec.ageGroupName),
+            levelName: cLvl ? cLvl.name : spec.levelName,
+          };
+        }),
+        quranLevelsStats: (rawStats.quranLevelsStats || []).map((lvl) => {
+          const cLvl = CANONICAL_QURAN_LEVELS[lvl.levelId];
+          return {
+            ...lvl,
+            levelName: cLvl ? cLvl.name : lvl.levelName,
+            description: cLvl ? cLvl.description : lvl.description,
+          };
+        }),
+        quranAgeGroupsStats: (rawStats.quranAgeGroupsStats || []).map((ag) => {
+          const cAg = CANONICAL_QURAN_AGE_GROUPS[ag.ageGroupId];
+          return {
+            ...ag,
+            ageGroupName: cAg ? cAg.name : normalizeLegacyAgeGroupText(ag.ageGroupName),
+            ageRange: cAg ? cAg.ageRange : ag.ageRange,
+          };
+        }),
         dataHealth: {
           mode: 'rpc',
           rpcMigrationApplied: true,

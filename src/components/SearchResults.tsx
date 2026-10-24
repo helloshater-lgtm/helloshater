@@ -1,9 +1,10 @@
 import React from 'react';
 import { Tutor, SearchCriteria } from '../types';
 import { TutorCard } from './TutorCard';
-import { Edit3, RotateCcw, AlertCircle, Search, Sparkles, MessageCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { SHATIR_CONFIG, buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
+import { toArabicDigits } from '../utils/formatters';
+import { Edit3, RotateCcw, AlertCircle, Sparkles, MessageCircle, CheckCircle2 } from 'lucide-react';
+import { motion } from 'motion/react';
+import { buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
 import { trackWhatsAppClicked } from '../services/analytics';
 
 interface SearchResultsProps {
@@ -40,139 +41,136 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
   return (
     <motion.section
       id="search-results-section"
-      initial={{ opacity: 0, y: 25 }}
+      initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-      className="w-full mt-8 scroll-mt-24 space-y-5"
+      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+      className="w-full mt-6 sm:mt-8 scroll-mt-24 space-y-5"
     >
-      {/* 1. Active Filter Summary Bar */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, delay: 0.05 }}
-        className="bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
-      >
-        <div className="flex items-center gap-2 flex-wrap text-xs sm:text-sm">
-          <span className="font-bold text-[#0D4E8B] shrink-0">
-            المعايير المحددة:
-          </span>
-
-          {criteria.track === 'school' ? (
-            <>
-              {stageName && (
-                <span className="px-3 py-1 rounded-full bg-[#F2F3F6] text-[#1F2A44] font-medium border border-[#E2E8F0]">
-                  {stageName}
-                </span>
-              )}
-              {gradeName && (
-                <span className="px-3 py-1 rounded-full bg-[#F2F3F6] text-[#1F2A44] font-medium border border-[#E2E8F0]">
-                  {gradeName}
-                </span>
-              )}
-              {subjectName && (
-                <span className="px-3 py-1 rounded-full bg-[#D1DCFE]/60 text-[#0D4E8B] font-bold border border-[#0D4E8B]/20">
-                  {subjectName}
-                </span>
-              )}
-              {curriculumName && (
-                <span className="px-3 py-1 rounded-full bg-[#F2F3F6] text-[#1F2A44] font-medium border border-[#E2E8F0]">
-                  {curriculumName}
-                </span>
-              )}
-            </>
-          ) : (
-            <>
-              <span className="px-3 py-1 rounded-full bg-[#D1DCFE]/60 text-[#0D4E8B] font-bold border border-[#0D4E8B]/20">
-                مسار القرآن والتأسيس
+      {/* 1. Active Filter Summary Bar + Result Count + Modify Action */}
+      <div className="bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-['Cairo'] text-sm sm:text-base font-extrabold text-[#1F2A44]">
+              {isLoading
+                ? 'جاري تحديث المعلمين...'
+                : `عدد المعلمين المتاحين: ${toArabicDigits(tutors.length)}`}
+            </span>
+            {!isLoading && !error && tutors.length > 0 && (
+              <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>تجربة مجانية ٢٠ دقيقة</span>
               </span>
-              {quranAgeName && (
-                <span className="px-3 py-1 rounded-full bg-[#F2F3F6] text-[#1F2A44] font-medium border border-[#E2E8F0]">
-                  {quranAgeName}
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap text-xs">
+            <span className="font-bold text-[#64748B] shrink-0">ملخص اختيارك:</span>
+
+            {criteria.track === 'school' ? (
+              <>
+                {stageName && (
+                  <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] text-[#1F2A44] font-semibold border border-[#E2E8F0]">
+                    {stageName}
+                  </span>
+                )}
+                {gradeName && (
+                  <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] text-[#1F2A44] font-semibold border border-[#E2E8F0]">
+                    {gradeName}
+                  </span>
+                )}
+                {curriculumName && (
+                  <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] text-[#1F2A44] font-semibold border border-[#E2E8F0]">
+                    {curriculumName}
+                  </span>
+                )}
+                {subjectName && (
+                  <span className="px-2.5 py-1 rounded-lg bg-[#EBF3FC] text-[#0D4E8B] font-bold border border-[#0D4E8B]/20">
+                    {subjectName}
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="px-2.5 py-1 rounded-lg bg-[#EBF3FC] text-[#0D4E8B] font-bold border border-[#0D4E8B]/20">
+                  مسار القرآن والتأسيس
                 </span>
-              )}
-              {quranLevelName && (
-                <span className="px-3 py-1 rounded-full bg-[#F2F3F6] text-[#1F2A44] font-medium border border-[#E2E8F0]">
-                  {quranLevelName}
-                </span>
-              )}
-            </>
-          )}
+                {quranAgeName && (
+                  <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] text-[#1F2A44] font-semibold border border-[#E2E8F0]">
+                    {quranAgeName}
+                  </span>
+                )}
+                {quranLevelName && (
+                  <span className="px-2.5 py-1 rounded-lg bg-[#F8F9FC] text-[#1F2A44] font-semibold border border-[#E2E8F0]">
+                    {quranLevelName}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         <button
+          type="button"
           onClick={onModifySearch}
-          className="self-start md:self-auto px-3.5 py-1.5 rounded-xl border border-[#CBD5E1] hover:bg-[#F2F3F6] text-xs font-bold text-[#0D4E8B] transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+          className="self-start md:self-auto px-3.5 py-2 rounded-xl border border-[#CBD5E1] hover:bg-[#F8F9FC] text-xs font-bold text-[#0D4E8B] transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
         >
           <Edit3 className="w-3.5 h-3.5" />
           <span>تعديل الاختيارات</span>
         </button>
-      </motion.div>
+      </div>
 
       {/* 2. Loading State */}
       {isLoading && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3 }}
-          className="w-full bg-white rounded-2xl border border-[#E2E8F0] p-10 text-center flex flex-col items-center justify-center gap-3"
-        >
-          <div className="w-10 h-10 border-3 border-[#0D4E8B]/20 border-t-[#0D4E8B] rounded-full animate-spin"></div>
+        <div className="w-full bg-white rounded-2xl border border-[#E2E8F0] p-10 text-center flex flex-col items-center justify-center gap-3">
+          <div className="w-10 h-10 border-3 border-[#0D4E8B]/20 border-t-[#0D4E8B] rounded-full animate-spin" />
           <div className="space-y-1">
             <h3 className="font-['Cairo'] text-base font-bold text-[#0D4E8B]">
               جاري البحث عن المعلمين المناسبين...
             </h3>
             <p className="text-xs text-[#64748B]">
-              نبحث في قاعدة بيانات شاطر عن المعلمين المتاحين للمرحلة والمادة المحددة.
+              نستعرض المعلمين المعتمدين لاختياراتك الحالية مع مواعيدهم المتاحة.
             </p>
           </div>
-        </motion.div>
+        </div>
       )}
 
       {/* 3. Error State with Retry Button */}
       {!isLoading && error && (
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-          className="w-full bg-[#FFDAD6]/30 border border-[#BA1A1A]/30 rounded-2xl p-6 text-center flex flex-col items-center justify-center gap-3"
-        >
-          <AlertCircle className="w-10 h-10 text-[#BA1A1A]" />
+        <div className="w-full bg-red-50/70 border border-red-200 rounded-2xl p-6 text-center flex flex-col items-center justify-center gap-3">
+          <AlertCircle className="w-10 h-10 text-red-600" />
           <div className="space-y-1 max-w-md">
-            <h3 className="font-['Cairo'] text-base font-bold text-[#BA1A1A]">
+            <h3 className="font-['Cairo'] text-base font-bold text-red-800">
               تعذر استرجاع النتائج
             </h3>
-            <p className="text-xs text-[#424750]">{error}</p>
+            <p className="text-xs text-red-900/80">{error}</p>
           </div>
           <button
+            type="button"
             onClick={onRetry}
-            className="px-5 py-2 rounded-xl bg-[#BA1A1A] text-white hover:bg-[#93000A] text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+            className="px-5 py-2 rounded-xl bg-red-600 text-white hover:bg-red-700 text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>إعادة المحاولة الآن</span>
           </button>
-        </motion.div>
+        </div>
       )}
 
-      {/* 4. Empty State */}
+      {/* 4. Empty State with WhatsApp Coordination Option */}
       {!isLoading && !error && tutors.length === 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-          className="w-full bg-white rounded-2xl border border-[#E2E8F0] p-8 sm:p-10 text-center flex flex-col items-center justify-center gap-4"
-        >
-          <div className="w-12 h-12 rounded-full bg-[#F0F6FD] border border-[#D1DCFE] flex items-center justify-center text-[#0D4E8B]">
+        <div className="w-full bg-white rounded-2xl border border-[#E2E8F0] p-8 sm:p-10 text-center flex flex-col items-center justify-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-[#F0F6FD] border border-[#D1DCFE] flex items-center justify-center text-[#0D4E8B]">
             <Sparkles className="w-6 h-6 text-[#0D4E8B]" />
           </div>
           <div className="space-y-1.5 max-w-md">
             <h3 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
-              نجهّز حالياً قائمة المعلمين لهذا الاختيار
+              لا يوجد معلم منشور يطابق هذا الاختيار حاليًا
             </h3>
             <p className="text-xs sm:text-sm text-[#535E7B] leading-relaxed">
-              تواصل معنا لمعرفة التخصصات المتاحة وتسجيل اهتمامك، وسننسّق معك عند توفر معلم مناسب.
+              تواصل مع فريق شاطر عبر واتساب لتسجيل احتياج طفلك، وسنرشح لك المعلم المناسب ونساعدك في
+              تنسيق حصة تجريبية مجانية.
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
             <a
               href={buildInterestRegistrationWhatsAppUrl({
                 track: criteria.track,
@@ -186,64 +184,29 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackWhatsAppClicked('empty_search_interest')}
-              className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+              className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>سجّل اهتمامك عبر واتساب</span>
+              <span>تواصل معنا لترشيح معلم مناسب</span>
             </a>
             <button
+              type="button"
               onClick={onModifySearch}
-              className="px-5 py-2.5 rounded-xl border border-[#CBD5E1] text-[#1F2A44] hover:bg-[#F2F3F6] text-xs font-bold transition-all cursor-pointer"
+              className="px-5 py-2.5 rounded-xl border border-[#CBD5E1] text-[#1F2A44] hover:bg-[#F8F9FC] text-xs font-bold transition-all cursor-pointer"
             >
-              تعديل معايير البحث
+              تعديل الاختيارات
             </button>
           </div>
-        </motion.div>
+        </div>
       )}
 
-      {/* 5. Matching Results Cards with Staggered Entrance */}
+      {/* 5. Matching Results Cards (Fast Side-by-Side Comparison on Desktop, Clean Stack on Mobile) */}
       {!isLoading && !error && tutors.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
-          className="space-y-4"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, delay: 0.08 }}
-            className="flex items-center justify-between px-1"
-          >
-            <span className="font-['Cairo'] text-base font-bold text-[#1F2A44]">
-              المعلمون المناسبون لاختياراتك ({tutors.length})
-            </span>
-            <span className="text-xs text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-              حصة أولى مجانية للتجربة
-            </span>
-          </motion.div>
-
-          <div className="grid grid-cols-1 gap-4">
-            {tutors.map((tutor, index) => (
-              <motion.div
-                key={tutor.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{
-                  duration: 0.4,
-                  delay: 0.12 + index * 0.09,
-                  ease: [0.21, 1, 0.36, 1],
-                }}
-              >
-                <TutorCard
-                  tutor={tutor}
-                  onSelect={onSelectTutor}
-                  criteria={criteria}
-                />
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
+          {tutors.map((tutor) => (
+            <TutorCard key={tutor.id} tutor={tutor} onSelect={onSelectTutor} />
+          ))}
+        </div>
       )}
     </motion.section>
   );

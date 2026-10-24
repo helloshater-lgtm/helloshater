@@ -205,7 +205,7 @@ export const PREFERRED_TIMES_OPTIONS = [
 ];
 
 export const TIMEZONE_OPTIONS = [
-  'توقيت القاهرة (GMT+2)',
+  'توقيت القاهرة (Africa/Cairo)',
   'توقيت مكة المكرمة (GMT+3)',
   'توقيت الإمارات (GMT+4)',
 ];
@@ -239,16 +239,36 @@ const FALLBACK_CURRICULA: CurriculumOption[] = [
 ];
 
 const FALLBACK_QURAN_AGES: QuranAgeGroup[] = [
-  { id: 'age_4_7', name: 'أطفال وبراعم', ageRange: '٤ - ٧ سنوات' },
-  { id: 'age_8_12', name: 'ناشئة وطلاب', ageRange: '٨ - ١٢ سنة' },
-  { id: 'age_13_18', name: 'يافعون وشباب', ageRange: '١٣ - ١٨ سنة' },
+  { id: 'age_4_7', name: 'الأطفال الصغار', ageRange: 'من ٤ إلى ٧ سنوات' },
+  { id: 'age_8_12', name: 'الأطفال', ageRange: 'من ٨ إلى ١٢ سنة' },
+  { id: 'age_13_18', name: 'اليافعون', ageRange: 'من ١٣ إلى ١٨ سنة' },
 ];
 
 const FALLBACK_QURAN_LEVELS: QuranLevel[] = [
-  { id: 'noor_bayan', name: 'تأسيس نور البيان والقراءة العربية', description: 'تعليم مخارج الحروف والتهجي السليم من الصفر وتحسين نطق الكلمات' },
-  { id: 'hifz_tilawa', name: 'حفظ وتلقين القرآن الكريم ومراجعته', description: 'تحفيظ منتظم مع المتابعة المستمرة وتثبيت السور للأطفال والناشئة' },
-  { id: 'tajweed_rules', name: 'أحكام التجويد والإتقان برواية حفص', description: 'دراسة وتطبيق أحكام النون والميم والمدود ومخارج وصفات الحروف' },
-  { id: 'khatt_imlaa', name: 'تحسين الخط العربي وقواعد الإملاء', description: 'ضبط قواعد الكتابة الصحيحة وتفادي الأخطاء الإملائية الشائعة' },
+  {
+    id: 'noor_bayan',
+    name: 'تأسيس نور البيان والقراءة العربية',
+    description:
+      'تعليم الحروف العربية ومخارجها والتهجي السليم خطوة بخطوة حتى يتمكن الطفل من القراءة الصحيحة بطلاقة.',
+  },
+  {
+    id: 'hifz_tilawa',
+    name: 'حفظ وتلقين القرآن الكريم ومراجعته',
+    description:
+      'تحفيظ القرآن الكريم بالتلقين الصحيح مع المتابعة المنتظمة وتثبيت المحفوظ ومراجعته بما يناسب قدرة الطفل.',
+  },
+  {
+    id: 'tajweed_rules',
+    name: 'أحكام التجويد والإتقان برواية حفص',
+    description:
+      'تعلم أحكام التجويد وتطبيقها عمليًا أثناء التلاوة لضبط مخارج الحروف والمدود وتحسين الأداء القرآني.',
+  },
+  {
+    id: 'khatt_imlaa',
+    name: 'تحسين الخط العربي وقواعد الإملاء',
+    description:
+      'تدريب عملي لتحسين جودة الخط العربي وإتقان قواعد الإملاء والكتابة الصحيحة بثقة ودون أخطاء شائعة.',
+  },
 ];
 
 export function normalizePhone(rawPhone: string, countryCode: string): string {
@@ -308,7 +328,7 @@ const INITIAL_FORM: TutorApplicationFormData = {
   sessionDurationMinutes: 50,
   availableDays: ['السبت', 'الإثنين', 'الأربعاء'],
   preferredTimes: ['فترة مسائية رئيسية (٥ م - ١٠ م)'],
-  timezone: 'توقيت القاهرة (GMT+2)',
+  timezone: 'توقيت القاهرة (Africa/Cairo)',
   interviewAvailability: '',
   termsAccepted: false,
   termsPolicyVersion: TUTOR_COOPERATION_POLICY_VERSION,

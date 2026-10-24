@@ -1,6 +1,14 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { normalizeSlotAllowedSpecializations } from './tutorPortalService';
 import {
+  normalizeQuranAgeGroup,
+  normalizeQuranLevel,
+  normalizeLegacyAgeGroupText,
+  resolveSpecializationLabel,
+  formatTutorExperience,
+  filterValidAvailableTrialSlots,
+} from '../utils/formatters';
+import {
   Stage,
   Grade,
   Subject,
@@ -172,11 +180,13 @@ export const SupabaseDataService = {
 
     if (error) throw error;
 
-    return (data || []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      ageRange: row.age_range,
-    }));
+    return (data || []).map((row) =>
+      normalizeQuranAgeGroup({
+        id: row.id,
+        name: row.name,
+        ageRange: row.age_range,
+      })
+    );
   },
 
   async getQuranLevels(): Promise<QuranLevel[]> {
@@ -188,11 +198,13 @@ export const SupabaseDataService = {
 
     if (error) throw error;
 
-    return (data || []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description,
-    }));
+    return (data || []).map((row) =>
+      normalizeQuranLevel({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+      })
+    );
   },
 
   /**
@@ -232,8 +244,8 @@ export const SupabaseDataService = {
 
     const tutorIds = tutorsData.map((t) => t.id);
 
-    // Fetch related sub-records in parallel
-    const [pillarsRes, qualRes, trialRes, summaryRes, schoolOffRes, quranOffRes] =
+    // Fetch related sub-records and available trial slots in parallel
+    const [pillarsRes, qualRes, trialRes, summaryRes, schoolOffRes, quranOffRes, slotsByTutor] =
       await Promise.all([
         supabase
           .from('tutor_methodology_pillars')
@@ -264,10 +276,22 @@ export const SupabaseDataService = {
           .from('tutor_quran_offerings')
           .select('*')
           .in('tutor_id', tutorIds),
+        Promise.all(
+          tutorIds.map(async (tid) => {
+            const rawSlots = await this.getTutorAvailableSlots(tid);
+            const validSlots = filterValidAvailableTrialSlots(rawSlots);
+            return { tutorId: tid, validSlots };
+          })
+        ),
       ]);
 
-    return tutorsData.map((row) =>
-      this.mapDatabaseRowToTutor(
+    const slotsMap = new Map<string, TutorAvailableSlot[]>();
+    slotsByTutor.forEach((entry) => {
+      slotsMap.set(entry.tutorId, entry.validSlots);
+    });
+
+    return tutorsData.map((row) => {
+      const tutor = this.mapDatabaseRowToTutor(
         row,
         pillarsRes.data?.filter((p) => p.tutor_id === row.id) || [],
         qualRes.data?.filter((q) => q.tutor_id === row.id) || [],
@@ -275,8 +299,14 @@ export const SupabaseDataService = {
         summaryRes.data?.filter((s) => s.tutor_id === row.id) || [],
         schoolOffRes.data?.filter((o) => o.tutor_id === row.id) || [],
         quranOffRes.data?.filter((q) => q.tutor_id === row.id) || []
-      )
-    );
+      );
+      const validTrialSlots = slotsMap.get(row.id) || [];
+      return {
+        ...tutor,
+        earliestTrialSlot: validTrialSlots.length > 0 ? validTrialSlots[0] : null,
+        availableTrialSlotsCount: validTrialSlots.length,
+      };
+    });
   },
 
   async getTutorById(id: string): Promise<Tutor | null> {
@@ -451,8 +481,11 @@ export const SupabaseDataService = {
       avatarUrl: row.avatar_url || '',
       verifiedCredentials: Boolean(row.verified_credentials),
       yearsOfExperience: row.years_of_experience || 0,
-      experienceBadgeText: row.experience_badge_text || `خبرة ${row.years_of_experience || 0} سنوات`,
-      curriculumTags: Array.isArray(row.curriculum_tags) ? row.curriculum_tags : [],
+      experienceBadgeText:
+        formatTutorExperience(row.years_of_experience, row.experience_badge_text) || '',
+      curriculumTags: Array.isArray(row.curriculum_tags)
+        ? row.curriculum_tags.map((t: string) => normalizeLegacyAgeGroupText(t))
+        : [],
       hourlyRateMin: row.hourly_rate_min || 0,
       hourlyRateMax: row.hourly_rate_max || 0,
       currency: row.currency || 'ج.م',
@@ -477,11 +510,13 @@ export const SupabaseDataService = {
         description: p.description,
         iconName: p.icon_name || 'smile',
       })),
-      targetStudentCases: Array.isArray(row.target_student_cases) ? row.target_student_cases : [],
+      targetStudentCases: Array.isArray(row.target_student_cases)
+        ? row.target_student_cases.map((c: string) => normalizeLegacyAgeGroupText(c))
+        : [],
       subjectsTaughtSummary: summaries.map((s) => ({
-        title: s.title,
-        gradesRange: s.grades_range,
-        curriculumNote: s.curriculum_note || '',
+        title: normalizeLegacyAgeGroupText(s.title),
+        gradesRange: normalizeLegacyAgeGroupText(s.grades_range),
+        curriculumNote: normalizeLegacyAgeGroupText(s.curriculum_note || ''),
         icon: (s.icon as any) || 'book',
       })),
       whatHappensInTrial: trialSteps.map((ts) => ({
@@ -569,15 +604,27 @@ export const SupabaseDataService = {
 
       if (!rpcError && rpcData) {
         return rpcData.map((row: any) => {
-          const normalized = normalizeSlotAllowedSpecializations(row);
+          const normalized = normalizeSlotAllowedSpecializations(row).map((sp) => ({
+            ...sp,
+            label: resolveSpecializationLabel({
+              specializationLabel: sp.label,
+              quranAgeGroupId: sp.ageGroupId,
+              quranLevelId: sp.levelId,
+            }),
+          }));
+          const cleanLabel = resolveSpecializationLabel({
+            specializationLabel: row.specialization_label,
+            quranAgeGroupId: row.quran_age_group_id,
+            quranLevelId: row.quran_level_id,
+          });
           return {
             id: row.id,
-            specializationLabel: row.specialization_label,
+            specializationLabel: cleanLabel,
             allowedSpecializations:
               normalized.length > 0
                 ? normalized
-                : row.specialization_label
-                ? [{ id: `legacy-${row.id}`, track: 'school', label: row.specialization_label }]
+                : cleanLabel
+                ? [{ id: `legacy-${row.id}`, track: 'school', label: cleanLabel }]
                 : [],
             slotDate: row.slot_date,
             startTime: row.start_time,
@@ -611,10 +658,17 @@ export const SupabaseDataService = {
           id: row.id,
           title: row.title,
           description: row.description,
-          specializationLabel: row.specialization_label,
+          specializationLabel: resolveSpecializationLabel({
+            specializationLabel: row.specialization_label,
+            quranAgeGroupId: row.quran_age_group_id,
+            quranLevelId: row.quran_level_id,
+          }),
           maxStudents: row.max_students,
           enrolledStudents: row.enrolled_students || 0,
-          remainingSeats: row.remaining_seats !== undefined ? row.remaining_seats : Math.max(0, row.max_students - (row.enrolled_students || 0)),
+          remainingSeats:
+            row.remaining_seats !== undefined
+              ? row.remaining_seats
+              : Math.max(0, row.max_students - (row.enrolled_students || 0)),
           pricePerStudent: row.price_per_student,
           priceType: row.price_type || 'full_package',
           currency: row.currency || 'ج.م',
@@ -640,7 +694,11 @@ export const SupabaseDataService = {
         id: row.id,
         title: row.title,
         description: row.description,
-        specializationLabel: row.specialization_label,
+        specializationLabel: resolveSpecializationLabel({
+          specializationLabel: row.specialization_label,
+          quranAgeGroupId: row.quran_age_group_id,
+          quranLevelId: row.quran_level_id,
+        }),
         maxStudents: row.max_students,
         enrolledStudents: row.enrolled_students || 0,
         remainingSeats: Math.max(0, row.max_students - (row.enrolled_students || 0)),

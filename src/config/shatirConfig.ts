@@ -145,13 +145,17 @@ export function buildInterestRegistrationWhatsAppUrl(payload: InterestWhatsAppPa
     detailsText = lines.join('\n');
   }
 
+  if (payload.customNote) {
+    detailsText = `${detailsText}\n• تفاصيل الطلب: ${payload.customNote}`;
+  }
+
   const message = [
     `السلام عليكم ورحمة الله وبركاته، فريق شاطر كلاسيز 👋`,
     `أود تسجيل اهتمامي بالدروس ومعرفة التخصصات والمعلمين المتاحين للاختيارات التالية:`,
     ``,
     detailsText,
     ``,
-    `أرجو التنسيق معي وإفادتي عند توفر معلم مناسب. شكراً لكم!`,
+    `أرجو التنسيق معي وإفادتي عند توفر موعد أو معلم مناسب. شكراً لكم!`,
   ].join('\n');
 
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
@@ -221,8 +225,10 @@ export function buildGroupClassBookingWhatsAppUrl(params: {
   sessionsCount: number;
   pricePerStudent: number;
   currency: string;
+  priceType?: 'package' | 'per_session' | string;
 }, customNumber?: string): string {
   const number = (customNumber || SHATIR_CONFIG.adminWhatsAppNumber).replace(/[^0-9]/g, '');
+  const priceTypeLabel = params.priceType === 'per_session' ? 'للحصة' : 'للباقة';
   const message = [
     `السلام عليكم ورحمة الله وبركاته، فريق إدارة شاطر كلاسيز 👋`,
     `أود تسجيل طفلي في المجموعة التعليمية عبر منصة شاطر:`,
@@ -232,7 +238,7 @@ export function buildGroupClassBookingWhatsAppUrl(params: {
     `• التخصص: ${params.specializationLabel}`,
     `• جدول الحصص: ${params.weeklyScheduleSummary}`,
     `• تاريخ البدء: ${params.startDate} (${params.sessionsCount} حصص)`,
-    `• اشتراك الطالب: ${params.pricePerStudent} ${params.currency}`,
+    `• اشتراك الطالب: ${params.pricePerStudent} ${params.currency} (${priceTypeLabel})`,
     ``,
     `أرجو إفادتي بتوفر مقعد والخطوات التالية لتأكيد انضمام الطالب. شكراً لكم!`,
   ].join('\n');

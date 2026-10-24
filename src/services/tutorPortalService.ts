@@ -11,6 +11,12 @@
 
 import { supabase } from '../lib/supabase';
 import {
+  CANONICAL_QURAN_AGE_GROUPS,
+  CANONICAL_QURAN_LEVELS,
+  normalizeLegacyAgeGroupText,
+  resolveSpecializationLabel,
+} from '../utils/formatters';
+import {
   TutorPortalContext,
   TutorAvailableSlot,
   TutorProfileDraft,
@@ -80,7 +86,11 @@ export function normalizeSlotAllowedSpecializations(rawSlot: any): ApprovedSpeci
   const primaryCourseId = rawSlot.offering_course_option_id || rawSlot.offeringCourseOptionId || rawSlot.courseOptionId || null;
   const primaryAgeId = rawSlot.quran_age_group_id || rawSlot.quranAgeGroupId || rawSlot.ageGroupId || null;
   const primaryLevelId = rawSlot.quran_level_id || rawSlot.quranLevelId || rawSlot.levelId || null;
-  const primaryLabel = rawSlot.specialization_label || rawSlot.specializationLabel || '';
+  const primaryLabel = resolveSpecializationLabel({
+    specializationLabel: rawSlot.specialization_label || rawSlot.specializationLabel || '',
+    quranAgeGroupId: primaryAgeId,
+    quranLevelId: primaryLevelId,
+  });
 
   let primaryItem: ApprovedSpecializationItem | null = null;
   if (primaryCourseId && !primaryAgeId && !primaryLevelId) {
@@ -131,7 +141,7 @@ export function normalizeSlotAllowedSpecializations(rawSlot: any): ApprovedSpeci
           id: item.id || `school-${courseOptionId}`,
           track: 'school',
           courseOptionId: String(courseOptionId),
-          label: item.label || primaryLabel || 'تخصص مدرسي',
+          label: normalizeLegacyAgeGroupText(item.label || primaryLabel || 'تخصص مدرسي'),
         });
       } else if (track === 'quran' && ageGroupId && levelId && !courseOptionId) {
         mapped.push({
@@ -139,7 +149,11 @@ export function normalizeSlotAllowedSpecializations(rawSlot: any): ApprovedSpeci
           track: 'quran',
           ageGroupId: String(ageGroupId),
           levelId: String(levelId),
-          label: item.label || primaryLabel || 'قرآن وتأسيس',
+          label: resolveSpecializationLabel({
+            specializationLabel: item.label || primaryLabel || 'قرآن وتأسيس',
+            quranAgeGroupId: String(ageGroupId),
+            quranLevelId: String(levelId),
+          }),
         });
       }
     }
@@ -536,14 +550,21 @@ export const TutorPortalService = {
       });
 
       quranList.forEach((q: any) => {
+        const canonicalAg = CANONICAL_QURAN_AGE_GROUPS[q.ageGroupId];
+        const canonicalLvl = CANONICAL_QURAN_LEVELS[q.levelId];
+        const agName = canonicalAg?.name || normalizeLegacyAgeGroupText(q.ageGroupName);
+        const lvlName = canonicalLvl?.name || q.levelName;
         items.push({
           id: `quran-${q.ageGroupId}-${q.levelId}`,
           track: 'quran',
-          label: q.label,
+          label:
+            canonicalAg && canonicalLvl
+              ? `قرآن وتأسيس: ${lvlName} (${agName})`
+              : normalizeLegacyAgeGroupText(q.label),
           ageGroupId: q.ageGroupId,
-          ageGroupName: q.ageGroupName,
+          ageGroupName: agName,
           levelId: q.levelId,
-          levelName: q.levelName,
+          levelName: lvlName,
         });
       });
 
@@ -606,8 +627,10 @@ export const TutorPortalService = {
     });
 
     (quranOfferingsRes.data || []).forEach((row: any) => {
-      const agName = row.quran_age_groups?.name || '';
-      const lvlName = row.quran_levels?.name || '';
+      const canonicalAg = CANONICAL_QURAN_AGE_GROUPS[row.age_group_id];
+      const canonicalLvl = CANONICAL_QURAN_LEVELS[row.level_id];
+      const agName = canonicalAg?.name || normalizeLegacyAgeGroupText(row.quran_age_groups?.name || '');
+      const lvlName = canonicalLvl?.name || row.quran_levels?.name || '';
       items.push({
         id: `quran-${row.age_group_id}-${row.level_id}`,
         track: 'quran',
@@ -633,7 +656,11 @@ export const TutorPortalService = {
 
     return ((rpcData as any[]) || []).map((s) => ({
       id: s.id,
-      specializationLabel: s.specialization_label,
+      specializationLabel: resolveSpecializationLabel({
+        specializationLabel: s.specialization_label,
+        quranAgeGroupId: s.quran_age_group_id,
+        quranLevelId: s.quran_level_id,
+      }),
       offeringCourseOptionId: s.offering_course_option_id ?? null,
       quranAgeGroupId: s.quran_age_group_id ?? null,
       quranLevelId: s.quran_level_id ?? null,
@@ -869,10 +896,17 @@ export const TutorPortalService = {
         id: g.id,
         title: g.title,
         description: g.description,
-        specializationLabel: g.specialization_label,
+        specializationLabel: resolveSpecializationLabel({
+          specializationLabel: g.specialization_label,
+          quranAgeGroupId: g.quran_age_group_id,
+          quranLevelId: g.quran_level_id,
+        }),
         maxStudents: g.max_students,
         enrolledStudents: g.enrolled_students || 0,
-        remainingSeats: g.remaining_seats !== undefined ? g.remaining_seats : Math.max(0, g.max_students - (g.enrolled_students || 0)),
+        remainingSeats:
+          g.remaining_seats !== undefined
+            ? g.remaining_seats
+            : Math.max(0, g.max_students - (g.enrolled_students || 0)),
         pricePerStudent: g.price_per_student,
         priceType: g.price_type || 'full_package',
         currency: g.currency || 'ج.م',
@@ -907,7 +941,11 @@ export const TutorPortalService = {
       id: g.id,
       title: g.title,
       description: g.description,
-      specializationLabel: g.specialization_label,
+      specializationLabel: resolveSpecializationLabel({
+        specializationLabel: g.specialization_label,
+        quranAgeGroupId: g.quran_age_group_id,
+        quranLevelId: g.quran_level_id,
+      }),
       maxStudents: g.max_students,
       enrolledStudents: g.enrolled_students || 0,
       remainingSeats: Math.max(0, g.max_students - (g.enrolled_students || 0)),
@@ -1102,7 +1140,11 @@ export const TutorPortalService = {
       startTime: row.start_time,
       endTime: row.end_time,
       timezone: row.timezone,
-      specializationLabel: row.specialization_label,
+      specializationLabel: resolveSpecializationLabel({
+        specializationLabel: row.specialization_label,
+        quranAgeGroupId: row.quran_age_group_id,
+        quranLevelId: row.quran_level_id,
+      }),
       studentName: row.student_name,
       guardianName: row.guardian_name,
       phoneNumber: row.phone_number,

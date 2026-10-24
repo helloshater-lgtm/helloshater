@@ -53,6 +53,7 @@ export default function App() {
 
   // Taxonomy for profile breadcrumbs
   const [stages, setStages] = useState<Stage[]>([]);
+  const [grades, setGrades] = useState<Grade[]>([]);
   const [curricula, setCurricula] = useState<CurriculumOption[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [quranAges, setQuranAges] = useState<QuranAgeGroup[]>([]);
@@ -61,12 +62,14 @@ export default function App() {
   useEffect(() => {
     Promise.all([
       DataService.getStages().catch(() => []),
+      DataService.getAllGrades().catch(() => []),
       DataService.getCurriculumOptions().catch(() => []),
       DataService.getSubjects().catch(() => []),
       DataService.getQuranAgeGroups().catch(() => []),
       DataService.getQuranLevels().catch(() => []),
-    ]).then(([stgs, currs, subjs, qAges, qLvls]) => {
+    ]).then(([stgs, grds, currs, subjs, qAges, qLvls]) => {
       setStages(stgs);
+      setGrades(grds);
       setCurricula(currs);
       setSubjects(subjs);
       setQuranAges(qAges);
@@ -277,7 +280,7 @@ export default function App() {
 
   // Labels for Profile View Breadcrumbs
   const stageName = stages.find((s) => s.id === savedCriteria?.stageId)?.name;
-  const gradeName = savedCriteria?.gradeId;
+  const gradeName = grades.find((g) => g.id === savedCriteria?.gradeId)?.name || savedCriteria?.gradeId;
   const subjectName = subjects.find((s) => s.id === savedCriteria?.subjectId)?.name;
   const curriculumName = curricula.find((c) => c.id === savedCriteria?.curriculumType)?.name;
   const quranAgeName = quranAges.find((a) => a.id === savedCriteria?.ageGroupId)?.name;
@@ -375,7 +378,7 @@ export default function App() {
       <Footer onNavigate={handleNavigate} />
 
       {/* Persistent Floating WhatsApp Action Button */}
-      <WhatsAppFloatingButton />
+      <WhatsAppFloatingButton hideOnMobileSticky={currentView === 'tutor-profile'} />
     </div>
   );
 }

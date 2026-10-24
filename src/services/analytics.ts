@@ -34,6 +34,10 @@ const ALLOWED_EVENT_PARAMS = new Set([
   'quran_level_id',
   'tutor_id',
   'slot_id',
+  'group_id',
+  'booking_type',
+  'specialization_id',
+  'trigger_mode',
   'source',
   'has_slots',
 ]);
@@ -250,27 +254,54 @@ export function resetTutorProfileTracking(): void {
 }
 
 /**
- * 6. trial_slot_selected:
- * Triggered when the parent clicks on an available slot in the tutor profile.
- * Only sends tutor_id and slot_id.
+ * 6. trial_slot_selected / booking_slot_selected:
+ * Triggered when the parent clicks on an available slot or group in the tutor profile.
+ * Only sends non-PII public IDs (tutor_id, slot_id / group_id, booking_type, specialization_id).
  */
 export function trackTrialSlotSelected(tutorId: string, slotId: string): void {
   sendGAEvent('trial_slot_selected', {
     tutor_id: tutorId,
     slot_id: slotId,
+    booking_type: 'trial',
+  });
+}
+
+export function trackBookingSlotSelected(params: {
+  tutorId: string;
+  bookingType: 'trial' | 'private_1on1' | 'group';
+  slotId?: string;
+  groupId?: string;
+  specializationId?: string;
+}): void {
+  if (params.bookingType === 'trial' && params.slotId) {
+    trackTrialSlotSelected(params.tutorId, params.slotId);
+    return;
+  }
+  sendGAEvent('booking_slot_selected', {
+    tutor_id: params.tutorId,
+    booking_type: params.bookingType,
+    slot_id: params.slotId,
+    group_id: params.groupId,
+    specialization_id: params.specializationId,
   });
 }
 
 /**
  * 7. whatsapp_clicked:
- * Triggered when any WhatsApp button or link is clicked.
- * Includes a source parameter (e.g. 'header', 'hero_cta', 'floating_button', 'footer', 'empty_search_interest', 'trial_booking_modal', 'no_slots_inquiry').
+ * Triggered when any WhatsApp coordination request button or link is clicked.
+ * Note: Clicking WhatsApp is a coordination request and is NOT treated as a confirmed booking.
  * Never contains personal data, phone numbers, or prefilled message text.
  */
-export function trackWhatsAppClicked(source: string, extra?: { tutor_id?: string }): void {
+export function trackWhatsAppClicked(
+  source: string,
+  extra?: { tutor_id?: string; booking_type?: 'trial' | 'private_1on1' | 'group'; slot_id?: string; group_id?: string }
+): void {
   sendGAEvent('whatsapp_clicked', {
     source,
     tutor_id: extra?.tutor_id,
+    booking_type: extra?.booking_type,
+    slot_id: extra?.slot_id,
+    group_id: extra?.group_id,
   });
 }
 

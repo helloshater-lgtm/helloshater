@@ -124,6 +124,10 @@ export interface Tutor {
   whatHappensInTrial: TrialStep[];
   qualifications: TutorQualification[];
   offerings: TutorOffering[];
+  earliestTrialSlot?: TutorAvailableSlot | null;
+  availableTrialSlotsCount?: number;
+  availablePrivateSlotsCount?: number;
+  openGroupsCount?: number;
 }
 
 export interface SearchCriteria {

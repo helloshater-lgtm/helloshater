@@ -10,6 +10,7 @@ import {
 } from '../../types';
 import { TutorApplicationService } from '../../services/tutorApplicationService';
 import { TutorAuthModal } from './TutorAuthModal';
+import { formatTutorExperience, formatSessionPriceSummary } from '../../utils/formatters';
 import {
   GraduationCap,
   Calendar,
@@ -2378,9 +2379,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
               <span className="text-xs text-[#64748B] font-bold block">سعر الحصة المعتمد</span>
-              <div className="font-['Cairo'] text-lg font-extrabold text-[#0D4E8B]">
-                {tutor.hourlyRateMin} {tutor.currency}
-                <span className="text-xs text-[#64748B] font-normal mr-1">/ {tutor.sessionDurationMinutes} دقيقة</span>
+              <div className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#0D4E8B]">
+                {
+                  formatSessionPriceSummary({
+                    minPrice: tutor.hourlyRateMin,
+                    maxPrice: tutor.hourlyRateMax,
+                    currency: tutor.currency,
+                    durationMinutes: tutor.sessionDurationMinutes,
+                  }).combinedText
+                }
               </div>
               <span className="text-[11px] text-[#64748B] block mt-1">
                 تعديل السعر يتطلب مراجعة وموافقة الإدارة.
@@ -2388,12 +2395,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">سنوات الخبرة</span>
+              <span className="text-xs text-[#64748B] font-bold block">الخبرة التعليمية</span>
               <div className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
-                {tutor.yearsOfExperience} سنوات
+                {formatTutorExperience(tutor.yearsOfExperience, tutor.experienceBadgeText)}
               </div>
               <span className="text-[11px] text-[#64748B] block mt-1">
-                {tutor.experienceBadgeText || 'خبرة معتمدة في التدريس'}
+                تظهر موحّدة في بطاقة البحث والملف العام
               </span>
             </div>
 

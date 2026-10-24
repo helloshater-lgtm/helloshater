@@ -64,10 +64,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   savedResults,
   onSaveCriteria,
 }) => {
-  // Requirement 4: Results section does NOT appear before user selects and searches
-  const [hasSearched, setHasSearched] = useState(
-    Boolean(savedCriteria && savedResults && savedResults.length > 0)
-  );
+  // Results section appears automatically once required selections are completed
+  const [hasSearched, setHasSearched] = useState(Boolean(savedCriteria));
   const [activeCriteria, setActiveCriteria] = useState<SearchCriteria | null>(
     savedCriteria || null
   );
@@ -85,6 +83,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [quranLevels, setQuranLevels] = useState<QuranLevel[]>([]);
 
   const selectorRef = useRef<HTMLDivElement>(null);
+  const searchRequestIdRef = useRef<number>(0);
+  const hasAutoScrolledRef = useRef<boolean>(Boolean(savedCriteria));
 
   useEffect(() => {
     // Initial fetch of taxonomy for label lookups
@@ -120,43 +120,62 @@ export const HomeView: React.FC<HomeViewProps> = ({
   };
 
   const handleScrollToSelector = () => {
-    selectorRef.current?.scrollIntoView({ behavior: 'smooth' });
+    selectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // Called whenever user alters any criteria
+  // Called whenever user resets or clears required criteria
   const handleCriteriaChange = () => {
+    searchRequestIdRef.current += 1;
+    setIsLoading(false);
     setHasSearched(false);
     setSearchError(null);
     setSearchResults([]);
     setActiveCriteria(null);
   };
 
-  // Requirement 3: Search tutors from Supabase database ONLY. No mock fallbacks.
+  // Search tutors from Supabase database with race-condition protection and gentle first-time scroll
   const executeSearch = async (criteria: SearchCriteria, simulateError = false) => {
+    const requestId = ++searchRequestIdRef.current;
     setIsLoading(true);
     setSearchError(null);
     setActiveCriteria(criteria);
     setHasSearched(true);
 
+    // Gentle scroll to start of results ONLY the first time selections are completed
+    if (!hasAutoScrolledRef.current) {
+      hasAutoScrolledRef.current = true;
+      setTimeout(() => {
+        document.getElementById('search-results-section')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      }, 120);
+    }
+
     try {
       const results = await DataService.searchTutors(criteria, simulateError);
+      // Prevent stale response from an older request from overwriting a newer search
+      if (requestId !== searchRequestIdRef.current) {
+        return;
+      }
+
       setSearchResults(results);
       onSaveCriteria?.(criteria, results);
 
-      // Track no_tutors_shown if search returned 0 results
       if (results.length === 0) {
         trackNoTutorsShown(criteria);
       }
-
-      setTimeout(() => {
-        document.getElementById('search-results-section')?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
     } catch (err: any) {
+      if (requestId !== searchRequestIdRef.current) {
+        return;
+      }
       setSearchError(err?.message || 'تعذر جلب المعلمين حالياً. يرجى المحاولة مرة أخرى.');
       setSearchResults([]);
       onSaveCriteria?.(criteria, []);
     } finally {
-      setIsLoading(false);
+      if (requestId === searchRequestIdRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -169,7 +188,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const gradeName = grades.find((g) => g.id === activeCriteria?.gradeId)?.name;
   const subjectName = subjects.find((s) => s.id === activeCriteria?.subjectId)?.name;
   const curriculumName = curricula.find((c) => c.id === activeCriteria?.curriculumType)?.name;
-  const quranAgeName = quranAges.find((a) => a.id === activeCriteria?.ageGroupId)?.name;
+  const activeQuranAge = quranAges.find((a) => a.id === activeCriteria?.ageGroupId);
+  const quranAgeName = activeQuranAge
+    ? activeQuranAge.ageRange
+      ? `${activeQuranAge.name} (${activeQuranAge.ageRange})`
+      : activeQuranAge.name
+    : undefined;
   const quranLevelName = quranLevels.find((l) => l.id === activeCriteria?.levelId)?.name;
 
   return (
