@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TutorApplicationRecord, TutorApplicationStatus } from '../../types';
 import { AdminService } from '../../services/adminService';
+import { resolveTutorApplicationStatus } from '../../utils/formatters';
 import {
   Search,
   Filter,
@@ -44,10 +45,8 @@ export const AdminApplicationsListView: React.FC<AdminApplicationsListViewProps>
       );
       setApplications(data);
 
-      // Calculate pending count (submitted + needs_info)
-      const pendingCount = data.filter(
-        (a) => a.status === 'submitted' || a.status === 'pending_review' || a.status === 'needs_info'
-      ).length;
+      // Calculate pending count strictly from reviewable statuses (submitted + needs_info)
+      const pendingCount = data.filter((a) => resolveTutorApplicationStatus(a.status).isReviewableByAdmin).length;
       if (onUpdatePendingCount) {
         onUpdatePendingCount(pendingCount);
       }
@@ -67,46 +66,22 @@ export const AdminApplicationsListView: React.FC<AdminApplicationsListViewProps>
     loadApplications();
   };
 
-  const getStatusBadge = (status: TutorApplicationStatus) => {
-    switch (status) {
-      case 'submitted':
-      case 'pending_review':
-        return (
-          <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-[#0D4E8B] border border-blue-200 text-xs font-bold inline-flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5" />
-            قيد المراجعة
-          </span>
-        );
-      case 'needs_info':
-        return (
-          <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold inline-flex items-center gap-1">
-            <AlertCircle className="w-3.5 h-3.5" />
-            مطلوب استكمال بيانات
-          </span>
-        );
-      case 'approved':
-        return (
-          <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold inline-flex items-center gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            مقبول
-          </span>
-        );
-      case 'rejected':
-        return (
-          <span className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 text-xs font-bold inline-flex items-center gap-1">
-            <XCircle className="w-3.5 h-3.5" />
-            مرفوض
-          </span>
-        );
-      case 'draft':
-      default:
-        return (
-          <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold inline-flex items-center gap-1">
-            <FileText className="w-3.5 h-3.5" />
-            مسودة
-          </span>
-        );
-    }
+  const getStatusBadge = (status: TutorApplicationStatus | string | null | undefined) => {
+    const info = resolveTutorApplicationStatus(status);
+    return (
+      <span
+        className={`px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1 ${info.badgeClassName}`}
+      >
+        {info.canonicalKey === 'submitted' && <Clock className="w-3.5 h-3.5" />}
+        {info.canonicalKey === 'needs_info' && <AlertCircle className="w-3.5 h-3.5" />}
+        {info.canonicalKey === 'approved' && <CheckCircle2 className="w-3.5 h-3.5" />}
+        {info.canonicalKey === 'rejected' && <XCircle className="w-3.5 h-3.5" />}
+        {(info.canonicalKey === 'draft' || info.canonicalKey === 'unknown') && (
+          <FileText className="w-3.5 h-3.5" />
+        )}
+        {info.listBadgeLabel}
+      </span>
+    );
   };
 
   return (

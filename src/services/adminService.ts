@@ -26,6 +26,9 @@ import {
   CANONICAL_QURAN_LEVELS,
   normalizeLegacyAgeGroupText,
   resolveSpecializationLabel,
+  resolveTutorApplicationStatus,
+  validateAndResolveSchoolSpecializations,
+  validateAndResolveQuranSpecializations,
 } from '../utils/formatters';
 
 export interface AdminTutorListItem {
@@ -605,7 +608,7 @@ export const AdminService = {
     return (data || []).map((row: any) => ({
       id: row.id,
       userId: row.user_id,
-      referenceCode: row.reference_code,
+      referenceCode: row.reference_code || '',
       fullName: row.full_name || '',
       countryCode: row.country_code || '+20',
       phone: row.phone || '',
@@ -639,9 +642,9 @@ export const AdminService = {
       timezone: row.timezone || 'Africa/Cairo',
       interviewAvailability: '',
       termsAccepted: Boolean(row.terms_accepted),
-      termsPolicyVersion: row.policy_version || 'v1.0',
-      policyVersion: row.policy_version || 'v1.0',
-      policyAcceptedAt: row.policy_accepted_at || row.created_at,
+      termsPolicyVersion: row.policy_version || '',
+      policyVersion: row.policy_version || null,
+      policyAcceptedAt: row.policy_accepted_at || undefined,
       status: row.status,
       adminNotes: row.admin_notes || null,
       reviewedAt: row.reviewed_at || null,
@@ -669,7 +672,7 @@ export const AdminService = {
     return {
       id: data.id,
       userId: data.user_id,
-      referenceCode: data.reference_code,
+      referenceCode: data.reference_code || '',
       fullName: data.full_name || '',
       countryCode: data.country_code || '+20',
       phone: data.phone || '',
@@ -703,9 +706,9 @@ export const AdminService = {
       timezone: data.timezone || 'Africa/Cairo',
       interviewAvailability: '',
       termsAccepted: Boolean(data.terms_accepted),
-      termsPolicyVersion: data.policy_version || 'v1.0',
-      policyVersion: data.policy_version || 'v1.0',
-      policyAcceptedAt: data.policy_accepted_at || data.created_at,
+      termsPolicyVersion: data.policy_version || '',
+      policyVersion: data.policy_version || null,
+      policyAcceptedAt: data.policy_accepted_at || undefined,
       status: data.status,
       adminNotes: data.admin_notes || null,
       reviewedAt: data.reviewed_at || null,
@@ -713,6 +716,259 @@ export const AdminService = {
       applicantTutorId: data.applicant_tutor_id || null,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+    };
+  },
+
+  /**
+   * 12.1 Helper: Strictly validate and resolve an application's school or quran specializations
+   * against live reference tables without automatic suffix stripping ('math_en' is NEVER merged into 'math')
+   * and without silently dropping unmatched specialization items.
+   */
+  async validateApplicationSpecializations(
+    app: Pick<
+      TutorApplicationRecord,
+      | 'id'
+      | 'track'
+      | 'schoolSpecializations'
+      | 'schoolCourseOptionIds'
+      | 'quranAgeGroups'
+      | 'quranLevels'
+      | 'quranOfferings'
+    >
+  ): Promise<{
+    isValid: boolean;
+    optionIds: string[];
+    normalizedSpecs: any[];
+    quranOfferings: Array<{ ageGroupId: string; levelId: string }>;
+    unmatchedItems: string[];
+  }> {
+    if (app.track === 'school') {
+      const [subjectsRes, stagesRes, gradesRes, curriculaRes, optionsRes] = await Promise.all([
+        supabase.from('subjects').select('id, name, english_name, is_active'),
+        supabase.from('educational_stages').select('id, name, is_active'),
+        supabase.from('educational_grades').select('id, stage_id, name, is_active'),
+        supabase.from('curriculum_types').select('id, name, is_active'),
+        supabase
+          .from('school_course_options')
+          .select('id, grade_id, subject_id, curriculum_id, is_active'),
+      ]);
+
+      const result = validateAndResolveSchoolSpecializations({
+        specializations: app.schoolSpecializations,
+        directCourseOptionIds: app.schoolCourseOptionIds,
+        referenceData: {
+          subjects: subjectsRes.data || [],
+          stages: stagesRes.data || [],
+          grades: gradesRes.data || [],
+          curricula: curriculaRes.data || [],
+          courseOptions: optionsRes.data || [],
+        },
+      });
+
+      return {
+        isValid: result.isValid,
+        optionIds: result.matchedOptionIds,
+        normalizedSpecs: result.normalizedSpecializations,
+        quranOfferings: [],
+        unmatchedItems: result.unmatchedItems,
+      };
+    } else {
+      const [agesRes, levelsRes] = await Promise.all([
+        supabase.from('quran_age_groups').select('id, name, is_active'),
+        supabase.from('quran_levels').select('id, name, is_active'),
+      ]);
+
+      const result = validateAndResolveQuranSpecializations({
+        ageGroups: app.quranAgeGroups,
+        levels: app.quranLevels,
+        quranOfferings: app.quranOfferings,
+        referenceData: {
+          ageGroups: agesRes.data || [],
+          levels: levelsRes.data || [],
+        },
+      });
+
+      return {
+        isValid: result.isValid,
+        optionIds: [],
+        normalizedSpecs: [],
+        quranOfferings: result.quranOfferings,
+        unmatchedItems: result.unmatchedItems,
+      };
+    }
+  },
+
+  /**
+   * 12.1b Resolve canonical school_course_option_ids from application's schoolSpecializations
+   * Throws or reports unmatched items rather than silently dropping them.
+   */
+  async resolveApplicationSchoolOptionIds(
+    app: Pick<
+      TutorApplicationRecord,
+      'id' | 'track' | 'schoolSpecializations' | 'schoolCourseOptionIds'
+    >
+  ): Promise<{ optionIds: string[]; normalizedSpecs: any[]; unmatchedItems: string[]; isValid: boolean }> {
+    const res = await this.validateApplicationSpecializations({
+      ...app,
+      quranAgeGroups: [],
+      quranLevels: [],
+      quranOfferings: [],
+    });
+    return {
+      optionIds: res.optionIds,
+      normalizedSpecs: res.normalizedSpecs,
+      unmatchedItems: res.unmatchedItems,
+      isValid: res.isValid,
+    };
+  },
+
+  /**
+   * 12.2 Helper: Sync an approved application's school and quran offerings to the linked tutor record
+   * - Only allowed for approved applications (never touches draft applications).
+   * - Rejects sync if any specialization item is unmatched or invalid.
+   * - ONLY adds missing relationships (never re-enables disabled offerings and never modifies
+   *   tutor prices, durations, ratings, verification, or publication state).
+   */
+  async syncApplicationOfferingsToTutor(
+    applicationId: string,
+    tutorId: string
+  ): Promise<{ schoolOfferingsCount: number; quranOfferingsCount: number }> {
+    const app = await this.getApplicationById(applicationId);
+    if (!app) {
+      throw new Error('تعذر العثور على طلب الانضمام لمزامنة التخصصات.');
+    }
+
+    if (app.status !== 'approved') {
+      throw new Error('لا يمكن مزامنة العروض إلا لطلب معتمد (حالة الطلب الحالية لا تسمح بالمزامنة).');
+    }
+
+    const validation = await this.validateApplicationSpecializations(app);
+    if (!validation.isValid) {
+      throw new Error(
+        `تعذر مزامنة تخصصات المعلم لوجود عناصر غير مطابقة تحتاج إلى تصحيح: ${validation.unmatchedItems.join(' | ')}`
+      );
+    }
+
+    // Try dedicated server RPC first if deployed
+    const { data: rpcSyncData, error: rpcSyncError } = await supabase.rpc(
+      'admin_sync_approved_application_offerings',
+      { p_application_id: applicationId }
+    );
+
+    if (!rpcSyncError && rpcSyncData?.success) {
+      return {
+        schoolOfferingsCount: Number(rpcSyncData.schoolOfferingsCount || 0),
+        quranOfferingsCount: Number(rpcSyncData.quranOfferingsCount || 0),
+      };
+    }
+
+    if (app.track === 'school') {
+      const { optionIds, normalizedSpecs } = validation;
+
+      if (optionIds.length > 0) {
+        if (!app.schoolCourseOptionIds || app.schoolCourseOptionIds.length === 0) {
+          await supabase
+            .from('tutor_applications')
+            .update({
+              school_course_option_ids: optionIds,
+              school_specializations: normalizedSpecs,
+            })
+            .eq('id', applicationId);
+        }
+
+        // Fetch existing offerings for this tutor (including any disabled ones if an is_active column exists)
+        // so we ONLY insert genuinely missing course_option_ids and NEVER re-enable disabled offerings.
+        const { data: existingOfferings } = await supabase
+          .from('tutor_school_offerings')
+          .select('course_option_id')
+          .eq('tutor_id', tutorId);
+
+        const existingOptionIdSet = new Set(
+          (existingOfferings || []).map((r: any) => String(r.course_option_id))
+        );
+
+        const missingRowsToInsert = optionIds
+          .filter((coId) => !existingOptionIdSet.has(coId))
+          .map((courseOptionId) => ({
+            tutor_id: tutorId,
+            course_option_id: courseOptionId,
+          }));
+
+        if (missingRowsToInsert.length > 0) {
+          const { error: upsertErr } = await supabase
+            .from('tutor_school_offerings')
+            .upsert(missingRowsToInsert, {
+              onConflict: 'tutor_id,course_option_id',
+              ignoreDuplicates: true,
+            });
+
+          if (upsertErr) {
+            throw new Error(`تعذر مزامنة التخصصات المدرسية للمعلم: ${upsertErr.message}`);
+          }
+        }
+      }
+    } else if (app.track === 'quran') {
+      const quranPairs = validation.quranOfferings;
+
+      if (quranPairs.length > 0) {
+        // Fetch existing quran offerings so we ONLY insert missing pairs and never re-enable disabled ones
+        const { data: existingQuranOfferings } = await supabase
+          .from('tutor_quran_offerings')
+          .select('age_group_id, level_id')
+          .eq('tutor_id', tutorId);
+
+        const existingPairSet = new Set(
+          (existingQuranOfferings || []).map(
+            (r: any) => `${String(r.age_group_id)}|${String(r.level_id)}`
+          )
+        );
+
+        const missingQuranRows = quranPairs
+          .filter((pair) => !existingPairSet.has(`${pair.ageGroupId}|${pair.levelId}`))
+          .map((pair) => ({
+            tutor_id: tutorId,
+            age_group_id: pair.ageGroupId,
+            level_id: pair.levelId,
+          }));
+
+        if (missingQuranRows.length > 0) {
+          const { error: upsertErr } = await supabase
+            .from('tutor_quran_offerings')
+            .upsert(missingQuranRows, {
+              onConflict: 'tutor_id,age_group_id,level_id',
+              ignoreDuplicates: true,
+            });
+
+          if (upsertErr) {
+            throw new Error(`تعذر مزامنة برامج القرآن للمعلم: ${upsertErr.message}`);
+          }
+        }
+      }
+    }
+
+    return this.getTutorOfferingsSummary(tutorId);
+  },
+
+  /**
+   * 12.3 Helper: Get count of synced offerings for a tutor
+   */
+  async getTutorOfferingsSummary(
+    tutorId: string
+  ): Promise<{ schoolOfferingsCount: number; quranOfferingsCount: number }> {
+    const [schoolRes, quranRes] = await Promise.all([
+      supabase
+        .from('tutor_school_offerings')
+        .select('id', { count: 'exact', head: true })
+        .eq('tutor_id', tutorId),
+      supabase
+        .from('tutor_quran_offerings')
+        .select('id', { count: 'exact', head: true })
+        .eq('tutor_id', tutorId),
+    ]);
+
+    return {
+      schoolOfferingsCount: schoolRes.count || 0,
+      quranOfferingsCount: quranRes.count || 0,
     };
   },
 
@@ -733,6 +989,19 @@ export const AdminService = {
       throw new Error('يرجى تدوين الملاحظات والتوجيهات للمعلم.');
     }
 
+    const app = await this.getApplicationById(applicationId);
+    if (!app) {
+      throw new Error('طلب الانضمام المحدد غير موجود.');
+    }
+
+    const statusInfo = resolveTutorApplicationStatus(app.status);
+    if (!statusInfo.isReviewableByAdmin) {
+      if (statusInfo.canonicalKey === 'draft') {
+        throw new Error('لا يمكن مراجعة هذا الطلب أو رفضه لأنه ما زال «مسودة» ولم يقم المعلم بإرساله للمراجعة بعد.');
+      }
+      throw new Error(`حالة الطلب الحالية (${statusInfo.detailBadgeLabel}) لا تسمح بتنفيذ هذا الإجراء.`);
+    }
+
     const { data: rpcData, error: rpcError } = await supabase.rpc('admin_review_tutor_application', {
       p_application_id: applicationId,
       p_status: status,
@@ -751,18 +1020,55 @@ export const AdminService = {
   /**
    * 14. Applications: Approve Application and Create Unpublished Tutor Profile
    * Always creates tutor with is_published = false. Publishing is a separate explicit decision.
+   * Strictly validates all specializations before approval without silent dropping.
    */
   async approveApplication(
     applicationId: string,
     tutorSlug: string,
     adminNotes?: string
-  ): Promise<{ tutorId: string }> {
+  ): Promise<{ tutorId: string; syncedSchoolOfferingsCount?: number }> {
     const cleanSlug = tutorSlug.trim().toLowerCase();
     if (!cleanSlug || !/^[a-z0-9-]+$/.test(cleanSlug)) {
       throw new Error('معرف المعلم (Slug) غير صالح: يجب أن يتكون من أحرف إنجليزية وأرقام وشرطات فقط بدون مسافات (مثال: mohamed-ali).');
     }
 
-    // 1. Try RPC atomic transaction
+    const app = await this.getApplicationById(applicationId);
+    if (!app) {
+      throw new Error('تعذر العثور على بيانات الطلب للاعتماد.');
+    }
+
+    const statusInfo = resolveTutorApplicationStatus(app.status);
+    if (!statusInfo.isReviewableByAdmin) {
+      if (statusInfo.canonicalKey === 'draft') {
+        throw new Error('لا يمكن قبول واعتماد هذا الطلب لأنه ما زال «مسودة» ولم يقم المعلم بإرساله للمراجعة بعد.');
+      }
+      throw new Error(`حالة الطلب الحالية (${statusInfo.detailBadgeLabel}) لا تسمح بالقبول.`);
+    }
+
+    // Strictly validate specializations against reference tables (never merge math_en with math, never drop unmatched items)
+    const validation = await this.validateApplicationSpecializations(app);
+    if (!validation.isValid) {
+      throw new Error(
+        `لا يمكن اعتماد الطلب لوجود تخصصات غير مطابقة أو تحتاج إلى تصحيح: ${validation.unmatchedItems.join(' | ')}`
+      );
+    }
+
+    let resolvedOptionIds = validation.optionIds;
+    if (
+      app.track === 'school' &&
+      resolvedOptionIds.length > 0 &&
+      (!app.schoolCourseOptionIds || app.schoolCourseOptionIds.length === 0)
+    ) {
+      await supabase
+        .from('tutor_applications')
+        .update({
+          school_course_option_ids: resolvedOptionIds,
+          school_specializations: validation.normalizedSpecs,
+        })
+        .eq('id', applicationId);
+    }
+
+    // Call atomic approval RPC
     const { data: rpcData, error: rpcError } = await supabase.rpc('admin_approve_tutor_application', {
       p_application_id: applicationId,
       p_tutor_slug: cleanSlug,
@@ -770,89 +1076,21 @@ export const AdminService = {
     });
 
     if (!rpcError && rpcData?.success) {
-      return { tutorId: rpcData.tutorId || cleanSlug };
+      const finalTutorId = rpcData.tutorId || cleanSlug;
+      const syncSummary = await this.syncApplicationOfferingsToTutor(applicationId, finalTutorId).catch(
+        () => ({ schoolOfferingsCount: resolvedOptionIds.length, quranOfferingsCount: 0 })
+      );
+      return {
+        tutorId: finalTutorId,
+        syncedSchoolOfferingsCount: syncSummary.schoolOfferingsCount,
+      };
     }
 
-    // 2. Resilient fallback if RPC 005 not yet applied in Supabase:
-    // Fetch application details and use AdminService.saveTutor with isPublished: false
-    const app = await this.getApplicationById(applicationId);
-    if (!app) {
-      throw new Error('تعذر العثور على بيانات الطلب للاعتماد.');
+    if (rpcError) {
+      throw new Error(`تعذر اعتماد الطلب: ${rpcError.message}`);
     }
 
-    if (app.status !== 'submitted' && app.status !== 'needs_info') {
-      throw new Error(`حالة الطلب الحالية (${app.status}) لا تسمح بالقبول.`);
-    }
-
-    // Parse experience years accurately without replacing all digits into merged number
-    const parseExpYears = (exp: string): number => {
-      if (!exp) return 1;
-      if (exp.includes('أكثر') || exp.includes('10') || exp.includes('١٠')) return 10;
-      if (exp.includes('٧') || exp.includes('7')) return 7;
-      if (exp.includes('٤') || exp.includes('4')) return 4;
-      if (exp.includes('سنتين') || exp.includes('٣') || exp.includes('3') || exp.includes('2') || exp.includes('٢')) return 2;
-      if (exp.includes('أقل')) return 1;
-      const match = exp.match(/\d+/);
-      return match ? parseInt(match[0], 10) : 1;
-    };
-
-    // Create tutor record (Unpublished, rating: null, reviewsCount: 0, no fake pillars)
-    await this.saveTutor({
-      id: cleanSlug,
-      isNew: true,
-      name: app.fullName,
-      honorific: 'أ.',
-      headline: app.academicDegree || 'معلم في منصة شاطر',
-      avatarUrl: '',
-      yearsOfExperience: parseExpYears(app.experienceYears),
-      experienceBadgeText: app.experienceYears,
-      verifiedCredentials: false, // Rule 1: No auto verified_credentials
-      helpChildQuote: app.bioAndMethodology,
-      helpChildSummary: app.bioAndMethodology,
-      targetStudentCases: [], // Rule 2: No fake student cases
-      curriculumTags: [], // Rule 2: No fake curriculum tags
-      isPublished: false, // Rule 6: Strictly unpublished upon approval
-      hourlyRateMin: app.suggestedHourlyRateNum || 120,
-      hourlyRateMax: app.suggestedHourlyRateNum || 120,
-      currency: app.currency || 'ج.م',
-      sessionDurationMinutes: app.sessionDurationMinutes || 50,
-      trialDurationMinutes: 20,
-      qualifications: app.academicDegree ? [{
-        title: app.academicDegree,
-        institution: app.institution?.trim() || '', // Rule 1: No fake "جامعة معتمدة" or "غير محدد"
-        verified: false, // Rule 1: No auto verified qualification
-        notes: 'تم تسجيله عبر طلب الانضمام ويحتاج مراجعة الشهادة',
-        displayOrder: 1,
-      }] : [],
-      methodologyPillars: [], // Rule 2: Leave empty for admin review; no fake pillars
-      trialSteps: [], // Rule 2: Leave empty for admin review; no fake trial steps
-      schoolOfferingOptionIds: app.schoolCourseOptionIds || [],
-      quranOfferings: app.quranOfferings || [],
-      privateInfo: {
-        fullLegalName: app.fullName,
-        countryCode: app.countryCode,
-        phoneNumber: app.phone,
-        whatsappNumber: app.whatsappNumber || app.phone,
-        email: app.email,
-        internalNotes: adminNotes?.trim() || undefined,
-      },
-    }, true);
-
-    // Update application record status
-    const { data: { user } } = await supabase.auth.getUser();
-    await supabase
-      .from('tutor_applications')
-      .update({
-        status: 'approved',
-        applicant_tutor_id: cleanSlug,
-        admin_notes: adminNotes?.trim() || app.adminNotes,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: user?.id || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', applicationId);
-
-    return { tutorId: cleanSlug };
+    throw new Error('تعذر تأكيد اعتماد الطلب من الخادم.');
   },
 
   /**

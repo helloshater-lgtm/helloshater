@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { TutorApplicationRecord, TutorApplicationStatus } from '../../types';
+import { TutorApplicationRecord } from '../../types';
 import { AdminService } from '../../services/adminService';
+import {
+  resolveTutorApplicationStatus,
+  resolveExplicitSubjectId,
+} from '../../utils/formatters';
 import {
   ArrowRight,
   User,
-  Phone,
-  Mail,
   GraduationCap,
   BookOpen,
   Calendar,
   Clock,
   DollarSign,
-  ShieldCheck,
   AlertCircle,
   CheckCircle2,
   XCircle,
@@ -22,9 +23,52 @@ import {
   Check,
   Send,
   Camera,
-  Image as ImageIcon,
   Info,
+  RefreshCw,
 } from 'lucide-react';
+
+const SUBJECT_ARABIC_LABELS: Record<string, string> = {
+  math: 'الرياضيات',
+  math_en: 'Math',
+  science: 'العلوم',
+  science_en: 'Science',
+  physics: 'الفيزياء',
+  physics_en: 'Physics',
+  chemistry: 'الكيمياء',
+  chemistry_en: 'Chemistry',
+  biology: 'الأحياء',
+  biology_en: 'Biology',
+  arabic: 'اللغة العربية',
+  english: 'اللغة الإنجليزية',
+  social: 'الدراسات الاجتماعية',
+};
+
+const STAGE_ARABIC_LABELS: Record<string, string> = {
+  elementary: 'المرحلة الابتدائية',
+  preparatory: 'المرحلة الإعدادية',
+  secondary: 'المرحلة الثانوية',
+};
+
+const CURRICULUM_ARABIC_LABELS: Record<string, string> = {
+  national_arabic: 'عربي (حكومي / أهلي)',
+  languages_experimental: 'لغات / تجريبي (Languages)',
+  international: 'مناهج دولية (IGCSE / SAT)',
+};
+
+const GRADE_ARABIC_LABELS: Record<string, string> = {
+  elem_1: 'أولى ابتدائي',
+  elem_2: 'ثانية ابتدائي',
+  elem_3: 'ثالثة ابتدائي',
+  elem_4: 'رابعة ابتدائي',
+  elem_5: 'خامسة ابتدائي',
+  elem_6: 'سادسة ابتدائي',
+  prep_1: 'أولى إعدادي',
+  prep_2: 'ثانية إعدادي',
+  prep_3: 'ثالثة إعدادي',
+  sec_1: 'أولى ثانوي',
+  sec_2: 'ثانية ثانوي',
+  sec_3: 'ثالثة ثانوي',
+};
 
 interface AdminApplicationDetailViewProps {
   applicationId: string;
@@ -44,6 +88,11 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
 
   // Associated Tutor Status (if approved)
   const [tutorStatus, setTutorStatus] = useState<{ isPublished: boolean; avatarUrl: string | null } | null>(null);
+  const [offeringsSummary, setOfferingsSummary] = useState<{
+    schoolOfferingsCount: number;
+    quranOfferingsCount: number;
+  } | null>(null);
+  const [isSyncingOfferings, setIsSyncingOfferings] = useState(false);
   const [isPublishingWithAvatar, setIsPublishingWithAvatar] = useState(false);
 
   // Decision state
@@ -73,16 +122,43 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
         // Auto-generate suggested slug
         setTutorSlug(`tutor-${Math.floor(1000 + Math.random() * 9000)}`);
 
-        // Check associated tutor publication state if approved
+        // Check associated tutor publication state & synced offerings if approved
         if (data.status === 'approved' && data.applicantTutorId) {
           try {
-            const status = await AdminService.getTutorPublicationStatus(data.applicantTutorId);
+            const [status, initialSummary] = await Promise.all([
+              AdminService.getTutorPublicationStatus(data.applicantTutorId),
+              AdminService.getTutorOfferingsSummary(data.applicantTutorId),
+            ]);
             setTutorStatus(status);
+
+            // Auto-heal if approved tutor has 0 synced offerings despite having specializations in application
+            const hasSchoolSpecs =
+              data.track === 'school' &&
+              Array.isArray(data.schoolSpecializations) &&
+              data.schoolSpecializations.length > 0;
+            const hasQuranSpecs =
+              data.track === 'quran' &&
+              ((Array.isArray(data.quranOfferings) && data.quranOfferings.length > 0) ||
+                (Array.isArray(data.quranAgeGroups) && data.quranAgeGroups.length > 0));
+
+            if (
+              (hasSchoolSpecs && initialSummary.schoolOfferingsCount === 0) ||
+              (hasQuranSpecs && initialSummary.quranOfferingsCount === 0)
+            ) {
+              const repairedSummary = await AdminService.syncApplicationOfferingsToTutor(
+                data.id,
+                data.applicantTutorId
+              ).catch(() => initialSummary);
+              setOfferingsSummary(repairedSummary);
+            } else {
+              setOfferingsSummary(initialSummary);
+            }
           } catch (tutorErr) {
             console.warn('Could not load tutor publication status:', tutorErr);
           }
         } else {
           setTutorStatus(null);
+          setOfferingsSummary(null);
         }
       }
     } catch (err: any) {
@@ -96,8 +172,43 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
     loadApplication();
   }, [applicationId]);
 
+  const handleResyncOfferings = async () => {
+    if (!application?.applicantTutorId) return;
+    setIsSyncingOfferings(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const summary = await AdminService.syncApplicationOfferingsToTutor(
+        application.id,
+        application.applicantTutorId
+      );
+      setOfferingsSummary(summary);
+      const count =
+        application.track === 'school' ? summary.schoolOfferingsCount : summary.quranOfferingsCount;
+      setSuccessMessage(
+        `تمت مزامنة تخصصات الطلب بنجاح مع ملف المعلم (${count} تركيبة تدريسية مفعلة).`
+      );
+      await loadApplication();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'تعذر مزامنة تخصصات المعلم.');
+    } finally {
+      setIsSyncingOfferings(false);
+    }
+  };
+
   // Handle Review (needs_info or reject)
   const handleReviewAction = async (targetStatus: 'needs_info' | 'rejected') => {
+    if (!application) return;
+    const currentStatusInfo = resolveTutorApplicationStatus(application.status);
+    if (!currentStatusInfo.isReviewableByAdmin) {
+      setErrorMessage(
+        currentStatusInfo.canonicalKey === 'draft'
+          ? 'لا يمكن مراجعة أو رفض هذا الطلب لأنه ما زال «مسودة» لدى المعلم ولم يُرسل للمراجعة بعد.'
+          : `حالة الطلب الحالية (${currentStatusInfo.detailBadgeLabel}) لا تسمح بالمراجعة.`
+      );
+      return;
+    }
+
     if (!decisionNotes.trim()) {
       setErrorMessage('يرجى تدوين الملاحظات والتوجيهات للمعلم قبل إرسال القرار.');
       return;
@@ -126,6 +237,17 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
 
   // Handle Approve (Creates draft tutor record without copying avatar to public bucket)
   const handleApproveAction = async () => {
+    if (!application) return;
+    const currentStatusInfo = resolveTutorApplicationStatus(application.status);
+    if (!currentStatusInfo.isReviewableByAdmin) {
+      setErrorMessage(
+        currentStatusInfo.canonicalKey === 'draft'
+          ? 'لا يمكن قبول واعتماد هذا الطلب لأنه ما زال «مسودة» لدى المعلم ولم يُرسل للمراجعة بعد.'
+          : `حالة الطلب الحالية (${currentStatusInfo.detailBadgeLabel}) لا تسمح بالقبول.`
+      );
+      return;
+    }
+
     if (!tutorSlug.trim() || !/^[a-z0-9-]+$/.test(tutorSlug.trim())) {
       setErrorMessage('يرجى إدخال معرف صالح للمعلم (Slug) بالإنجليزية والأرقام والشرطات فقط.');
       return;
@@ -143,7 +265,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
       );
 
       setSuccessMessage(
-        `تم قبول الطلب واعتماد المعلم بنجاح! تم إنشاء ملف المعلم (${result.tutorId}) بحالة "غير منشور". تظل الصورة الشخصية محفوظة في الدلو الخاص لمعاينة الإدارة، ولن يتم نقلها للدلو العام إلا عند قرار النشر الصريح.`
+        `تم قبول الطلب واعتماد المعلم بنجاح! تم إنشاء ملف المعلم (${result.tutorId}) بحالة "غير منشور" ومزامنة التخصصات المعتمدة. تظل الصورة الشخصية محفوظة في الدلو الخاص لمعاينة الإدارة، ولن يتم نقلها للدلو العام إلا عند قرار النشر الصريح.`
       );
       setActionType('idle');
       await loadApplication();
@@ -209,7 +331,8 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
   }
 
   const cleanPhone = application.countryCode.replace(/\+/g, '') + application.phone.replace(/^0+/, '');
-  const isApproved = application.status === 'approved';
+  const statusInfo = resolveTutorApplicationStatus(application.status);
+  const isApproved = statusInfo.canonicalKey === 'approved';
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto" dir="rtl">
@@ -225,31 +348,34 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
             <ArrowRight className="w-4 h-4" />
           </button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44]">
-                طلب انضمام: {application.fullName}
+                طلب انضمام: {application.fullName || 'بدون اسم بعد (مسودة)'}
               </h2>
               <span className="text-xs font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded" dir="ltr">
-                {application.referenceCode}
+                {application.referenceCode || 'بدون رقم مرجع'}
               </span>
             </div>
             <p className="text-xs text-[#64748B] mt-0.5">
-              تاريخ التقديم: {new Date(application.createdAt).toLocaleString('ar-EG')}
+              تاريخ الإنشاء: {new Date(application.createdAt).toLocaleString('ar-EG')} · آخر تحديث:{' '}
+              {new Date(application.updatedAt).toLocaleString('ar-EG')}
             </p>
           </div>
         </div>
 
         {/* WhatsApp & Quick Actions */}
         <div className="flex items-center gap-2 shrink-0">
-          <a
-            href={`https://wa.me/${cleanPhone}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-all flex items-center gap-1.5 border border-emerald-200"
-          >
-            <MessageCircle className="w-4 h-4 text-emerald-600" />
-            <span>مراسلة المعلم عبر الواتساب</span>
-          </a>
+          {application.phone && (
+            <a
+              href={`https://wa.me/${cleanPhone}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-all flex items-center gap-1.5 border border-emerald-200"
+            >
+              <MessageCircle className="w-4 h-4 text-emerald-600" />
+              <span>مراسلة المعلم عبر الواتساب</span>
+            </a>
+          )}
 
           {isApproved && application.applicantTutorId && onNavigateToTutorEdit && (
             <button
@@ -281,37 +407,26 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
 
       {/* Status & Decision Banner */}
       <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-bold text-[#64748B]">الحالة الحالية:</span>
             <span
-              className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${
-                application.status === 'approved'
-                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  : application.status === 'needs_info'
-                  ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                  : application.status === 'rejected'
-                  ? 'bg-rose-50 text-rose-800 border border-rose-200'
-                  : 'bg-blue-50 text-[#0D4E8B] border border-blue-200'
-              }`}
+              className={`px-3 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${statusInfo.badgeClassName}`}
             >
-              {application.status === 'approved' && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-              {application.status === 'needs_info' && <AlertCircle className="w-4 h-4 text-amber-600" />}
-              {application.status === 'rejected' && <XCircle className="w-4 h-4 text-rose-600" />}
-              {application.status === 'submitted' && <Clock className="w-4 h-4 text-[#0D4E8B]" />}
-              {application.status === 'approved'
-                ? 'مقبول وتم إنشاء الملف'
-                : application.status === 'needs_info'
-                ? 'مطلوب استكمال بيانات من المعلم'
-                : application.status === 'rejected'
-                ? 'مرفوض'
-                : 'قيد المراجعة الإدارية'}
+              {statusInfo.canonicalKey === 'approved' && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+              {statusInfo.canonicalKey === 'needs_info' && <AlertCircle className="w-4 h-4 text-amber-600" />}
+              {statusInfo.canonicalKey === 'rejected' && <XCircle className="w-4 h-4 text-rose-600" />}
+              {statusInfo.canonicalKey === 'submitted' && <Clock className="w-4 h-4 text-[#0D4E8B]" />}
+              {(statusInfo.canonicalKey === 'draft' || statusInfo.canonicalKey === 'unknown') && (
+                <FileText className="w-4 h-4 text-slate-600" />
+              )}
+              <span>{statusInfo.detailBadgeLabel}</span>
             </span>
           </div>
 
-          {/* Action Trigger Buttons */}
-          {(application.status === 'submitted' || application.status === 'needs_info') && (
-            <div className="flex items-center gap-2">
+          {/* Action Trigger Buttons - Strictly shown ONLY for reviewable statuses (submitted / needs_info) */}
+          {statusInfo.isReviewableByAdmin && (
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setActionType('needs_info')}
@@ -337,7 +452,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
           )}
 
           {/* Approved tutor publication status & explicit action */}
-          {application.status === 'approved' && application.applicantTutorId && (
+          {isApproved && application.applicantTutorId && (
             <div className="flex flex-wrap items-center gap-2">
               {tutorStatus && (
                 <span
@@ -390,6 +505,31 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
           )}
         </div>
 
+        {/* Explicit Draft Warning Banner so Admin knows why review actions are hidden */}
+        {statusInfo.canonicalKey === 'draft' && (
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 flex items-start gap-2.5">
+            <Info className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+            <div className="space-y-1 leading-relaxed">
+              <strong className="block text-[#1F2A44]">
+                هذا الطلب محفوظ كمسودة (Draft) ولم يُرسل للمراجعة الإدارية بعد
+              </strong>
+              <p>
+                بدأ المتقدم في تعبئة بياناته أو رفع صورته الشخصية وحُفظ السجل كمسودة تلقائياً، لكنه لم يضغط بعد على زر «إرسال الطلب للمراجعة والاعتماد» النهائي. لذلك تظل أزرار القبول والرفض غير مفعلة حتى يُكمل المعلم إرسال طلبه رسمياً.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {statusInfo.canonicalKey === 'unknown' && (
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <strong className="block">حالة طلب غير معروفة ({String(application.status)})</strong>
+              <span>لا يمكن تنفيذ إجراءات المراجعة حتى يتم التحقق من حالة السجل في قاعدة البيانات.</span>
+            </div>
+          </div>
+        )}
+
         {/* Existing Admin Notes if present */}
         {application.adminNotes && (
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
@@ -399,7 +539,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
         )}
 
         {/* Inline Decision Form */}
-        {actionType !== 'idle' && (
+        {statusInfo.isReviewableByAdmin && actionType !== 'idle' && (
           <div className="p-4 rounded-xl bg-[#F8F9FC] border border-[#CBD5E1] space-y-3 animate-fade-in">
             <h4 className="font-['Cairo'] text-sm font-bold text-[#1F2A44] flex items-center gap-1.5">
               {actionType === 'approve' && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
@@ -622,10 +762,41 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
 
         {/* Section 3: Specializations & Materials */}
         <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] space-y-4 md:col-span-2">
-          <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44] pb-2 border-b border-[#F1F5F9] flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-[#0D4E8B]" />
-            <span>التخصصات والمواد المختارة</span>
-          </h3>
+          <div className="pb-2 border-b border-[#F1F5F9] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44] flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-[#0D4E8B]" />
+              <span>التخصصات والمواد المختارة</span>
+            </h3>
+
+            {isApproved && application.applicantTutorId && (
+              <div className="flex flex-wrap items-center gap-2">
+                {offeringsSummary && (
+                  <span
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${
+                      (application.track === 'school'
+                        ? offeringsSummary.schoolOfferingsCount
+                        : offeringsSummary.quranOfferingsCount) > 0
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}
+                  >
+                    {application.track === 'school'
+                      ? `التركيبات المدرسية المربوطة بملف المعلم: ${offeringsSummary.schoolOfferingsCount}`
+                      : `برامج القرآن المربوطة بملف المعلم: ${offeringsSummary.quranOfferingsCount}`}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleResyncOfferings}
+                  disabled={isSyncingOfferings}
+                  className="px-3 py-1 rounded-lg bg-[#EBF3FC] hover:bg-[#D1DCFE] text-[#0D4E8B] text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isSyncingOfferings ? 'animate-spin' : ''}`} />
+                  <span>مزامنة التخصصات مع ملف المعلم</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {application.track === 'school' ? (
             <div className="space-y-3">
@@ -633,20 +804,46 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
                 <p className="text-xs text-[#94A3B8] italic">لم يتم حفظ تخصصات مفصلة.</p>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {application.schoolSpecializations.map((spec, idx) => (
-                    <div key={spec.id || idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 text-xs space-y-1">
-                      <div className="font-bold text-[#0D4E8B] flex items-center justify-between">
-                        <span>تخصص {idx + 1}: {spec.subjectId}</span>
-                        <span className="text-[11px] text-slate-500 font-normal">({spec.teachingLanguage === 'english' ? 'لغات / English' : 'عربي'})</span>
+                  {application.schoolSpecializations.map((spec: any, idx: number) => {
+                    const resolvedSubj =
+                      resolveExplicitSubjectId(
+                        spec.dbSubjectId || spec.subjectId || '',
+                        spec.teachingLanguage
+                      ) ||
+                      spec.dbSubjectId ||
+                      spec.subjectId ||
+                      '';
+                    const subjectLabel =
+                      SUBJECT_ARABIC_LABELS[resolvedSubj] || spec.subjectId || resolvedSubj;
+                    const currLabel =
+                      CURRICULUM_ARABIC_LABELS[spec.curriculumType] || spec.curriculumType;
+                    const stageLabel = STAGE_ARABIC_LABELS[spec.stageId] || spec.stageId;
+                    const gradeLabels = Array.isArray(spec.gradeIds)
+                      ? spec.gradeIds.map((gid: string) => GRADE_ARABIC_LABELS[gid] || gid).join('، ')
+                      : 'جميع الصفوف';
+
+                    return (
+                      <div key={spec.id || idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 text-xs space-y-1">
+                        <div className="font-bold text-[#0D4E8B] flex items-center justify-between gap-2">
+                          <span>
+                            تخصص {idx + 1}: {subjectLabel}
+                          </span>
+                          <span className="text-[11px] text-slate-600 font-normal bg-white px-2 py-0.5 rounded border border-slate-200">
+                            {spec.teachingLanguage === 'english' || String(spec.formSubjectId || spec.subjectId).endsWith('_en')
+                              ? 'لغات / English'
+                              : 'عربي'}
+                          </span>
+                        </div>
+                        <div className="text-[#64748B]">
+                          المنهج: <span className="text-[#1F2A44] font-medium">{currLabel}</span> · المرحلة:{' '}
+                          <span className="text-[#1F2A44] font-medium">{stageLabel}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-600 pt-1">
+                          الصفوف: <span className="font-medium text-[#1F2A44]">{gradeLabels || 'جميع الصفوف'}</span>
+                        </div>
                       </div>
-                      <div className="text-[#64748B]">
-                        المنهج: <span className="text-[#1F2A44] font-medium">{spec.curriculumType}</span> · المرحلة: <span className="text-[#1F2A44] font-medium">{spec.stageId}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-600 pt-1">
-                        الصفوف: {spec.gradeIds?.join('، ') || 'جميع الصفوف'}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -692,7 +889,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
             <span>نبذة أسلوب التدريس وتبسيط المعلومة</span>
           </h3>
           <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line bg-[#F8F9FC] p-4 rounded-xl border border-slate-200">
-            {application.bioAndMethodology}
+            {application.bioAndMethodology || 'لم تُكتب النبذة بعد (مسودة)'}
           </p>
         </div>
 
@@ -748,13 +945,24 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
               </div>
             </div>
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-emerald-700 font-bold flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" />
-                <span>تمت الموافقة على وثيقة التعاون ({application.policyVersion || 'v1.0'})</span>
-              </span>
-              <span className="text-slate-400">
-                {application.policyAcceptedAt ? new Date(application.policyAcceptedAt).toLocaleDateString('ar-EG') : ''}
-              </span>
+              {application.termsAccepted ? (
+                <>
+                  <span className="text-emerald-700 font-bold flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" />
+                    <span>تمت الموافقة على وثيقة التعاون ({application.policyVersion || 'v1.0'})</span>
+                  </span>
+                  <span className="text-slate-400">
+                    {application.policyAcceptedAt
+                      ? new Date(application.policyAcceptedAt).toLocaleDateString('ar-EG')
+                      : ''}
+                  </span>
+                </>
+              ) : (
+                <span className="text-amber-700 font-bold flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>لم تتم الموافقة النهائية على وثيقة التعاون بعد (مسودة)</span>
+                </span>
+              )}
             </div>
           </div>
         </div>

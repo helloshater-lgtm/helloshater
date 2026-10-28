@@ -5,9 +5,18 @@ import {
   TutorApplicationStatus,
 } from '../types';
 import { TutorPortalService } from './tutorPortalService';
+import {
+  resolveExplicitSubjectId,
+  ENGLISH_TAUGHT_SUBJECT_IDS,
+} from '../utils/formatters';
 
 export const TUTOR_POLICY_VERSION = 'v1.0';
 export const TUTOR_STATE_CHANGED_EVENT = 'shatir:tutor-state-changed';
+
+// Track active submission per user to block delayed/concurrent draft saves on the client side
+// in addition to the authoritative server-side transaction lock in public.tutor_save_application.
+const activeSubmitUsers = new Set<string>();
+const lockedSubmittedUsers = new Set<string>();
 
 export type TutorAccountNavStatus =
   | 'loading'
@@ -201,8 +210,9 @@ export const TutorApplicationService = {
 
   /**
    * 7. Save Application (Draft or Final Submission)
-   * Strictly uses secure RPC `tutor_save_application` to enforce auth.uid()
-   * and prevent any modifications to administrative columns.
+   * Strictly uses secure RPC `tutor_save_application` to enforce auth.uid(),
+   * transaction-level locking, and reference specialization validation.
+   * No direct table writes are used as fallback.
    */
   async saveApplication(
     formData: TutorApplicationFormData,
@@ -215,138 +225,242 @@ export const TutorApplicationService = {
       throw new Error('يجب تسجيل الدخول بحساب المعلم أولاً لحفظ الطلب أو إرساله.');
     }
 
-    const payload: any = {
-      fullName: formData.fullName.trim(),
-      countryCode: formData.countryCode,
-      phone: formData.phone.trim(),
-      whatsappNumber: formData.phone.trim(),
-      email: user.email || formData.fullName,
-      track: formData.track,
-      schoolSpecializations: formData.schoolSpecializations || [],
-      schoolCourseOptionIds: formData.schoolCourseOptionIds || [],
-      quranOfferings: formData.quranOfferings || [],
-      quranAgeGroups: formData.quranAgeGroups || [],
-      quranLevels: formData.quranLevels || [],
-      quranNotes: formData.quranNotes?.trim() || null,
-      academicDegree: formData.academicDegree.trim(),
-      institution: formData.institution?.trim() || null,
-      experienceYears: formData.experienceYears,
-      hasOnlineExperience: formData.hasOnlineExperience || '',
-      onlineExperienceDetails: formData.onlineExperienceDetails.trim() || null,
-      bioAndMethodology: formData.bioAndMethodology.trim(),
-      portfolioUrl: formData.portfolioUrl.trim() || null,
-      avatarPath: formData.avatarPath || null,
-      removeAvatar: removeAvatar,
-      suggestedHourlyRate: Number(formData.suggestedHourlyRate) || 120,
-      currency: formData.currency || 'ج.م',
-      sessionDurationMinutes: formData.sessionDurationMinutes || 50,
-      availableDays: formData.availableDays || [],
-      preferredTimes: formData.preferredTimes || [],
-      timezone: formData.timezone || 'Africa/Cairo',
-      termsAccepted: formData.termsAccepted,
-    };
+    const userId = String(user.id);
 
-    // 1. Invoke secure RPC
-    const { data: rpcData, error: rpcError } = await supabase.rpc(
-      'tutor_save_application',
-      {
-        p_payload: payload,
-        p_is_submit: isSubmit,
-      }
-    );
-
-    if (!rpcError && rpcData) {
-      const record = this.mapDatabaseRowToRecord(rpcData);
-      notifyTutorStateChanged();
-      return record;
+    // Block delayed draft saves if final submission is already in flight or completed
+    if (!isSubmit && (activeSubmitUsers.has(userId) || lockedSubmittedUsers.has(userId))) {
+      throw new Error('الطلب مُرسل للمراجعة بالفعل ولا يمكن إعادته إلى مسودة أو تعديل بياناته أثناء المراجعة.');
     }
 
-    // 2. If RPC is not yet executed in DB, provide resilient fallback
-    if (rpcError && (rpcError.message.includes('function') || rpcError.code === '42883')) {
-      console.warn('RPC tutor_save_application not found, using direct table fallback:', rpcError.message);
-      const targetStatus: TutorApplicationStatus = isSubmit ? 'submitted' : 'draft';
-      const refCode = `SH-${Math.floor(100000 + Math.random() * 900000)}`;
+    if (isSubmit) {
+      activeSubmitUsers.add(userId);
+    }
 
-      const dbPayload: any = {
-        user_id: user.id,
-        full_name: payload.fullName,
-        country_code: payload.countryCode,
-        phone: payload.phone,
-        whatsapp_number: payload.whatsappNumber,
-        email: payload.email,
-        track: payload.track,
-        school_specializations: payload.schoolSpecializations,
-        quran_age_groups: payload.quranAgeGroups,
-        quran_levels: payload.quranLevels,
-        quran_notes: payload.quranNotes,
-        academic_degree: payload.academicDegree,
-        institution: payload.institution,
-        experience_years: payload.experienceYears,
-        has_online_experience: payload.hasOnlineExperience,
-        online_experience_details: payload.onlineExperienceDetails,
-        bio_and_methodology: payload.bioAndMethodology,
-        portfolio_url: payload.portfolioUrl,
-        avatar_path: payload.avatarPath || null,
-        suggested_hourly_rate: payload.suggestedHourlyRate,
-        currency: payload.currency,
-        session_duration_minutes: payload.sessionDurationMinutes,
-        available_days: payload.availableDays,
-        preferred_times: payload.preferredTimes,
-        timezone: payload.timezone,
-        terms_accepted: payload.termsAccepted,
-        policy_version: TUTOR_POLICY_VERSION,
-        policy_accepted_at: payload.termsAccepted ? new Date().toISOString() : null,
-        status: targetStatus,
-        updated_at: new Date().toISOString(),
+    try {
+      const rawSpecs = Array.isArray(formData.schoolSpecializations)
+        ? formData.schoolSpecializations
+        : [];
+
+      const normalizedSpecs = rawSpecs.map((spec) => {
+        if (!spec || typeof spec !== 'object') return spec;
+        const rawSubjKey = String(spec.subjectId ?? '').trim();
+        const rawLang = String(spec.teachingLanguage ?? '').trim();
+        const inferredLang =
+          rawLang === 'english' || rawLang === 'arabic'
+            ? rawLang
+            : ENGLISH_TAUGHT_SUBJECT_IDS.has(rawSubjKey)
+            ? 'english'
+            : ARABIC_TAUGHT_SUBJECT_IDS.has(rawSubjKey)
+            ? 'arabic'
+            : rawLang;
+        // Explicit subject resolution: maps 'math_ar' -> 'math' ONLY when Arabic,
+        // and NEVER merges 'math_en' (Math) into 'math' (الرياضيات), while preserving empty/unmatched values as-is
+        const explicitSubjectId = rawSubjKey
+          ? resolveExplicitSubjectId(rawSubjKey, inferredLang)
+          : '';
+
+        return {
+          ...spec,
+          subjectId: explicitSubjectId,
+          teachingLanguage: inferredLang,
+        };
+      });
+
+      const explicitQuranOfferings =
+        Array.isArray(formData.quranOfferings) && formData.quranOfferings.length > 0
+          ? formData.quranOfferings
+          : (formData.quranAgeGroups || []).flatMap((ageGroupId) =>
+              (formData.quranLevels || []).map((levelId) => ({ ageGroupId, levelId }))
+            );
+
+      const normalizeDigits = (val: unknown): string => {
+        const arabicIndic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+        let str = String(val ?? '').trim();
+        for (let i = 0; i < 10; i++) {
+          str = str.replaceAll(arabicIndic[i], String(i));
+        }
+        return str;
       };
 
-      const { data: existing } = await supabase
-        .from('tutor_applications')
-        .select('id')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      let resultData: any = null;
-      if (existing) {
-        const { data, error } = await supabase
-          .from('tutor_applications')
-          .update(dbPayload)
-          .eq('id', existing.id)
-          .eq('user_id', user.id)
-          .select()
-          .single();
-        if (error) throw new Error(`تعذر تحديث الطلب: ${error.message}`);
-        resultData = data;
-      } else {
-        dbPayload.reference_code = refCode;
-        const { data, error } = await supabase
-          .from('tutor_applications')
-          .insert([dbPayload])
-          .select()
-          .single();
-        if (error) throw new Error(`تعذر حفظ الطلب: ${error.message}`);
-        resultData = data;
+      const hasRateKey =
+        Object.prototype.hasOwnProperty.call(formData, 'suggestedHourlyRate') &&
+        formData.suggestedHourlyRate !== undefined;
+      let validatedRate: number | null | undefined = undefined;
+      if (hasRateKey) {
+        const rawRate = formData.suggestedHourlyRate as unknown;
+        const rateStr = normalizeDigits(rawRate);
+        if (rawRate === null || rateStr === '') {
+          if (isSubmit) {
+            throw new Error('قيمة سعر الحصة المقترح مطلوبة ولا يمكن أن تكون فارغة عند إرسال الطلب للمراجعة.');
+          }
+          validatedRate = null;
+        } else {
+          if (!/^-?[0-9]+(\.[0-9]+)?$/.test(rateStr)) {
+            throw new Error('قيمة سعر الحصة المقترح غير صالحة: يجب إدخال رقم صحيح أكبر من الصفر.');
+          }
+          const parsedRate = Number(rateStr);
+          if (!Number.isFinite(parsedRate) || parsedRate <= 0 || parsedRate > 100000) {
+            throw new Error('قيمة سعر الحصة المقترح غير صالحة: يجب أن تكون أكبر من 0 وأقل من أو تساوي 100000.');
+          }
+          validatedRate = Math.round(parsedRate);
+        }
+      } else if (isSubmit) {
+        throw new Error('قيمة سعر الحصة المقترح مطلوبة ولا يمكن إغفالها عند إرسال الطلب للمراجعة.');
       }
 
-      const record = this.mapDatabaseRowToRecord(resultData);
+      const hasDurationKey =
+        Object.prototype.hasOwnProperty.call(formData, 'sessionDurationMinutes') &&
+        formData.sessionDurationMinutes !== undefined;
+      let validatedDuration: number | null | undefined = undefined;
+      if (hasDurationKey) {
+        const rawDuration = formData.sessionDurationMinutes as unknown;
+        const durationStr = normalizeDigits(rawDuration);
+        if (rawDuration === null || durationStr === '') {
+          if (isSubmit) {
+            throw new Error('مدة الحصة بالدقائق مطلوبة ويجب أن تكون بين 15 و 180 دقيقة.');
+          }
+          validatedDuration = null;
+        } else {
+          if (!/^-?[0-9]+$/.test(durationStr)) {
+            throw new Error('مدة الحصة بالدقائق غير صالحة: يجب إدخال رقم صحيح بين 15 و 180 دقيقة.');
+          }
+          const parsedDuration = parseInt(durationStr, 10);
+          if (!Number.isFinite(parsedDuration) || parsedDuration < 15 || parsedDuration > 180) {
+            throw new Error('مدة الحصة بالدقائق غير صالحة: يجب أن تكون بين 15 و 180 دقيقة.');
+          }
+          validatedDuration = parsedDuration;
+        }
+      }
+
+      const payload: any = {
+        fullName: (formData.fullName ?? '').trim(),
+        countryCode: formData.countryCode,
+        phone: (formData.phone ?? '').trim(),
+        whatsappNumber: (formData.phone ?? '').trim(),
+        email: user.email || formData.fullName,
+        track: formData.track,
+        schoolSpecializations: normalizedSpecs,
+        schoolCourseOptionIds: formData.schoolCourseOptionIds || [],
+        quranOfferings: explicitQuranOfferings,
+        quranAgeGroups: formData.quranAgeGroups || [],
+        quranLevels: formData.quranLevels || [],
+        quranNotes: formData.quranNotes?.trim() || null,
+        academicDegree: (formData.academicDegree ?? '').trim(),
+        institution: formData.institution?.trim() || null,
+        experienceYears: formData.experienceYears,
+        hasOnlineExperience: formData.hasOnlineExperience || '',
+        onlineExperienceDetails: (formData.onlineExperienceDetails ?? '').trim() || null,
+        bioAndMethodology: (formData.bioAndMethodology ?? '').trim(),
+        portfolioUrl: (formData.portfolioUrl ?? '').trim() || null,
+        avatarPath: formData.avatarPath || null,
+        removeAvatar: removeAvatar,
+        currency: formData.currency || 'ج.م',
+        availableDays: formData.availableDays || [],
+        preferredTimes: formData.preferredTimes || [],
+        timezone: formData.timezone || 'Africa/Cairo',
+        termsAccepted: Boolean(formData.termsAccepted),
+        termsPolicyVersion: formData.termsPolicyVersion || TUTOR_POLICY_VERSION,
+      };
+
+      if (hasRateKey) {
+        payload.suggestedHourlyRate = validatedRate;
+      }
+      if (hasDurationKey) {
+        payload.sessionDurationMinutes = validatedDuration;
+      }
+
+      // Invoke secure RPC exclusively (no direct table fallback)
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        'tutor_save_application',
+        {
+          p_payload: payload,
+          p_is_submit: isSubmit,
+        }
+      );
+
+      if (rpcError) {
+        throw new Error(rpcError.message || 'تعذر حفظ بيانات الطلب في الخادم.');
+      }
+
+      const rawRow = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+      if (!rawRow || !rawRow.id) {
+        throw new Error('لم تُرجع قاعدة البيانات معرف الطلب بعد الحفظ. يرجى المحاولة مرة أخرى.');
+      }
+
+      const record = this.mapDatabaseRowToRecord(rawRow);
+
+      // Strict verification for final submission
+      if (isSubmit) {
+        if (record.status !== 'submitted') {
+          throw new Error(
+            `لم يتم تأكيد انتقال حالة الطلب إلى «مُرسل للمراجعة» (الحالة المستلمة: ${record.status}). يرجى التحقق من البيانات والمحاولة مرة أخرى.`
+          );
+        }
+        if (!record.referenceCode) {
+          throw new Error('لم يتم إصدار رقم مرجع للطلب من الخادم. يرجى المحاولة مرة أخرى.');
+        }
+        lockedSubmittedUsers.add(userId);
+      } else if (record.status === 'draft' || record.status === 'needs_info') {
+        lockedSubmittedUsers.delete(userId);
+      }
+
       notifyTutorStateChanged();
       return record;
+    } finally {
+      if (isSubmit) {
+        activeSubmitUsers.delete(userId);
+      }
     }
-
-    throw new Error(rpcError?.message || 'تعذر حفظ بيانات الطلب.');
   },
 
   /**
    * Helper: map DB row to frontend record
    */
   mapDatabaseRowToRecord(row: any): TutorApplicationRecord {
-    // Normalize status
+    // Normalize status without coercing unknown statuses to 'submitted'
     let status: TutorApplicationStatus = 'draft';
     if (['draft', 'submitted', 'needs_info', 'approved', 'rejected'].includes(row.status)) {
       status = row.status as TutorApplicationStatus;
     } else if (row.status === 'pending_review' || row.status === 'interview_scheduled') {
       status = 'submitted';
+    } else if (row.status) {
+      status = row.status as TutorApplicationStatus;
     }
+
+    if (row.user_id) {
+      if (status === 'submitted' || status === 'approved' || status === 'rejected') {
+        lockedSubmittedUsers.add(String(row.user_id));
+      } else {
+        lockedSubmittedUsers.delete(String(row.user_id));
+      }
+    }
+
+    // Preserve exact specialization selections (including incomplete or unmatched draft items) without coercing defaults
+    const rawSpecs = Array.isArray(row.school_specializations) ? row.school_specializations : [];
+    const mappedSpecs = rawSpecs.map((sp: any, idx: number) => {
+      if (!sp || typeof sp !== 'object') return sp;
+      const rawSubj = String(sp?.subjectId ?? '').trim();
+      const rawLang = String(sp?.teachingLanguage ?? '').trim();
+      const lang =
+        rawLang === 'english' || rawLang === 'arabic'
+          ? rawLang
+          : ENGLISH_TAUGHT_SUBJECT_IDS.has(rawSubj)
+          ? 'english'
+          : ARABIC_TAUGHT_SUBJECT_IDS.has(rawSubj)
+          ? 'arabic'
+          : (rawLang || 'arabic');
+      const resolvedSubj = rawSubj ? resolveExplicitSubjectId(rawSubj, lang) : '';
+
+      return {
+        ...sp,
+        id: sp?.id || `spec_restored_${idx + 1}`,
+        subjectId: resolvedSubj,
+        teachingLanguage: lang as 'arabic' | 'english',
+        curriculumType: sp?.curriculumType ?? sp?.curriculumId ?? '',
+        stageId: sp?.stageId ?? '',
+        gradeIds: Array.isArray(sp?.gradeIds) ? sp.gradeIds : [],
+      };
+    });
 
     return {
       id: row.id,
@@ -358,7 +472,7 @@ export const TutorApplicationService = {
       whatsappNumber: row.whatsapp_number || row.phone || '',
       email: row.email || '',
       track: row.track || 'school',
-      schoolSpecializations: row.school_specializations || [],
+      schoolSpecializations: mappedSpecs,
       schoolCourseOptionIds: row.school_course_option_ids || [],
       quranAgeGroups: row.quran_age_groups || [],
       quranLevels: row.quran_levels || [],
@@ -376,10 +490,13 @@ export const TutorApplicationService = {
       portfolioUrl: row.portfolio_url || '',
       avatarPath: row.avatar_path || null,
       avatarUrl: null, // Populated via signed URL when viewing
-      suggestedHourlyRate: String(row.suggested_hourly_rate || 120),
-      suggestedHourlyRateNum: row.suggested_hourly_rate || 120,
+      suggestedHourlyRate:
+        row.suggested_hourly_rate !== null && row.suggested_hourly_rate !== undefined
+          ? String(row.suggested_hourly_rate)
+          : '120',
+      suggestedHourlyRateNum: Number(row.suggested_hourly_rate ?? 120),
       currency: row.currency || 'ج.م',
-      sessionDurationMinutes: row.session_duration_minutes || 50,
+      sessionDurationMinutes: Number(row.session_duration_minutes ?? 50),
       availableDays: row.available_days || [],
       preferredTimes: row.preferred_times || [],
       timezone: row.timezone || 'Africa/Cairo',
@@ -387,7 +504,7 @@ export const TutorApplicationService = {
       termsAccepted: Boolean(row.terms_accepted),
       termsPolicyVersion: row.policy_version || 'v1.0',
       policyVersion: row.policy_version || 'v1.0',
-      policyAcceptedAt: row.policy_accepted_at || row.created_at,
+      policyAcceptedAt: row.policy_accepted_at || null,
       status,
       adminNotes: row.admin_notes || null,
       reviewedAt: row.reviewed_at || null,
