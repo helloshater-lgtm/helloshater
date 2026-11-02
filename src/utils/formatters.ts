@@ -905,6 +905,7 @@ export interface TutorApplicationStatusDisplayInfo {
   listBadgeLabel: string;
   detailBadgeLabel: string;
   tutorBadgeLabel: string;
+  tutorLabel: string;
   descriptionText: string;
   badgeStyle: string;
   isReviewableByAdmin: boolean;
@@ -922,12 +923,13 @@ export function resolveTutorApplicationStatus(
       return {
         canonicalKey: 'draft',
         rawStatus: clean,
-        listBadgeLabel: 'مسودة',
-        detailBadgeLabel: 'مسودة — لم يُرسل للمراجعة بعد',
-        tutorBadgeLabel: 'مسودة (غير مرسل بعد)',
+        listBadgeLabel: 'لم يكتمل',
+        detailBadgeLabel: 'طلبك لم يُرسل بعد (لم يكتمل)',
+        tutorBadgeLabel: 'طلبك لم يُرسل بعد',
+        tutorLabel: 'طلبك لم يُرسل بعد',
         descriptionText:
-          'هذا الطلب محفوظ كمسودة لدى المعلم ولم يتم إرساله للمراجعة بعد. لا يمكن اتخاذ قرار إداري بالقبول أو الرفض قبل أن يُكمل المعلم إرسال الطلب وموافقته على السياسة.',
-        badgeStyle: 'bg-slate-100 text-slate-700 border border-slate-300',
+          'بياناتك محفوظة، لكن الإدارة لن تراجع طلبك إلا بعد الضغط على إرسال الطلب.',
+        badgeStyle: 'bg-amber-50 text-amber-800 border border-amber-300',
         isReviewableByAdmin: false,
         isEditableByTutor: true,
         isSubmittedOrReviewed: false,
@@ -941,7 +943,8 @@ export function resolveTutorApplicationStatus(
         rawStatus: clean,
         listBadgeLabel: 'قيد المراجعة',
         detailBadgeLabel: 'قيد المراجعة الإدارية',
-        tutorBadgeLabel: 'قيد المراجعة لدى الإدارة',
+        tutorBadgeLabel: 'قيد المراجعة',
+        tutorLabel: 'قيد المراجعة',
         descriptionText:
           'تم إرسال هذا الطلب رسميًا من المعلم وهو جاهز للمراجعة الإدارية واتخاذ قرار (القبول، أو طلب استكمال بيانات، أو الرفض).',
         badgeStyle: 'bg-blue-50 text-[#0D4E8B] border border-blue-200',
@@ -957,6 +960,7 @@ export function resolveTutorApplicationStatus(
         listBadgeLabel: 'مطلوب استكمال بيانات',
         detailBadgeLabel: 'مطلوب استكمال بيانات من المعلم',
         tutorBadgeLabel: 'مطلوب استكمال بيانات',
+        tutorLabel: 'مطلوب استكمال بيانات',
         descriptionText:
           'طلبت الإدارة استكمال أو توضيح بعض البيانات من المعلم. يستطيع المعلم تعديل طلبه وإعادة إرساله، كما يمكن للإدارة تحديث قرارها.',
         badgeStyle: 'bg-amber-50 text-amber-800 border border-amber-200',
@@ -972,6 +976,7 @@ export function resolveTutorApplicationStatus(
         listBadgeLabel: 'مقبول',
         detailBadgeLabel: 'مقبول وتم إنشاء الملف',
         tutorBadgeLabel: 'تم اعتماد وقبول طلبك',
+        tutorLabel: 'تم اعتماد وقبول طلبك',
         descriptionText: 'تم قبول الطلب واعتماد المعلم وإنشاء ملفه التدريسي في المنصة.',
         badgeStyle: 'bg-emerald-50 text-emerald-800 border border-emerald-200',
         isReviewableByAdmin: false,
@@ -986,6 +991,7 @@ export function resolveTutorApplicationStatus(
         listBadgeLabel: 'مرفوض',
         detailBadgeLabel: 'مرفوض',
         tutorBadgeLabel: 'مرفوض',
+        tutorLabel: 'مرفوض',
         descriptionText: 'تم رفض طلب الانضمام بعد المراجعة الإدارية.',
         badgeStyle: 'bg-rose-50 text-rose-800 border border-rose-200',
         isReviewableByAdmin: false,
@@ -1000,6 +1006,7 @@ export function resolveTutorApplicationStatus(
         listBadgeLabel: `حالة غير معروفة (${clean || 'فارغ'})`,
         detailBadgeLabel: `حالة غير معروفة (${clean || 'فارغ'}) — لم يُؤكد الإرسال`,
         tutorBadgeLabel: 'حالة غير معروفة',
+        tutorLabel: 'حالة غير معروفة',
         descriptionText:
           'حالة هذا الطلب غير معروفة في النظام ولا يمكن معاملته كطلب مُرسل للمراجعة قبل التحقق منه.',
         badgeStyle: 'bg-slate-100 text-slate-600 border border-slate-300',
@@ -2028,5 +2035,299 @@ export function getSupportedCatalogForSubject(
     getAllowedGrades,
   };
 }
+
+export interface TutorApplicationMissingFieldItem {
+  key: string;
+  label: string;
+  elementId: string;
+}
+
+export interface TutorApplicationCompletenessResult {
+  completedCount: number;
+  totalCount: number;
+  progressLabelAr: string;
+  isComplete: boolean;
+  missingFields: TutorApplicationMissingFieldItem[];
+}
+
+/**
+ * Evaluates a tutor application (either TutorRegistrationView form state or Admin TutorApplicationRecord)
+ * against the existing validation rules without adding any new required fields.
+ * Returns the 9-point completion count ("أكملت ٦ من ٩") and the list of missing required fields in Arabic.
+ */
+export function evaluateTutorApplicationCompleteness(input: {
+  fullName?: string | null;
+  phone?: string | null;
+  countryCode?: string | null;
+  whatsappPhone?: string | null;
+  track?: 'school' | 'quran' | string | null;
+  schoolSpecializations?: Array<{
+    id?: string;
+    subjectId?: string;
+    stageId?: string;
+    curriculumType?: string;
+    gradeIds?: string[];
+  }> | null;
+  schoolCourseOptionIds?: string[] | null;
+  quranLevels?: string[] | null;
+  quranAgeGroups?: string[] | null;
+  academicDegree?: string | null;
+  experienceYears?: string | null;
+  hasOnlineExperience?: 'yes' | 'no' | boolean | null;
+  onlineExperienceDetails?: string | null;
+  bioAndMethodology?: string | null;
+  suggestedHourlyRate?: string | number | null;
+  sessionDurationMinutes?: string | number | null;
+  availableDays?: string[] | null;
+  preferredTimes?: string[] | null;
+  termsAccepted?: boolean | null;
+  hasSpecializationValidationError?: boolean;
+}): TutorApplicationCompletenessResult {
+  const missingFields: TutorApplicationMissingFieldItem[] = [];
+  let completedCount = 0;
+  const totalCount = 9;
+
+  // 1. الاسم الكامل (ثنائي أو ثلاثي على الأقل)
+  const nameParts = String(input.fullName || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const isNameValid = nameParts.length >= 2 && nameParts.every((part) => part.length >= 2);
+  if (isNameValid) {
+    completedCount += 1;
+  } else {
+    missingFields.push({
+      key: 'fullName',
+      label: 'الاسم الكامل (ثنائي أو ثلاثي)',
+      elementId: 'form-field-fullName',
+    });
+  }
+
+  // 2. رقم واتساب للتواصل
+  let isPhoneValid = false;
+  if (input.phone !== undefined && input.phone !== null) {
+    let digits = String(input.phone)
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+      .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+      .replace(/\D/g, '');
+    const cc = String(input.countryCode || '+20').trim();
+    if (cc === '+20' && digits.startsWith('20') && digits.length > 10) digits = digits.slice(2);
+    if (cc === '+966' && digits.startsWith('966') && digits.length > 9) digits = digits.slice(3);
+    if (cc === '+971' && digits.startsWith('971') && digits.length > 9) digits = digits.slice(3);
+    if (cc === '+965' && digits.startsWith('965') && digits.length > 8) digits = digits.slice(3);
+    if (cc === '+974' && digits.startsWith('974') && digits.length > 8) digits = digits.slice(3);
+    if ((cc === '+20' || cc === '+966' || cc === '+971') && digits.startsWith('0')) {
+      digits = digits.slice(1);
+    }
+    if (cc === '+20') isPhoneValid = /^1[0125]\d{8}$/.test(digits);
+    else if (cc === '+966' || cc === '+971') isPhoneValid = /^5\d{8}$/.test(digits);
+    else if (cc === '+965' || cc === '+974') isPhoneValid = /^\d{8}$/.test(digits);
+    else isPhoneValid = digits.length >= 8;
+  } else if (input.whatsappPhone) {
+    const rawDigits = String(input.whatsappPhone).replace(/\D/g, '');
+    isPhoneValid = rawDigits.length >= 9;
+  }
+
+  if (isPhoneValid) {
+    completedCount += 1;
+  } else {
+    missingFields.push({
+      key: 'phone',
+      label: 'رقم واتساب للتواصل',
+      elementId: 'form-field-phone',
+    });
+  }
+
+  // 3. المواد والتخصصات التدريسية
+  const track = input.track === 'quran' ? 'quran' : 'school';
+  if (track === 'school') {
+    const specs = Array.isArray(input.schoolSpecializations) ? input.schoolSpecializations : [];
+    const hasValidSpecsArray =
+      specs.length > 0 &&
+      specs.every(
+        (s) =>
+          s &&
+          Boolean(String(s.subjectId || '').trim()) &&
+          Boolean(String(s.stageId || '').trim()) &&
+          Boolean(String(s.curriculumType || '').trim()) &&
+          Array.isArray(s.gradeIds) &&
+          s.gradeIds.length > 0
+      );
+    const hasFallbackCourseOptions =
+      specs.length === 0 &&
+      Array.isArray(input.schoolCourseOptionIds) &&
+      input.schoolCourseOptionIds.length > 0;
+
+    const isSchoolSpecValid =
+      (hasValidSpecsArray || hasFallbackCourseOptions) && !input.hasSpecializationValidationError;
+
+    if (isSchoolSpecValid) {
+      completedCount += 1;
+    } else {
+      missingFields.push({
+        key: 'schoolSpecializations',
+        label: 'المواد والصفوف الدراسية التي تتقنها',
+        elementId: 'form-field-schoolSpecializations',
+      });
+    }
+  } else {
+    const hasLevels = Array.isArray(input.quranLevels) && input.quranLevels.length > 0;
+    const hasAges = Array.isArray(input.quranAgeGroups) && input.quranAgeGroups.length > 0;
+    if (hasLevels && hasAges && !input.hasSpecializationValidationError) {
+      completedCount += 1;
+    } else {
+      if (!hasLevels) {
+        missingFields.push({
+          key: 'quranLevels',
+          label: 'برامج القرآن والتأسيس المتقنة',
+          elementId: 'form-field-quranLevels',
+        });
+      }
+      if (!hasAges) {
+        missingFields.push({
+          key: 'quranAgeGroups',
+          label: 'الفئات العمرية المناسبة للتدريس',
+          elementId: 'form-field-quranAgeGroups',
+        });
+      }
+      if (hasLevels && hasAges && input.hasSpecializationValidationError) {
+        missingFields.push({
+          key: 'quranLevels',
+          label: 'برامج القرآن والتأسيس المتقنة',
+          elementId: 'form-field-quranLevels',
+        });
+      }
+    }
+  }
+
+  // 4. المؤهل الأكاديمي والجامعة
+  const isAcademicValid = String(input.academicDegree || '').trim().length >= 4;
+  if (isAcademicValid) {
+    completedCount += 1;
+  } else {
+    missingFields.push({
+      key: 'academicDegree',
+      label: 'المؤهل الأكاديمي والتخصص والجامعة',
+      elementId: 'form-field-academicDegree',
+    });
+  }
+
+  // 5. سنوات الخبرة التدريسية
+  const isExperienceValid = String(input.experienceYears || '').trim().length > 0;
+  if (isExperienceValid) {
+    completedCount += 1;
+  } else {
+    missingFields.push({
+      key: 'experienceYears',
+      label: 'سنوات الخبرة التدريسية',
+      elementId: 'form-field-experienceYears',
+    });
+  }
+
+  // 6. خبرة وأدوات التدريس أونلاين
+  const hasOnline =
+    input.hasOnlineExperience === 'yes' || input.hasOnlineExperience === true
+      ? 'yes'
+      : input.hasOnlineExperience === 'no' || input.hasOnlineExperience === false
+      ? 'no'
+      : '';
+  const isOnlineValid =
+    hasOnline === 'no' ||
+    (hasOnline === 'yes' && String(input.onlineExperienceDetails || '').trim().length > 0);
+  if (isOnlineValid) {
+    completedCount += 1;
+  } else {
+    missingFields.push({
+      key: 'onlineExperienceDetails',
+      label: 'المنصات والأدوات المستخدمة في التدريس أونلاين',
+      elementId:
+        hasOnline === 'yes'
+          ? 'form-field-onlineExperienceDetails'
+          : 'form-field-hasOnlineExperience',
+    });
+  }
+
+  // 7. نبذة عن الخبرة وأسلوب الشرح (١٥ حرفاً على الأقل)
+  const isBioValid = String(input.bioAndMethodology || '').trim().length >= 15;
+  if (isBioValid) {
+    completedCount += 1;
+  } else {
+    missingFields.push({
+      key: 'bioAndMethodology',
+      label: 'نبذة عن الخبرة وأسلوب الشرح (١٥ حرفاً على الأقل)',
+      elementId: 'form-field-bioAndMethodology',
+    });
+  }
+
+  // 8. التسعير والتفرغ (سعر الحصة + مدة الحصة + أيام التفرغ + الفترات المفضلة)
+  const rawRate = String(input.suggestedHourlyRate ?? '')
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .trim();
+  const rateNum = Number(rawRate);
+  const isRateValid = rawRate !== '' && !isNaN(rateNum) && rateNum > 0 && rateNum <= 100000;
+  const rawDur = String(input.sessionDurationMinutes ?? '50')
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .trim();
+  const durNum = Number(rawDur);
+  const isDurationValid = Number.isInteger(durNum) && durNum >= 15 && durNum <= 180;
+  const isDaysValid = Array.isArray(input.availableDays) && input.availableDays.length > 0;
+  const isTimesValid = Array.isArray(input.preferredTimes) && input.preferredTimes.length > 0;
+
+  if (isRateValid && isDurationValid && isDaysValid && isTimesValid) {
+    completedCount += 1;
+  } else {
+    if (!isRateValid) {
+      missingFields.push({
+        key: 'suggestedHourlyRate',
+        label: 'سعر الحصة المقترح',
+        elementId: 'form-field-suggestedHourlyRate',
+      });
+    }
+    if (!isDurationValid) {
+      missingFields.push({
+        key: 'sessionDurationMinutes',
+        label: 'مدة الحصة الأساسية',
+        elementId: 'form-field-suggestedHourlyRate',
+      });
+    }
+    if (!isDaysValid) {
+      missingFields.push({
+        key: 'availableDays',
+        label: 'أيام التفرغ المتاحة أسبوعياً',
+        elementId: 'form-field-availableDays',
+      });
+    }
+    if (!isTimesValid) {
+      missingFields.push({
+        key: 'preferredTimes',
+        label: 'الفترات المفضلة لتقديم الحصص',
+        elementId: 'form-field-preferredTimes',
+      });
+    }
+  }
+
+  // 9. الموافقة على سياسة التعاون
+  const isTermsValid = input.termsAccepted === true;
+  if (isTermsValid) {
+    completedCount += 1;
+  } else {
+    missingFields.push({
+      key: 'terms',
+      label: 'الموافقة على سياسة التعاون مع شاطر',
+      elementId: 'form-field-terms',
+    });
+  }
+
+  return {
+    completedCount,
+    totalCount,
+    progressLabelAr: `أكملت ${toArabicDigits(completedCount)} من ${toArabicDigits(totalCount)}`,
+    isComplete: completedCount === totalCount && missingFields.length === 0,
+    missingFields,
+  };
+}
+
 
 

@@ -315,3 +315,59 @@ export function trackTeacherApplicationWhatsAppClicked(): void {
     source: 'teacher_application',
   });
 }
+
+/**
+ * 9. Tutor Application Funnel Events (No PII: no name, phone, email, or referenceCode)
+ */
+export function trackTutorApplicationStarted(params?: {
+  track?: 'school' | 'quran';
+}): void {
+  sendGAEvent('tutor_application_started', {
+    track: params?.track,
+  });
+}
+
+export function trackTutorApplicationSaved(params?: {
+  track?: 'school' | 'quran';
+  completed_fields?: number;
+  total_fields?: number;
+}): void {
+  sendGAEvent('tutor_application_saved', {
+    track: params?.track,
+    completed_fields: params?.completed_fields,
+    total_fields: params?.total_fields,
+  });
+}
+
+export function trackTutorApplicationSubmitAttempted(params?: {
+  track?: 'school' | 'quran';
+  completed_fields?: number;
+  total_fields?: number;
+}): void {
+  sendGAEvent('tutor_application_submit_attempted', {
+    track: params?.track,
+    completed_fields: params?.completed_fields,
+    total_fields: params?.total_fields,
+  });
+}
+
+export function trackTutorApplicationSubmitFailed(params?: {
+  track?: 'school' | 'quran';
+  failure_stage?: 'validation' | 'auth_required' | 'server_error';
+  missing_count?: number;
+}): void {
+  sendGAEvent('tutor_application_submit_failed', {
+    track: params?.track,
+    failure_stage: params?.failure_stage,
+    missing_count: params?.missing_count,
+  });
+}
+
+export function trackTutorApplicationSubmitted(params?: {
+  track?: 'school' | 'quran';
+}): void {
+  sendGAEvent('tutor_application_submitted', {
+    track: params?.track,
+  });
+}
+

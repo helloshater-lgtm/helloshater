@@ -4,6 +4,7 @@ import { AdminService } from '../../services/adminService';
 import {
   resolveTutorApplicationStatus,
   resolveExplicitSubjectId,
+  evaluateTutorApplicationCompleteness,
 } from '../../utils/formatters';
 import {
   ArrowRight,
@@ -26,6 +27,9 @@ import {
   Info,
   RefreshCw,
 } from 'lucide-react';
+
+const WHATSAPP_DRAFT_REMINDER_TEXT =
+  'السلام عليكم، طلب انضمامك إلى شاطر كلاسيز ما زال غير مُرسل. يرجى إكمال البيانات والضغط على إرسال الطلب حتى نتمكن من مراجعته.';
 
 const SUBJECT_ARABIC_LABELS: Record<string, string> = {
   math: 'الرياضيات',
@@ -74,12 +78,14 @@ interface AdminApplicationDetailViewProps {
   applicationId: string;
   onBack: () => void;
   onNavigateToTutorEdit?: (tutorId: string) => void;
+  onDecisionCompleted?: () => void;
 }
 
 export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProps> = ({
   applicationId,
   onBack,
   onNavigateToTutorEdit,
+  onDecisionCompleted,
 }) => {
   const [application, setApplication] = useState<TutorApplicationRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -203,7 +209,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
     if (!currentStatusInfo.isReviewableByAdmin) {
       setErrorMessage(
         currentStatusInfo.canonicalKey === 'draft'
-          ? 'لا يمكن مراجعة أو رفض هذا الطلب لأنه ما زال «مسودة» لدى المعلم ولم يُرسل للمراجعة بعد.'
+          ? 'لا يمكن اتخاذ قرار قبل أن يرسل المعلم طلبه.'
           : `حالة الطلب الحالية (${currentStatusInfo.detailBadgeLabel}) لا تسمح بالمراجعة.`
       );
       return;
@@ -221,6 +227,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
     try {
       await AdminService.reviewApplication(applicationId, targetStatus, decisionNotes.trim());
       await loadApplication();
+      onDecisionCompleted?.();
       setSuccessMessage(
         targetStatus === 'needs_info'
           ? 'تم إرسال طلب استكمال البيانات للمعلم بنجاح. يستطيع المعلم الآن تعديل طلبه.'
@@ -242,7 +249,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
     if (!currentStatusInfo.isReviewableByAdmin) {
       setErrorMessage(
         currentStatusInfo.canonicalKey === 'draft'
-          ? 'لا يمكن قبول واعتماد هذا الطلب لأنه ما زال «مسودة» لدى المعلم ولم يُرسل للمراجعة بعد.'
+          ? 'لا يمكن اتخاذ قرار قبل أن يرسل المعلم طلبه.'
           : `حالة الطلب الحالية (${currentStatusInfo.detailBadgeLabel}) لا تسمح بالقبول.`
       );
       return;
@@ -269,6 +276,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
       );
       setActionType('idle');
       await loadApplication();
+      onDecisionCompleted?.();
     } catch (err: any) {
       setErrorMessage(err?.message || 'فشل اعتماد وقبول الطلب.');
     } finally {
@@ -330,9 +338,17 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
     );
   }
 
-  const cleanPhone = application.countryCode.replace(/\+/g, '') + application.phone.replace(/^0+/, '');
+  const hasPhone = Boolean(application.phone && application.phone.trim());
+  const cleanPhone = hasPhone
+    ? (application.countryCode || '+20').replace(/\+/g, '') + application.phone.replace(/^0+/, '')
+    : '';
   const statusInfo = resolveTutorApplicationStatus(application.status);
   const isApproved = statusInfo.canonicalKey === 'approved';
+  const isDraft = application.status === 'draft' || statusInfo.canonicalKey === 'draft';
+  const draftCompleteness = isDraft ? evaluateTutorApplicationCompleteness(application) : null;
+  const draftReminderWhatsAppUrl = hasPhone
+    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(WHATSAPP_DRAFT_REMINDER_TEXT)}`
+    : '';
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto" dir="rtl">
@@ -350,7 +366,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44]">
-                طلب انضمام: {application.fullName || 'بدون اسم بعد (مسودة)'}
+                طلب انضمام: {application.fullName || 'بدون اسم بعد'}
               </h2>
               <span className="text-xs font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded" dir="ltr">
                 {application.referenceCode || 'بدون رقم مرجع'}
@@ -365,15 +381,15 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
 
         {/* WhatsApp & Quick Actions */}
         <div className="flex items-center gap-2 shrink-0">
-          {application.phone && (
+          {hasPhone && (
             <a
-              href={`https://wa.me/${cleanPhone}`}
+              href={isDraft ? draftReminderWhatsAppUrl : `https://wa.me/${cleanPhone}`}
               target="_blank"
               rel="noopener noreferrer"
               className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-all flex items-center gap-1.5 border border-emerald-200"
             >
               <MessageCircle className="w-4 h-4 text-emerald-600" />
-              <span>مراسلة المعلم عبر الواتساب</span>
+              <span>{isDraft ? 'تذكير عبر واتساب' : 'مراسلة المعلم عبر الواتساب'}</span>
             </a>
           )}
 
@@ -424,7 +440,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
             </span>
           </div>
 
-          {/* Action Trigger Buttons - Strictly shown ONLY for reviewable statuses (submitted / needs_info) */}
+          {/* Action Trigger Buttons - Strictly enabled ONLY for reviewable statuses (submitted / needs_info) */}
           {statusInfo.isReviewableByAdmin && (
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -451,6 +467,26 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
             </div>
           )}
 
+          {/* Disabled Action Buttons for Unsubmitted Draft Applications */}
+          {isDraft && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled
+                className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-400 text-xs font-bold border border-slate-200 cursor-not-allowed"
+              >
+                رفض الطلب
+              </button>
+              <button
+                type="button"
+                disabled
+                className="px-4 py-1.5 rounded-xl bg-slate-200 text-slate-500 text-xs font-bold cursor-not-allowed"
+              >
+                قبول واعتماد المعلم
+              </button>
+            </div>
+          )}
+
           {/* Approved tutor publication status & explicit action */}
           {isApproved && application.applicantTutorId && (
             <div className="flex flex-wrap items-center gap-2">
@@ -462,7 +498,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
                       : 'bg-amber-100 text-amber-900 border border-amber-300'
                   }`}
                 >
-                  {tutorStatus.isPublished ? 'ملف منشور للجمهور' : 'ملف غير منشور (مسودة)'}
+                  {tutorStatus.isPublished ? 'ملف منشور للجمهور' : 'ملف غير منشور'}
                 </span>
               )}
 
@@ -505,18 +541,36 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
           )}
         </div>
 
-        {/* Explicit Draft Warning Banner so Admin knows why review actions are hidden */}
-        {statusInfo.canonicalKey === 'draft' && (
-          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 flex items-start gap-2.5">
-            <Info className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
-            <div className="space-y-1 leading-relaxed">
-              <strong className="block text-[#1F2A44]">
-                هذا الطلب محفوظ كمسودة (Draft) ولم يُرسل للمراجعة الإدارية بعد
-              </strong>
-              <p>
-                بدأ المتقدم في تعبئة بياناته أو رفع صورته الشخصية وحُفظ السجل كمسودة تلقائياً، لكنه لم يضغط بعد على زر «إرسال الطلب للمراجعة والاعتماد» النهائي. لذلك تظل أزرار القبول والرفض غير مفعلة حتى يُكمل المعلم إرسال طلبه رسمياً.
-              </p>
+        {/* Explicit Incomplete / Draft Warning Banner & Missing Fields */}
+        {isDraft && (
+          <div className="p-4 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-slate-700 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-1 leading-relaxed">
+                <strong className="block text-[#1F2A44]">
+                  لا يمكن اتخاذ قرار قبل أن يرسل المعلم طلبه.
+                </strong>
+                <p className="text-slate-600">
+                  الطلب محفوظ حالياً دون إرسال نهائي من المعلم ({draftCompleteness?.progressLabelAr}).
+                </p>
+              </div>
             </div>
+
+            {draftCompleteness && draftCompleteness.missingFields.length > 0 && (
+              <div className="pt-2 border-t border-amber-200/70 space-y-1.5">
+                <span className="font-bold text-amber-900 block">الحقول المطلوبة الناقصة:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {draftCompleteness.missingFields.map((field) => (
+                    <span
+                      key={field.key}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-amber-900 text-[11px] font-bold"
+                    >
+                      {field.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

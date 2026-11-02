@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   TrackType,
   StageId,
@@ -23,7 +24,14 @@ import {
   TutorCooperationPolicyModal,
   TUTOR_COOPERATION_POLICY_VERSION,
 } from './TutorCooperationPolicyModal';
-import { trackTeacherApplicationWhatsAppClicked } from '../services/analytics';
+import {
+  trackTeacherApplicationWhatsAppClicked,
+  trackTutorApplicationStarted,
+  trackTutorApplicationSaved,
+  trackTutorApplicationSubmitAttempted,
+  trackTutorApplicationSubmitFailed,
+  trackTutorApplicationSubmitted,
+} from '../services/analytics';
 import {
   resolveTutorApplicationStatus,
   resolveExplicitSubjectId,
@@ -32,6 +40,8 @@ import {
   extractSpecializationErrorsFromMessage,
   normalizeSchoolValidationErrorText,
   getSupportedCatalogForSubject,
+  evaluateTutorApplicationCompleteness,
+  toArabicDigits,
 } from '../utils/formatters';
 import {
   Info,
@@ -393,8 +403,46 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
   const [quranLevels, setQuranLevels] = useState<QuranLevel[]>(FALLBACK_QURAN_LEVELS);
   const [liveSubjects, setLiveSubjects] = useState<Subject[]>([]);
   const [liveCourseOptions, setLiveCourseOptions] = useState<DatabaseSchoolCourseOption[]>([]);
+  const [showMissingFieldsBanner, setShowMissingFieldsBanner] = useState<boolean>(false);
   const isSubmittingFinalRef = useRef<boolean>(false);
   const lastLoadedAuthUserIdRef = useRef<string | null>(null);
+  const hasTrackedStartedRef = useRef<boolean>(false);
+
+  const completeness = useMemo(
+    () =>
+      evaluateTutorApplicationCompleteness({
+        ...formData,
+        hasSpecializationValidationError:
+          Object.keys(specCardErrors).length > 0 || Boolean(errors.schoolSpecializations),
+      }),
+    [formData, specCardErrors, errors.schoolSpecializations]
+  );
+
+  const focusAndScrollToField = (elementId: string) => {
+    if (typeof document === 'undefined') return;
+    const container = document.getElementById(elementId);
+    if (!container) return;
+    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const focusable = container.querySelector<HTMLElement>(
+      'input:not([type="hidden"]):not([disabled]):not([type="file"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])'
+    );
+    if (focusable) {
+      setTimeout(() => {
+        try {
+          focusable.focus({ preventScroll: true });
+        } catch {
+          focusable.focus();
+        }
+      }, 220);
+    }
+  };
+
+  useEffect(() => {
+    if (!isLoadingAccount && !showNoticeScreen && !hasTrackedStartedRef.current) {
+      hasTrackedStartedRef.current = true;
+      trackTutorApplicationStarted({ track: formData.track });
+    }
+  }, [isLoadingAccount, showNoticeScreen, formData.track]);
 
   const normalizeSpecializationItemForForm = (
     sp: any,
@@ -540,14 +588,22 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
             );
           }
           setDbApplication(submitted);
+          trackTutorApplicationSubmitted({ track: formData.track });
           setSaveStatusMessage({
             type: 'success',
-            text: `تم إرسال طلبك للمراجعة والاعتماد بنجاح! رقم المرجع: ${submitted.referenceCode}`,
+            text: 'تم إرسال طلبك بنجاح',
           });
           setShowNoticeScreen(true);
           window.scrollTo({ top: 0, behavior: 'smooth' });
           return;
         } catch (submitErr: any) {
+          console.error('[TutorRegistrationView.loadMyApplication] Resume submit error:', {
+            code: submitErr?.code || 'unknown',
+          });
+          trackTutorApplicationSubmitFailed({
+            track: formData.track,
+            failure_stage: 'server_error',
+          });
           if (app) {
             setDbApplication(app);
           }
@@ -555,7 +611,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           setShowNoticeScreen(false);
           const rawMsg =
             submitErr?.message ||
-            'تم تسجيل دخولك بنجاح، لكن تعذر إتمام الإرسال النهائي للطلب. بياناتك محفوظة في النموذج، يرجى الضغط على «إعادة محاولة إرسال الطلب».';
+            'تم تسجيل دخولك بنجاح، لكن تعذر إتمام الإرسال النهائي للطلب. بياناتك محفوظة في النموذج، يرجى الضغط على «إعادة المحاولة».';
           const normalizedMsg = normalizeSchoolValidationErrorText(rawMsg);
           const extractedSpecErrors = extractSpecializationErrorsFromMessage(normalizedMsg);
           if (Object.keys(extractedSpecErrors).length > 0) {
@@ -578,49 +634,52 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
               normalizeSpecializationItemForForm(sp, idx)
             )
           : null;
-        // Fill form data from DB record
-        setFormData((prev) => ({
-          ...prev,
-          fullName: app.fullName || prev.fullName,
-          countryCode: app.countryCode || prev.countryCode,
-          phone: app.phone || prev.phone,
-          track: app.track || prev.track,
-          schoolSpecializations: normalizedDbSpecs || prev.schoolSpecializations,
+
+        const mergedFormData: TutorApplicationFormData = {
+          ...formData,
+          fullName: app.fullName || formData.fullName,
+          countryCode: app.countryCode || formData.countryCode,
+          phone: app.phone || formData.phone,
+          track: app.track || formData.track,
+          schoolSpecializations: normalizedDbSpecs || formData.schoolSpecializations,
           schoolCourseOptionIds: normalizedDbSpecs?.length
             ? []
             : app.schoolCourseOptionIds?.length
             ? app.schoolCourseOptionIds
-            : prev.schoolCourseOptionIds,
+            : formData.schoolCourseOptionIds,
           subjects: normalizedDbSpecs?.length
             ? Array.from(new Set(normalizedDbSpecs.map((s) => s.subjectId).filter(Boolean)))
-            : prev.subjects,
+            : formData.subjects,
           stages: normalizedDbSpecs?.length
             ? (Array.from(new Set(normalizedDbSpecs.map((s) => s.stageId).filter(Boolean))) as StageId[])
-            : prev.stages,
+            : formData.stages,
           curricula: normalizedDbSpecs?.length
             ? (Array.from(new Set(normalizedDbSpecs.map((s) => s.curriculumType).filter(Boolean))) as CurriculumType[])
-            : prev.curricula,
-          quranAgeGroups: app.quranAgeGroups?.length ? app.quranAgeGroups : prev.quranAgeGroups,
-          quranLevels: app.quranLevels?.length ? app.quranLevels : prev.quranLevels,
-          quranOfferings: app.quranOfferings?.length ? app.quranOfferings : prev.quranOfferings,
+            : formData.curricula,
+          quranAgeGroups: app.quranAgeGroups?.length ? app.quranAgeGroups : formData.quranAgeGroups,
+          quranLevels: app.quranLevels?.length ? app.quranLevels : formData.quranLevels,
+          quranOfferings: app.quranOfferings?.length ? app.quranOfferings : formData.quranOfferings,
           quranNotes: app.quranNotes || '',
-          academicDegree: app.academicDegree || prev.academicDegree,
-          experienceYears: app.experienceYears || prev.experienceYears,
-          hasOnlineExperience: app.hasOnlineExperience || prev.hasOnlineExperience,
-          onlineExperienceDetails: app.onlineExperienceDetails || prev.onlineExperienceDetails,
-          bioAndMethodology: app.bioAndMethodology || prev.bioAndMethodology,
-          portfolioUrl: app.portfolioUrl || prev.portfolioUrl,
-          avatarPath: app.avatarPath || prev.avatarPath,
+          academicDegree: app.academicDegree || formData.academicDegree,
+          experienceYears: app.experienceYears || formData.experienceYears,
+          hasOnlineExperience: app.hasOnlineExperience || formData.hasOnlineExperience,
+          onlineExperienceDetails: app.onlineExperienceDetails || formData.onlineExperienceDetails,
+          bioAndMethodology: app.bioAndMethodology || formData.bioAndMethodology,
+          portfolioUrl: app.portfolioUrl || formData.portfolioUrl,
+          avatarPath: app.avatarPath || formData.avatarPath,
           avatarUrl: app.avatarUrl || null,
-          suggestedHourlyRate: String(app.suggestedHourlyRate || prev.suggestedHourlyRate),
-          currency: app.currency || prev.currency,
-          sessionDurationMinutes: app.sessionDurationMinutes || prev.sessionDurationMinutes,
-          availableDays: app.availableDays?.length ? app.availableDays : prev.availableDays,
-          preferredTimes: app.preferredTimes?.length ? app.preferredTimes : prev.preferredTimes,
-          timezone: app.timezone || prev.timezone,
+          suggestedHourlyRate: String(app.suggestedHourlyRate || formData.suggestedHourlyRate),
+          currency: app.currency || formData.currency,
+          sessionDurationMinutes: app.sessionDurationMinutes || formData.sessionDurationMinutes,
+          availableDays: app.availableDays?.length ? app.availableDays : formData.availableDays,
+          preferredTimes: app.preferredTimes?.length ? app.preferredTimes : formData.preferredTimes,
+          timezone: app.timezone || formData.timezone,
           termsAccepted: Boolean(app.termsAccepted),
           termsPolicyVersion: app.policyVersion || TUTOR_COOPERATION_POLICY_VERSION,
-        }));
+        };
+
+        // Fill form data from DB record
+        setFormData(mergedFormData);
 
         // Load private signed URL for avatar if exists
         if (app.avatarPath) {
@@ -657,10 +716,40 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           setShowNoticeScreen(true);
         } else {
           setShowNoticeScreen(false);
+          const loadedCompleteness = evaluateTutorApplicationCompleteness(mergedFormData);
+          if (loadedCompleteness.missingFields.length > 0) {
+            setShowMissingFieldsBanner(true);
+            setTimeout(() => {
+              focusAndScrollToField(loadedCompleteness.missingFields[0].elementId);
+            }, 300);
+          }
         }
       } else {
         setDbApplication(null);
         setShowNoticeScreen(false);
+        // If user just logged in (e.g. after confirming email) and has local draft data on device,
+        // preserve it and sync it as a saved draft in their account without losing any input
+        const hasLocalData =
+          Boolean(formData.fullName.trim()) ||
+          Boolean(formData.phone.trim()) ||
+          Boolean(formData.academicDegree.trim()) ||
+          Boolean(formData.bioAndMethodology.trim());
+        if (hasLocalData && !portalCtx?.tutor) {
+          TutorApplicationService.saveApplication(formData, false)
+            .then((savedDraft) => {
+              setDbApplication(savedDraft);
+            })
+            .catch(() => {
+              // Keep local draft intact if background sync fails
+            });
+          const localComp = evaluateTutorApplicationCompleteness(formData);
+          if (localComp.missingFields.length > 0) {
+            setShowMissingFieldsBanner(true);
+            setTimeout(() => {
+              focusAndScrollToField(localComp.missingFields[0].elementId);
+            }, 300);
+          }
+        }
       }
 
       // If account is linked to an approved tutor (published or unpublished) and either
@@ -674,7 +763,9 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
         return;
       }
     } catch (err: any) {
-      console.error('Error loading my tutor application:', err);
+      console.error('[TutorRegistrationView.loadMyApplication] Error:', {
+        code: err?.code || 'unknown',
+      });
       setAccountLoadError(err?.message || 'تعذر تحميل بيانات الحساب. يرجى المحاولة مرة أخرى.');
     } finally {
       setIsLoadingAccount(false);
@@ -715,6 +806,8 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       return;
     }
 
+    saveDraft(formData);
+
     if (!currentUser) {
       setPendingSubmitAfterAuth(false);
       setAuthModalMode('signin');
@@ -729,17 +822,25 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       if (!isSubmittingFinalRef.current) {
         setDbApplication(saved);
         saveDraft(formData);
+        trackTutorApplicationSaved({
+          track: formData.track,
+          completed_fields: completeness.completedCount,
+          total_fields: completeness.totalCount,
+        });
         setSaveStatusMessage({
           type: 'success',
-          text: `تم حفظ مسودة طلبك في حسابك بنجاح${saved.referenceCode ? ` (مرجع المسودة: ${saved.referenceCode})` : ''}. تذكّر الضغط على «إرسال الطلب للمراجعة والاعتماد» عند اكتمال البيانات.`,
+          text: 'تم حفظ بياناتك. طلبك لم يُرسل بعد؛ أكمل البيانات ثم اضغط إرسال الطلب.',
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     } catch (err: any) {
+      console.error('[TutorRegistrationView.handleSaveDraftToDb] Save error:', {
+        code: err?.code || 'unknown',
+      });
       saveDraft(formData);
       setSaveStatusMessage({
         type: 'error',
-        text: err?.message || 'تعذر حفظ المسودة في الخادم. تم الاحتفاظ ببياناتك محلياً على جهازك.',
+        text: err?.message || 'تعذر حفظ البيانات في الخادم. تم الاحتفاظ ببياناتك محلياً على جهازك.',
       });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
@@ -752,7 +853,25 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
   // Submit final application to DB
   const handleSubmitFinalToDb = async () => {
     if (isSubmittingFinalRef.current) return;
-    if (!validateForm()) return;
+
+    trackTutorApplicationSubmitAttempted({
+      track: formData.track,
+      completed_fields: completeness.completedCount,
+      total_fields: completeness.totalCount,
+    });
+    setShowMissingFieldsBanner(true);
+
+    if (!validateForm()) {
+      trackTutorApplicationSubmitFailed({
+        track: formData.track,
+        failure_stage: 'validation',
+        missing_count: completeness.missingFields.length,
+      });
+      if (completeness.missingFields.length > 0) {
+        focusAndScrollToField(completeness.missingFields[0].elementId);
+      }
+      return;
+    }
 
     saveDraft(formData);
 
@@ -775,23 +894,33 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
         !submitted.referenceCode
       ) {
         throw new Error(
-          'لم يتم تأكيد إرسال الطلب النهائي من الخادم (الحالة لم تتحول إلى مُرسل للمراجعة). يرجى المحاولة مرة أخرى.'
+          'لم يتم تأكيد إرسال الطلب النهائي من الخادم. بياناتك محفوظة، يرجى إعادة المحاولة.'
         );
       }
       setDbApplication(submitted);
       setPendingSubmitAfterAuth(false);
       setSpecCardErrors({});
+      setShowMissingFieldsBanner(false);
+      trackTutorApplicationSubmitted({ track: formData.track });
       setSaveStatusMessage({
         type: 'success',
-        text: `تم إرسال طلبك للمراجعة والاعتماد بنجاح! رقم المرجع: ${submitted.referenceCode}`,
+        text: 'تم إرسال طلبك بنجاح',
       });
       setShowNoticeScreen(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err: any) {
+      console.error('[TutorRegistrationView.handleSubmitFinalToDb] Submission failed:', {
+        code: err?.code || 'unknown',
+        name: err?.name || 'Error',
+      });
+      trackTutorApplicationSubmitFailed({
+        track: formData.track,
+        failure_stage: 'server_error',
+      });
       saveDraft(formData);
       const rawErrMsg =
         err?.message ||
-        'تعذر إرسال الطلب للمراجعة والاعتماد. تم الاحتفاظ بجميع بياناتك في النموذج، يرجى المراجعة والمحاولة مرة أخرى.';
+        'تعذر إرسال الطلب في الوقت الحالي. بياناتك محفوظة بالكامل، يرجى الضغط على إعادة المحاولة.';
       const normalizedErrMsg = normalizeSchoolValidationErrorText(rawErrMsg);
       const extractedSpecErrors = extractSpecializationErrorsFromMessage(normalizedErrMsg);
       if (Object.keys(extractedSpecErrors).length > 0) {
@@ -879,12 +1008,19 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
         dbApplication?.id
       );
       setDbApplication(saved);
+      trackTutorApplicationSaved({
+        track: formData.track,
+        completed_fields: completeness.completedCount,
+        total_fields: completeness.totalCount,
+      });
       setSaveStatusMessage({
         type: 'success',
-        text: 'تم رفع الصورة وحفظها في مسودة طلبك! تذكّر الضغط على «إرسال الطلب للمراجعة والاعتماد» في أسفل النموذج لإتمام التقديم.',
+        text: 'تم حفظ بياناتك. طلبك لم يُرسل بعد؛ أكمل البيانات ثم اضغط إرسال الطلب.',
       });
-      setTimeout(() => setSaveStatusMessage(null), 5000);
     } catch (err: any) {
+      console.error('[TutorRegistrationView.handleAvatarFileChange] Avatar upload error:', {
+        code: err?.code || 'unknown',
+      });
       setAvatarUploadError(err?.message || 'تعذر رفع الصورة.');
     } finally {
       setIsUploadingAvatar(false);
@@ -1542,7 +1678,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-6 sm:py-10 px-4 sm:px-6" dir="rtl">
+    <div className="w-full max-w-4xl mx-auto py-6 sm:py-10 pb-28 sm:pb-10 px-4 sm:px-6" dir="rtl">
       {/* Teacher Account Header & Status Card */}
       <div className="mb-6 bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -1563,7 +1699,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
             <p className="text-xs text-[#64748B]">
               {currentUser
                 ? `مسجل بالبريد: ${currentUser.email}`
-                : 'أنشئ حسابك كمعلم لحفظ مسودة طلبك ومتابعة المراجعة والتعديل.'}
+                : 'أنشئ حسابك كمعلم لحفظ بيانات طلبك ومتابعة المراجعة والتعديل.'}
             </p>
           </div>
         </div>
@@ -1638,7 +1774,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
               ) : (
                 <RefreshCw className="w-3.5 h-3.5" />
               )}
-              <span>إعادة محاولة إرسال الطلب</span>
+              <span>إعادة المحاولة</span>
             </button>
           )}
         </div>
@@ -1656,14 +1792,14 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                   حالة طلب الانضمام:
                 </span>
                 {appStatusInfo.canonicalKey === 'draft' && (
-                  <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold">
-                    {appStatusInfo.tutorLabel}
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-300 text-xs font-bold">
+                    طلبك لم يُرسل بعد
                   </span>
                 )}
                 {appStatusInfo.canonicalKey === 'submitted' && (
                   <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-[#0D4E8B] border border-blue-200 text-xs font-bold flex items-center gap-1">
                     <Clock className="w-3.5 h-3.5" />
-                    {appStatusInfo.tutorLabel}
+                    قيد المراجعة
                   </span>
                 )}
                 {appStatusInfo.canonicalKey === 'needs_info' && (
@@ -1686,7 +1822,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                     ) : (
                       <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1">
                         <Clock3 className="w-3.5 h-3.5 text-amber-600" />
-                        مسودة جاهزة قبل النشر
+                        بانتظار النشر
                       </span>
                     )}
                   </>
@@ -1703,15 +1839,17 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                 )}
               </div>
 
-              <span className="text-xs font-mono text-[#64748B]">
-                كود المرجع: <strong>{dbApplication.referenceCode}</strong>
-              </span>
+              {dbApplication.referenceCode && (
+                <span className="text-xs font-mono text-[#64748B]">
+                  كود المرجع: <strong>{dbApplication.referenceCode}</strong>
+                </span>
+              )}
             </div>
 
             {appStatusInfo.canonicalKey === 'draft' && (
               <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <span>
-                  طلبك محفوظ حالياً كمسودة برقم المرجع <strong>{dbApplication.referenceCode}</strong> ولم يُرسل للمراجعة الإدارية بعد. تأكد من إكمال كافة الحقول والموافقة على سياسة التعاون ثم اضغط على <strong>«إرسال الطلب للمراجعة والاعتماد»</strong>.
+                  بياناتك محفوظة، لكن الإدارة لن تراجع طلبك إلا بعد الضغط على إرسال الطلب.
                 </span>
               </div>
             )}
@@ -1786,6 +1924,74 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
       {!showNoticeScreen ? (
         <form onSubmit={handleSubmitAction} className="space-y-6">
+          {/* ========================================================================= */}
+          {/* تنبيه حالة الطلب غير المُرسل + مؤشر اكتمال الحقول المطلوبة + الحقول الناقصة */}
+          {/* ========================================================================= */}
+          {(!dbApplication ||
+            resolveTutorApplicationStatus(dbApplication.status).canonicalKey === 'draft' ||
+            resolveTutorApplicationStatus(dbApplication.status).canonicalKey === 'needs_info') && (
+            <div className="bg-amber-50/90 border border-amber-300 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5 text-amber-700 shrink-0" />
+                    <span className="font-['Cairo'] font-extrabold text-sm sm:text-base text-amber-950">
+                      طلبك لم يُرسل بعد
+                    </span>
+                  </div>
+                  <p className="text-xs sm:text-sm text-amber-900 leading-relaxed pr-7">
+                    بياناتك محفوظة، لكن الإدارة لن تراجع طلبك إلا بعد الضغط على إرسال الطلب.
+                  </p>
+                </div>
+
+                {/* Completion Progress Badge ("أكملت ٦ من ٩") */}
+                <div className="flex items-center gap-2.5 bg-white px-3.5 py-2 rounded-xl border border-amber-200 self-start sm:self-center shrink-0">
+                  <div className="text-right">
+                    <div className="font-['Cairo'] font-extrabold text-xs sm:text-sm text-[#0D4E8B]">
+                      {completeness.progressLabelAr}
+                    </div>
+                    <div className="text-[10px] text-[#64748B]">من المتطلبات الأساسية</div>
+                  </div>
+                  <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        completeness.isComplete ? 'bg-emerald-600' : 'bg-[#0D4E8B]'
+                      }`}
+                      style={{
+                        width: `${Math.round(
+                          (completeness.completedCount / completeness.totalCount) * 100
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Missing Required Fields Interactive List */}
+              {(showMissingFieldsBanner || Boolean(dbApplication)) &&
+                completeness.missingFields.length > 0 && (
+                  <div className="pt-3 border-t border-amber-200/80 space-y-2">
+                    <p className="text-xs font-bold text-amber-950">
+                      الحقول المطلوبة المتبقية قبل إرسال الطلب (اضغط على أي حقل للانتقال إليه مباشرة):
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {completeness.missingFields.map((mf) => (
+                        <button
+                          key={mf.key}
+                          type="button"
+                          onClick={() => focusAndScrollToField(mf.elementId)}
+                          className="px-3 py-1.5 rounded-xl bg-white hover:bg-[#EBF3FC] text-[#0D4E8B] border border-amber-300 hover:border-[#0D4E8B] text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>{mf.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
+
           {/* ========================================================================= */}
           {/* القسم ١: البيانات الأساسية والتواصل */}
           {/* ========================================================================= */}
@@ -1958,9 +2164,9 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                     )}
 
                     {formData.avatarPath && !avatarUploadError && (
-                      <p className="text-[11px] text-emerald-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>تم حفظ الصورة الشخصية في ملف طلبك بنجاح.</span>
+                      <p className="text-[11px] text-amber-800 font-medium flex items-center gap-1 justify-center sm:justify-start">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>تم حفظ بياناتك. طلبك لم يُرسل بعد؛ أكمل البيانات ثم اضغط إرسال الطلب.</span>
                       </p>
                     )}
                   </div>
@@ -2770,23 +2976,28 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                   ) : (
                     <Save className="w-4 h-4 text-[#0D4E8B]" />
                   )}
-                  <span>حفظ كمسودة في حسابي</span>
+                  <span>حفظ البيانات</span>
                 </button>
 
-                {/* Submit Final Button */}
+                {/* Submit Final Button (Desktop & Inline) */}
                 <button
                   type="button"
                   onClick={handleSubmitFinalToDb}
                   disabled={isSavingDb}
-                  className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] disabled:opacity-50"
+                  className="hidden sm:flex w-full sm:w-auto px-8 py-3.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm transition-all items-center justify-center gap-2 cursor-pointer active:scale-[0.98] disabled:opacity-50"
                 >
                   {isSavingDb ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>جاري إرسال الطلب...</span>
+                    </>
                   ) : (
-                    <Send className="w-4 h-4 text-white" />
+                    <>
+                      <Send className="w-4 h-4 text-white" />
+                      <span>إرسال الطلب للمراجعة والاعتماد</span>
+                      <ArrowLeft className="w-4 h-4" />
+                    </>
                   )}
-                  <span>إرسال الطلب للمراجعة والاعتماد</span>
-                  <ArrowLeft className="w-4 h-4" />
                 </button>
               </div>
 
@@ -2807,21 +3018,22 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
             {dbApplication?.status === 'submitted' || dbApplication?.status === 'pending_review' ? (
               <>
                 <div className="w-14 h-14 mx-auto rounded-full bg-blue-50 text-[#0D4E8B] flex items-center justify-center">
-                  <Clock className="w-8 h-8 text-[#0D4E8B]" />
+                  <CheckCircle2 className="w-8 h-8 text-[#0D4E8B]" />
                 </div>
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-[#0D4E8B] text-xs font-bold border border-blue-200 mx-auto">
-                  <span>طلب مُرسل قيد مراجعة الإدارة</span>
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>الحالة: قيد المراجعة</span>
                 </div>
                 <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
-                  تم إرسال طلبك للمراجعة
+                  تم إرسال طلبك بنجاح
                 </h2>
                 {dbApplication.referenceCode && (
                   <div className="inline-block px-3.5 py-1.5 rounded-xl bg-[#F8FAFD] border border-[#CBD5E1] text-xs font-mono text-[#0D4E8B] font-bold">
-                    رقم المرجع: <span className="text-base font-black tracking-wider">{dbApplication.referenceCode}</span>
+                    كود المرجع: <span className="text-base font-black tracking-wider">{dbApplication.referenceCode}</span>
                   </div>
                 )}
                 <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
-                  تم استلام طلبك بنجاح في قاعدة بيانات شاطر وهو الآن قيد التدقيق وفحص المؤهلات من قِبل فريق الإدارة. البيانات أدناه معروضة للقراءة فقط.
+                  تم استلام طلبك بنجاح في شاطر كلاسيز وهو الآن قيد المراجعة من قِبل فريق الإدارة. البيانات أدناه معروضة للقراءة فقط.
                 </p>
               </>
             ) : dbApplication?.status === 'needs_info' ? (
@@ -2869,7 +3081,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                 <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
                   {isTutorPublished
                     ? 'ملفك منشور حالياً ومتاح لأولياء الأمور لحجز الحصص التجريبية والتواصل. يمكنك إدارة مواعيدك واقتراح أي تعديلات عبر لوحة المعلم.'
-                    : 'تمت الموافقة على انضمامك وتوثيق حسابك. ملفك حالياً مسودة جاهزة قبل النشر، وتستطيع من خلال لوحة المعلم إضافة مواعيدك وتجهيز ملفك قبل إطلاقه للجمهور.'}
+                    : 'تمت الموافقة على انضمامك وتوثيق حسابك. ملفك حالياً غير منشور قبل المراجعة النهائية، وتستطيع من خلال لوحة المعلم إضافة مواعيدك وتجهيز ملفك قبل إطلاقه للجمهور.'}
                 </p>
               </>
             ) : dbApplication?.status === 'rejected' ? (
@@ -2895,14 +3107,14 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
             ) : (
               /* Draft or New Application */
               <>
-                <div className="w-14 h-14 mx-auto rounded-full bg-[#EBF3FC] text-[#0D4E8B] flex items-center justify-center">
-                  <CheckCircle2 className="w-8 h-8 text-[#0D4E8B]" />
+                <div className="w-14 h-14 mx-auto rounded-full bg-amber-50 text-amber-700 flex items-center justify-center">
+                  <AlertCircle className="w-8 h-8 text-amber-600" />
                 </div>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 mx-auto">
-                  <span>مسودة طلب جاهزة للمراجعة</span>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-900 text-xs font-bold border border-amber-200 mx-auto">
+                  <span>طلبك لم يُرسل بعد</span>
                 </div>
                 <h2 className="font-['Cairo'] text-xl sm:text-2xl font-bold text-[#0D4E8B]">
-                  ملخص مسودة طلب الانضمام
+                  طلبك لم يُرسل بعد
                 </h2>
                 {dbApplication?.referenceCode && (
                   <div className="inline-block px-3.5 py-1.5 rounded-xl bg-[#F8FAFD] border border-[#CBD5E1] text-xs font-mono text-[#0D4E8B] font-bold">
@@ -2910,7 +3122,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                   </div>
                 )}
                 <p className="text-xs sm:text-sm text-[#535E7B] max-w-lg mx-auto leading-relaxed">
-                  راجع بياناتك بعناية. يمكنك حفظ المسودة أو تعديل النموذج أو إرسال الطلب نهائياً لمراجعة الإدارة.
+                  بياناتك محفوظة، لكن الإدارة لن تراجع طلبك إلا بعد الضغط على إرسال الطلب.
                 </p>
               </>
             )}
@@ -3081,33 +3293,28 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
               {/* WhatsApp Button: Dynamic Label and Behavior */}
               <a
-                href={formData.termsAccepted ? getApplicationWhatsAppUrl() : undefined}
+                href={
+                  formData.termsAccepted || dbApplication?.status === 'submitted' || dbApplication?.status === 'pending_review'
+                    ? getApplicationWhatsAppUrl()
+                    : undefined
+                }
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => {
-                  if (!formData.termsAccepted) {
+                  if (!formData.termsAccepted && dbApplication?.status !== 'submitted' && dbApplication?.status !== 'pending_review') {
                     e.preventDefault();
                     return;
                   }
                   trackTeacherApplicationWhatsAppClicked();
                 }}
                 className={`w-full sm:w-auto px-6 py-3.5 rounded-xl font-['Cairo'] font-bold text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                  formData.termsAccepted
+                  formData.termsAccepted || dbApplication?.status === 'submitted' || dbApplication?.status === 'pending_review'
                     ? 'bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95'
                     : 'bg-slate-300 text-slate-500 cursor-not-allowed pointer-events-none'
                 }`}
               >
                 <MessageCircle className="w-4 h-4" />
-                <span>
-                  {dbApplication &&
-                  (dbApplication.status === 'submitted' ||
-                    dbApplication.status === 'pending_review' ||
-                    dbApplication.status === 'interview_scheduled' ||
-                    dbApplication.status === 'needs_info' ||
-                    dbApplication.status === 'approved')
-                    ? 'تواصل مع الإدارة عبر واتساب'
-                    : 'متابعة التقديم عبر واتساب'}
-                </span>
+                <span>تواصل معنا عبر واتساب</span>
               </a>
 
               {/* Copy Data Button */}
@@ -3172,7 +3379,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
               </p>
             ) : (
               <p className="text-[11px] sm:text-xs text-[#64748B] text-center max-w-lg mx-auto leading-relaxed">
-                فتح واتساب يجهّز رسالة طلب الانضمام إلى رقم المنصة <strong>201107889984</strong>؛ يمكنك أيضاً حفظ مسودة في حسابك وإرسالها للمراجعة في أي وقت.
+                بياناتك محفوظة، لكن الإدارة لن تراجع طلبك إلا بعد الضغط على إرسال الطلب.
               </p>
             )}
           </div>
@@ -3244,6 +3451,39 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           loadMyApplication(true, shouldResumeSubmit);
         }}
       />
+
+      {/* Mobile Fixed Submit Bar via createPortal on document.body */}
+      {!showNoticeScreen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed bottom-0 inset-x-0 z-30 sm:hidden bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] px-4 py-3 shadow-[0_-4px_16px_rgba(15,23,42,0.08)]"
+            dir="rtl"
+          >
+            <div className="max-w-lg mx-auto flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleSubmitFinalToDb}
+                disabled={isSavingDb}
+                className="flex-1 py-3 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] disabled:opacity-50"
+              >
+                {isSavingDb ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>جاري إرسال الطلب...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 text-white" />
+                    <span>إرسال الطلب للمراجعة والاعتماد</span>
+                    <ArrowLeft className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

@@ -45,7 +45,7 @@ export const ConsentBanner: React.FC = () => {
       role="region"
       aria-label="إشعار ملفات تعريف الارتباط والخصوصية"
       dir="rtl"
-      className="fixed bottom-20 lg:bottom-3 right-3 left-3 sm:left-auto sm:max-w-md z-50 bg-white/98 backdrop-blur-md border border-[#CBD5E1] rounded-2xl shadow-lg p-3.5 sm:p-4 text-xs text-[#1F2A44]"
+      className="fixed bottom-24 lg:bottom-3 right-3 left-3 sm:left-auto sm:max-w-md z-50 bg-white/98 backdrop-blur-md border border-[#CBD5E1] rounded-2xl shadow-lg p-3.5 sm:p-4 text-xs text-[#1F2A44]"
     >
       <div className="space-y-2.5">
         <p className="leading-relaxed text-[#535E7B]">

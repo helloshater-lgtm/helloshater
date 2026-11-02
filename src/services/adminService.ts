@@ -587,8 +587,10 @@ export const AdminService = {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (statusFilter && statusFilter !== 'all') {
-      if (statusFilter === 'submitted') {
+    if (statusFilter) {
+      if (statusFilter === 'all') {
+        query = query.neq('status', 'draft');
+      } else if (statusFilter === 'submitted') {
         query = query.in('status', ['submitted', 'pending_review', 'interview_scheduled']);
       } else {
         query = query.eq('status', statusFilter);
@@ -602,6 +604,10 @@ export const AdminService = {
 
     const { data, error } = await query;
     if (error) {
+      console.error('[AdminService.getApplications] Query error:', {
+        code: error.code,
+        message: error.message,
+      });
       throw new Error(`فشل جلب طلبات الانضمام: ${error.message}`);
     }
 
@@ -997,7 +1003,7 @@ export const AdminService = {
     const statusInfo = resolveTutorApplicationStatus(app.status);
     if (!statusInfo.isReviewableByAdmin) {
       if (statusInfo.canonicalKey === 'draft') {
-        throw new Error('لا يمكن مراجعة هذا الطلب أو رفضه لأنه ما زال «مسودة» ولم يقم المعلم بإرساله للمراجعة بعد.');
+        throw new Error('لا يمكن اتخاذ قرار قبل أن يرسل المعلم طلبه.');
       }
       throw new Error(`حالة الطلب الحالية (${statusInfo.detailBadgeLabel}) لا تسمح بتنفيذ هذا الإجراء.`);
     }
@@ -1009,10 +1015,20 @@ export const AdminService = {
     });
 
     if (rpcError) {
+      console.error('[AdminService.reviewApplication] RPC error:', {
+        code: rpcError.code,
+        message: rpcError.message,
+        targetStatus: status,
+      });
       throw new Error(`تعذر تحديث حالة الطلب: ${rpcError.message}`);
     }
 
     if (!rpcData || rpcData.success !== true || rpcData.status !== status) {
+      console.error('[AdminService.reviewApplication] Unexpected RPC response:', {
+        success: rpcData?.success,
+        returnedStatus: rpcData?.status,
+        targetStatus: status,
+      });
       throw new Error('تعذر تأكيد حفظ قرار المراجعة في قاعدة البيانات.');
     }
   },
@@ -1040,7 +1056,7 @@ export const AdminService = {
     const statusInfo = resolveTutorApplicationStatus(app.status);
     if (!statusInfo.isReviewableByAdmin) {
       if (statusInfo.canonicalKey === 'draft') {
-        throw new Error('لا يمكن قبول واعتماد هذا الطلب لأنه ما زال «مسودة» ولم يقم المعلم بإرساله للمراجعة بعد.');
+        throw new Error('لا يمكن اتخاذ قرار قبل أن يرسل المعلم طلبه.');
       }
       throw new Error(`حالة الطلب الحالية (${statusInfo.detailBadgeLabel}) لا تسمح بالقبول.`);
     }
@@ -1087,6 +1103,10 @@ export const AdminService = {
     }
 
     if (rpcError) {
+      console.error('[AdminService.approveApplication] RPC error:', {
+        code: rpcError.code,
+        message: rpcError.message,
+      });
       throw new Error(`تعذر اعتماد الطلب: ${rpcError.message}`);
     }
 

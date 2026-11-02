@@ -96,9 +96,14 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
 
     try {
       if (mode === 'signup') {
-        const user = await TutorApplicationService.signUp(email, password, fullName);
+        const result = await TutorApplicationService.signUp(email, password, fullName);
+        if (result.requiresEmailConfirmation || !result.session) {
+          setSuccessMessage('أرسلنا رسالة تأكيد إلى بريدك. أكّد البريد ثم سجّل الدخول لإكمال طلبك.');
+          setMode('signin');
+          return;
+        }
         onClose();
-        onSuccess(user);
+        onSuccess(result.user);
       } else {
         const user = await TutorApplicationService.signIn(email, password);
         onClose();

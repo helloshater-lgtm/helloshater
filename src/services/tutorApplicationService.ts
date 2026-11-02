@@ -110,6 +110,7 @@ export const TutorApplicationService = {
   /**
    * 2. Teacher Registration (Sign Up)
    * Note: This creates a regular auth.users record. It does NOT grant admin permissions or touch admin_users.
+   * Supports both immediate session and email confirmation (session = null).
    */
   async signUp(email: string, password: string, fullName?: string) {
     const cleanEmail = email.trim().toLowerCase();
@@ -135,11 +136,22 @@ export const TutorApplicationService = {
       if (error.message.includes('already registered')) {
         throw new Error('هذا البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول بدلاً من ذلك.');
       }
-      throw new Error(`تعذر إنشاء الحساب: ${error.message}`);
+      console.error('[TutorApplicationService.signUp] Auth error:', {
+        code: (error as any).code || 'unknown',
+        status: (error as any).status || null,
+      });
+      throw new Error('تعذر إنشاء الحساب حالياً. يرجى التحقق من البيانات والمحاولة مرة أخرى.');
     }
 
-    notifyTutorStateChanged();
-    return data.user;
+    if (data.session) {
+      notifyTutorStateChanged();
+    }
+
+    return {
+      user: data.user,
+      session: data.session,
+      requiresEmailConfirmation: !data.session,
+    };
   },
 
   /**
@@ -153,10 +165,17 @@ export const TutorApplicationService = {
     });
 
     if (error) {
+      if (error.message.toLowerCase().includes('email not confirmed')) {
+        throw new Error('أرسلنا رسالة تأكيد إلى بريدك. أكّد البريد ثم سجّل الدخول لإكمال طلبك.');
+      }
       if (error.message.includes('Invalid login credentials')) {
         throw new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.');
       }
-      throw new Error(`تعذر تسجيل الدخول: ${error.message}`);
+      console.error('[TutorApplicationService.signIn] Auth error:', {
+        code: (error as any).code || 'unknown',
+        status: (error as any).status || null,
+      });
+      throw new Error('تعذر تسجيل الدخول حالياً. يرجى المحاولة مرة أخرى.');
     }
 
     notifyTutorStateChanged();
@@ -199,8 +218,10 @@ export const TutorApplicationService = {
       .maybeSingle();
 
     if (error) {
-      console.warn('Error fetching tutor application:', error);
-      throw new Error(`تعذر تحميل بيانات طلب الانضمام: ${error.message}`);
+      console.error('[TutorApplicationService.getMyApplication] Fetch error:', {
+        code: (error as any).code || 'unknown',
+      });
+      throw new Error('تعذر تحميل بيانات طلب الانضمام حالياً. يرجى المحاولة مرة أخرى.');
     }
 
     if (!data) return null;
@@ -337,7 +358,7 @@ export const TutorApplicationService = {
         countryCode: formData.countryCode,
         phone: (formData.phone ?? '').trim(),
         whatsappNumber: (formData.phone ?? '').trim(),
-        email: user.email || formData.fullName,
+        email: user.email || '',
         track: formData.track,
         schoolSpecializations: normalizedSpecs,
         schoolCourseOptionIds:
@@ -380,12 +401,29 @@ export const TutorApplicationService = {
       );
 
       if (rpcError) {
-        throw new Error(rpcError.message || 'تعذر حفظ بيانات الطلب في الخادم.');
+        console.error('[TutorApplicationService.saveApplication] RPC error:', {
+          code: (rpcError as any).code || 'unknown',
+          isSubmit,
+          track: formData.track,
+        });
+        const msg = String(rpcError.message || '');
+        const hasArabicValidationMsg = /[\u0600-\u06FF]/.test(msg);
+        throw new Error(
+          hasArabicValidationMsg
+            ? msg
+            : isSubmit
+            ? 'تعذر إرسال الطلب في الوقت الحالي. بياناتك محفوظة، يرجى إعادة المحاولة.'
+            : 'تعذر حفظ بيانات الطلب في الخادم حالياً. يرجى إعادة المحاولة.'
+        );
       }
 
       const rawRow = Array.isArray(rpcData) ? rpcData[0] : rpcData;
       if (!rawRow || !rawRow.id) {
-        throw new Error('لم تُرجع قاعدة البيانات معرف الطلب بعد الحفظ. يرجى المحاولة مرة أخرى.');
+        console.error('[TutorApplicationService.saveApplication] Empty RPC response:', {
+          isSubmit,
+          track: formData.track,
+        });
+        throw new Error('لم يؤكد الخادم حفظ الطلب. بياناتك محفوظة، يرجى إعادة المحاولة.');
       }
 
       const record = this.mapDatabaseRowToRecord(rawRow);
@@ -393,12 +431,16 @@ export const TutorApplicationService = {
       // Strict verification for final submission
       if (isSubmit) {
         if (record.status !== 'submitted') {
+          console.error('[TutorApplicationService.saveApplication] Unexpected status on submit:', {
+            returnedStatus: record.status,
+          });
           throw new Error(
-            `لم يتم تأكيد انتقال حالة الطلب إلى «مُرسل للمراجعة» (الحالة المستلمة: ${record.status}). يرجى التحقق من البيانات والمحاولة مرة أخرى.`
+            'لم يتم تأكيد إرسال الطلب من الخادم بعد. بياناتك محفوظة، يرجى التحقق من الحقول المطلوبة وإعادة المحاولة.'
           );
         }
         if (!record.referenceCode) {
-          throw new Error('لم يتم إصدار رقم مرجع للطلب من الخادم. يرجى المحاولة مرة أخرى.');
+          console.error('[TutorApplicationService.saveApplication] Missing referenceCode on submit');
+          throw new Error('لم يتم إصدار رقم مرجع للطلب من الخادم. يرجى إعادة المحاولة.');
         }
         lockedSubmittedUsers.add(userId);
       } else if (record.status === 'draft' || record.status === 'needs_info') {

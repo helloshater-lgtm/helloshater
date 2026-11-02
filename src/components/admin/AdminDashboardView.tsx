@@ -358,6 +358,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
               setActiveTab('tutors');
               handleEditTutor(tutorId);
             }}
+            onDecisionCompleted={() => {
+              loadTutors();
+              AdminService.getApplications(undefined)
+                .then((apps) => {
+                  const count = apps.filter(
+                    (a) => a.status !== 'draft' && (a.status === 'submitted' || a.status === 'pending_review' || a.status === 'interview_scheduled' || a.status === 'needs_info')
+                  ).length;
+                  setPendingApplicationsCount(count);
+                })
+                .catch(() => {});
+            }}
           />
         ) : (
           <AdminApplicationsListView
