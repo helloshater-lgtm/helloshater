@@ -936,8 +936,18 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                       key={idx}
                       className="p-3.5 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] flex items-start gap-2.5"
                     >
-                      <span className="w-5 h-5 rounded-full bg-[#0D4E8B]/10 text-[#0D4E8B] flex items-center justify-center shrink-0 mt-0.5">
-                        <Check className="w-3 h-3" />
+                      <span
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                          q.verified === true
+                            ? 'bg-[#0D4E8B]/10 text-[#0D4E8B]'
+                            : 'bg-slate-200/70 text-[#64748B]'
+                        }`}
+                      >
+                        {q.verified === true ? (
+                          <Check className="w-3 h-3" />
+                        ) : (
+                          <GraduationCap className="w-3 h-3" />
+                        )}
                       </span>
                       <div className="space-y-0.5">
                         <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">

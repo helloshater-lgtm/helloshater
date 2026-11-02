@@ -97,26 +97,6 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               >
                 تقدّم كمعلم
               </button>
-              <a
-                href="#privacy"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onNavigate('privacy');
-                }}
-                className="text-right hover:text-white transition-colors cursor-pointer py-1"
-              >
-                سياسة الخصوصية
-              </a>
-              <a
-                href="#terms"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onNavigate('terms');
-                }}
-                className="text-right hover:text-white transition-colors cursor-pointer py-1"
-              >
-                الشروط والأحكام
-              </a>
             </div>
           </div>
         </div>
