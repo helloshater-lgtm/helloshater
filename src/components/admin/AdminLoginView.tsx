@@ -74,7 +74,7 @@ export const AdminLoginView: React.FC<AdminLoginViewProps> = ({
                 dir="ltr"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@shaterclasses.com"
+                placeholder="admin@shatirclasses.com"
                 required
                 className="w-full pl-3 pr-10 py-2.5 rounded-xl border border-[#CBD5E1] focus:border-[#0D4E8B] focus:ring-2 focus:ring-[#0D4E8B]/10 outline-none text-sm transition-all text-left"
               />

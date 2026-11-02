@@ -29,6 +29,9 @@ import {
   resolveExplicitSubjectId,
   validateAndResolveSchoolSpecializations,
   validateAndResolveQuranSpecializations,
+  extractSpecializationErrorsFromMessage,
+  normalizeSchoolValidationErrorText,
+  getSupportedCatalogForSubject,
 } from '../utils/formatters';
 import {
   Info,
@@ -242,7 +245,6 @@ const FALLBACK_GRADES: Grade[] = [
 const FALLBACK_CURRICULA: CurriculumOption[] = [
   { id: 'national_arabic', name: 'عربي (حكومي / أهلي)', description: 'المنهج الوزاري العام والمدارس الحكومية والأهلية باللغة العربية' },
   { id: 'languages_experimental', name: 'لغات / تجريبي (Languages)', description: 'مدارس اللغات والمدارس التجريبية الرسمية والمتميزة' },
-  { id: 'international', name: 'مناهج دولية (IGCSE / SAT)', description: 'النظام البريطاني والأمريكي والبرامج الدولية' },
 ];
 
 const FALLBACK_QURAN_AGES: QuranAgeGroup[] = [
@@ -354,6 +356,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 }) => {
   const [formData, setFormData] = useState<TutorApplicationFormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [specCardErrors, setSpecCardErrors] = useState<Record<number, string[]>>({});
   const [showNoticeScreen, setShowNoticeScreen] = useState<boolean>(false);
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(false);
   const [copiedMessage, setCopiedMessage] = useState<boolean>(false);
@@ -391,6 +394,41 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
   const [liveSubjects, setLiveSubjects] = useState<Subject[]>([]);
   const [liveCourseOptions, setLiveCourseOptions] = useState<DatabaseSchoolCourseOption[]>([]);
   const isSubmittingFinalRef = useRef<boolean>(false);
+  const lastLoadedAuthUserIdRef = useRef<string | null>(null);
+
+  const normalizeSpecializationItemForForm = (
+    sp: any,
+    index: number
+  ): SchoolSpecializationItem => {
+    const rawSubj = typeof sp?.subjectId === 'string' ? sp.subjectId.trim() : '';
+    const rawLang =
+      typeof sp?.teachingLanguage === 'string' ? sp.teachingLanguage.trim().toLowerCase() : '';
+    const resolvedSubj = rawSubj ? resolveExplicitSubjectId(rawSubj, rawLang) : '';
+    const def = FORM_SUBJECT_DEFINITIONS.find((d) => d.id === resolvedSubj);
+    const syncedLang: 'arabic' | 'english' =
+      rawLang === 'arabic' || rawLang === 'english'
+        ? rawLang
+        : def
+        ? def.teachingLanguage
+        : 'arabic';
+
+    const rawCurr = String(
+      sp?.curriculumType || sp?.curriculumId || sp?.curriculumTypeId || 'national_arabic'
+    ).trim() as CurriculumType;
+    const rawStage = String(sp?.stageId || 'elementary').trim() as StageId;
+    const rawGrades = Array.isArray(sp?.gradeIds)
+      ? sp.gradeIds.map((g: any) => String(g || '').trim()).filter(Boolean)
+      : [];
+
+    return {
+      id: String(sp?.id || `spec_restored_${index + 1}`),
+      subjectId: resolvedSubj,
+      teachingLanguage: syncedLang,
+      curriculumType: rawCurr,
+      stageId: rawStage,
+      gradeIds: rawGrades,
+    };
+  };
 
   // Initialize Auth & listen to changes
   useEffect(() => {
@@ -400,8 +438,10 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
         if (!isMounted) return;
         setCurrentUser(user);
         if (user) {
+          lastLoadedAuthUserIdRef.current = user.id;
           loadMyApplication(false);
         } else {
+          lastLoadedAuthUserIdRef.current = null;
           setIsLoadingAccount(false);
         }
       })
@@ -414,8 +454,14 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       setCurrentUser(user);
       if (user) {
         setIsAuthModalOpen(false);
-        loadMyApplication(true);
+        // Only load from DB when the authenticated user actually changes (e.g. sign-in)
+        // so background token refreshes do not overwrite in-progress form edits
+        if (lastLoadedAuthUserIdRef.current !== user.id && !isSubmittingFinalRef.current) {
+          lastLoadedAuthUserIdRef.current = user.id;
+          loadMyApplication(true);
+        }
       } else {
+        lastLoadedAuthUserIdRef.current = null;
         setDbApplication(null);
         setIsTutorPublished(null);
         setApplicantTutorId(null);
@@ -507,11 +553,18 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           }
           saveDraft(formData);
           setShowNoticeScreen(false);
+          const rawMsg =
+            submitErr?.message ||
+            'تم تسجيل دخولك بنجاح، لكن تعذر إتمام الإرسال النهائي للطلب. بياناتك محفوظة في النموذج، يرجى الضغط على «إعادة محاولة إرسال الطلب».';
+          const normalizedMsg = normalizeSchoolValidationErrorText(rawMsg);
+          const extractedSpecErrors = extractSpecializationErrorsFromMessage(normalizedMsg);
+          if (Object.keys(extractedSpecErrors).length > 0) {
+            setSpecCardErrors(extractedSpecErrors);
+            setErrors((prev) => ({ ...prev, schoolSpecializations: normalizedMsg }));
+          }
           setSaveStatusMessage({
             type: 'error',
-            text:
-              submitErr?.message ||
-              'تم تسجيل دخولك بنجاح، لكن تعذر إتمام الإرسال النهائي للطلب. بياناتك محفوظة في النموذج، يرجى الضغط على «إعادة محاولة إرسال الطلب».',
+            text: normalizedMsg,
             canRetrySubmit: true,
           });
           return;
@@ -520,6 +573,11 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
       if (app) {
         setDbApplication(app);
+        const normalizedDbSpecs = app.schoolSpecializations?.length
+          ? app.schoolSpecializations.map((sp: any, idx: number) =>
+              normalizeSpecializationItemForForm(sp, idx)
+            )
+          : null;
         // Fill form data from DB record
         setFormData((prev) => ({
           ...prev,
@@ -527,8 +585,21 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           countryCode: app.countryCode || prev.countryCode,
           phone: app.phone || prev.phone,
           track: app.track || prev.track,
-          schoolSpecializations: app.schoolSpecializations?.length ? app.schoolSpecializations : prev.schoolSpecializations,
-          schoolCourseOptionIds: app.schoolCourseOptionIds?.length ? app.schoolCourseOptionIds : prev.schoolCourseOptionIds,
+          schoolSpecializations: normalizedDbSpecs || prev.schoolSpecializations,
+          schoolCourseOptionIds: normalizedDbSpecs?.length
+            ? []
+            : app.schoolCourseOptionIds?.length
+            ? app.schoolCourseOptionIds
+            : prev.schoolCourseOptionIds,
+          subjects: normalizedDbSpecs?.length
+            ? Array.from(new Set(normalizedDbSpecs.map((s) => s.subjectId).filter(Boolean)))
+            : prev.subjects,
+          stages: normalizedDbSpecs?.length
+            ? (Array.from(new Set(normalizedDbSpecs.map((s) => s.stageId).filter(Boolean))) as StageId[])
+            : prev.stages,
+          curricula: normalizedDbSpecs?.length
+            ? (Array.from(new Set(normalizedDbSpecs.map((s) => s.curriculumType).filter(Boolean))) as CurriculumType[])
+            : prev.curricula,
           quranAgeGroups: app.quranAgeGroups?.length ? app.quranAgeGroups : prev.quranAgeGroups,
           quranLevels: app.quranLevels?.length ? app.quranLevels : prev.quranLevels,
           quranOfferings: app.quranOfferings?.length ? app.quranOfferings : prev.quranOfferings,
@@ -709,6 +780,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       }
       setDbApplication(submitted);
       setPendingSubmitAfterAuth(false);
+      setSpecCardErrors({});
       setSaveStatusMessage({
         type: 'success',
         text: `تم إرسال طلبك للمراجعة والاعتماد بنجاح! رقم المرجع: ${submitted.referenceCode}`,
@@ -717,19 +789,32 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err: any) {
       saveDraft(formData);
+      const rawErrMsg =
+        err?.message ||
+        'تعذر إرسال الطلب للمراجعة والاعتماد. تم الاحتفاظ بجميع بياناتك في النموذج، يرجى المراجعة والمحاولة مرة أخرى.';
+      const normalizedErrMsg = normalizeSchoolValidationErrorText(rawErrMsg);
+      const extractedSpecErrors = extractSpecializationErrorsFromMessage(normalizedErrMsg);
+      if (Object.keys(extractedSpecErrors).length > 0) {
+        setSpecCardErrors(extractedSpecErrors);
+        setErrors((prev) => ({ ...prev, schoolSpecializations: normalizedErrMsg }));
+        const firstSpecIdx = Number(Object.keys(extractedSpecErrors)[0]);
+        const cardEl = document.getElementById(`form-field-schoolSpecialization-${firstSpecIdx}`);
+        if (cardEl) {
+          cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } else {
+        const bannerEl = document.getElementById('application-save-status-banner');
+        if (bannerEl) {
+          bannerEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }
       setSaveStatusMessage({
         type: 'error',
-        text:
-          err?.message ||
-          'تعذر إرسال الطلب للمراجعة والاعتماد. تم الاحتفاظ بجميع بياناتك في النموذج، يرجى المراجعة والمحاولة مرة أخرى.',
+        text: normalizedErrMsg,
         canRetrySubmit: true,
       });
-      const bannerEl = document.getElementById('application-save-status-banner');
-      if (bannerEl) {
-        bannerEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } else {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
     } finally {
       isSubmittingFinalRef.current = false;
       setIsSavingDb(false);
@@ -874,14 +959,23 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           parsed.termsAccepted = false;
           parsed.termsPolicyVersion = TUTOR_COOPERATION_POLICY_VERSION;
         }
-        // Ensure schoolSpecializations exists if restored from older draft
+        // Ensure schoolSpecializations exists if restored from older draft without coercing empty subjectId to 'math'
         if (!parsed.schoolSpecializations || parsed.schoolSpecializations.length === 0) {
           parsed.schoolSpecializations = [createDefaultSpecialization('migrated')];
         } else {
-          parsed.schoolSpecializations = parsed.schoolSpecializations.map((sp: any) => ({
-            ...sp,
-            subjectId: resolveExplicitSubjectId(sp.subjectId, sp.teachingLanguage) || 'math',
-          }));
+          parsed.schoolSpecializations = parsed.schoolSpecializations.map((sp: any, idx: number) =>
+            normalizeSpecializationItemForForm(sp, idx)
+          );
+          parsed.schoolCourseOptionIds = [];
+          parsed.subjects = Array.from(
+            new Set(parsed.schoolSpecializations.map((s: any) => s.subjectId).filter(Boolean))
+          );
+          parsed.stages = Array.from(
+            new Set(parsed.schoolSpecializations.map((s: any) => s.stageId).filter(Boolean))
+          );
+          parsed.curricula = Array.from(
+            new Set(parsed.schoolSpecializations.map((s: any) => s.curriculumType).filter(Boolean))
+          );
         }
         setFormData((prev) => ({ ...prev, ...parsed }));
       }
@@ -900,16 +994,34 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
   const handleInputChange = (field: keyof TutorApplicationFormData, value: any) => {
     setFormData((prev) => {
+      const extraUpdates: Partial<TutorApplicationFormData> = {};
+      if (field === 'termsAccepted') {
+        extraUpdates.termsPolicyVersion = value ? TUTOR_COOPERATION_POLICY_VERSION : '';
+      }
+      if (field === 'schoolSpecializations' && Array.isArray(value)) {
+        extraUpdates.schoolCourseOptionIds = [];
+        extraUpdates.subjects = Array.from(
+          new Set(value.map((s: SchoolSpecializationItem) => s.subjectId).filter(Boolean))
+        );
+        extraUpdates.stages = Array.from(
+          new Set(value.map((s: SchoolSpecializationItem) => s.stageId).filter(Boolean))
+        ) as StageId[];
+        extraUpdates.curricula = Array.from(
+          new Set(value.map((s: SchoolSpecializationItem) => s.curriculumType).filter(Boolean))
+        ) as CurriculumType[];
+      }
       const updated = {
         ...prev,
         [field]: value,
-        ...(field === 'termsAccepted'
-          ? { termsPolicyVersion: value ? TUTOR_COOPERATION_POLICY_VERSION : '' }
-          : {}),
+        ...extraUpdates,
       };
       saveDraft(updated);
       return updated;
     });
+
+    if (field === 'schoolSpecializations' || field === 'track') {
+      setSpecCardErrors({});
+    }
 
     if (errors[field] || (field === 'termsAccepted' && errors.terms)) {
       setErrors((prev) => {
@@ -939,16 +1051,57 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       if (spec.id !== id) return spec;
       const merged = { ...spec, ...updates };
 
-      // If subject changed, auto-update teachingLanguage
-      if (updates.subjectId) {
+      // Always keep teachingLanguage strictly synced with the selected subject definition
+      if (updates.subjectId !== undefined) {
         const def = FORM_SUBJECT_DEFINITIONS.find((d) => d.id === updates.subjectId);
         if (def) {
+          merged.subjectId = def.id;
           merged.teachingLanguage = def.teachingLanguage;
         }
       }
 
-      // If stage changed, default to grades of new stage
-      if (updates.stageId && updates.stageId !== spec.stageId) {
+      if (merged.subjectId) {
+        const catalog = getSupportedCatalogForSubject(
+          merged.subjectId,
+          liveCourseOptions,
+          allGrades
+        );
+
+        // If subjectId changed and current curriculum is not valid for the new subject, default to supported curriculum
+        if (
+          updates.subjectId !== undefined &&
+          !catalog.allowedCurricula.includes(merged.curriculumType as any)
+        ) {
+          merged.curriculumType = catalog.defaultCurriculum;
+        }
+
+        // If subjectId or curriculumType changed and current stage is not supported, default to first supported stage
+        const allowedStages = catalog.getAllowedStages(merged.curriculumType);
+        if (
+          (updates.subjectId !== undefined || updates.curriculumType !== undefined) &&
+          allowedStages.length > 0 &&
+          !allowedStages.includes(merged.stageId as any)
+        ) {
+          merged.stageId = allowedStages[0];
+        }
+
+        // If subjectId, curriculumType, or stageId changed, align gradeIds with valid supported grades for that stage
+        if (
+          updates.subjectId !== undefined ||
+          updates.curriculumType !== undefined ||
+          updates.stageId !== undefined
+        ) {
+          const allowedGrades = catalog.getAllowedGrades(merged.curriculumType, merged.stageId);
+          const stageChanged = updates.stageId !== undefined && updates.stageId !== spec.stageId;
+          const preservedValidGrades = stageChanged
+            ? []
+            : merged.gradeIds.filter((g) => allowedGrades.includes(g));
+          merged.gradeIds =
+            preservedValidGrades.length > 0
+              ? preservedValidGrades
+              : allowedGrades.slice(0, 3);
+        }
+      } else if (updates.stageId && updates.stageId !== spec.stageId) {
         const stageGrades = allGrades.filter((g) => g.stageId === updates.stageId).map((g) => g.id);
         merged.gradeIds = stageGrades.slice(0, 3);
       }
@@ -970,6 +1123,15 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
   };
 
   const selectAllGradesInSpecialization = (specId: string, stageId: StageId) => {
+    const spec = formData.schoolSpecializations.find((s) => s.id === specId);
+    if (spec?.subjectId) {
+      const catalog = getSupportedCatalogForSubject(spec.subjectId, liveCourseOptions, allGrades);
+      const allowedGrades = catalog.getAllowedGrades(spec.curriculumType, stageId);
+      if (allowedGrades.length > 0) {
+        updateSpecialization(specId, { gradeIds: allowedGrades });
+        return;
+      }
+    }
     const stageGrades = allGrades.filter((g) => g.stageId === stageId).map((g) => g.id);
     updateSpecialization(specId, { gradeIds: stageGrades });
   };
@@ -1030,18 +1192,37 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       newErrors.phone = 'يرجى التأكد من صحة رقم الهاتف وعدد أرقامه';
     }
 
+    const newSpecCardErrors: Record<number, string[]> = {};
+
     // 3. Track Specializations (including explicit reference validation if reference data is loaded)
     if (formData.track === 'school') {
       if (!formData.schoolSpecializations || formData.schoolSpecializations.length === 0) {
         newErrors.schoolSpecializations = 'يرجى إضافة تخصص تدريسي واحد على الأقل للمتابعة';
       } else {
-        const hasEmptyGrades = formData.schoolSpecializations.some((s) => s.gradeIds.length === 0);
-        if (hasEmptyGrades) {
-          newErrors.schoolSpecializations = 'يرجى اختيار صف دراسي واحد على الأقل لكل تخصص مضاف';
+        formData.schoolSpecializations.forEach((s, idx) => {
+          if (!s.subjectId) {
+            newSpecCardErrors[idx] = [
+              ...(newSpecCardErrors[idx] || []),
+              `التخصص الدراسي رقم (${idx + 1}): يرجى اختيار المادة ولغة التدريس المعتمدة.`,
+            ];
+          }
+          if (!s.gradeIds || s.gradeIds.length === 0) {
+            newSpecCardErrors[idx] = [
+              ...(newSpecCardErrors[idx] || []),
+              `التخصص الدراسي رقم (${idx + 1}): يرجى اختيار صف دراسي واحد على الأقل لهذا التخصص.`,
+            ];
+          }
+        });
+
+        if (Object.keys(newSpecCardErrors).length > 0) {
+          newErrors.schoolSpecializations = Object.values(newSpecCardErrors)
+            .flat()
+            .join(' — ');
         } else if (liveSubjects.length > 0 && liveCourseOptions.length > 0) {
           const valResult = validateAndResolveSchoolSpecializations({
             specializations: formData.schoolSpecializations,
-            directCourseOptionIds: formData.schoolCourseOptionIds,
+            directCourseOptionIds:
+              formData.schoolSpecializations.length > 0 ? [] : formData.schoolCourseOptionIds,
             referenceData: {
               subjects: liveSubjects.map((s) => ({
                 id: s.id,
@@ -1062,6 +1243,10 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
           });
           if (!valResult.isValid) {
             newErrors.schoolSpecializations = valResult.unmatchedItems.join(' — ');
+            Object.entries(valResult.errorsBySpecIndex).forEach(([idxStr, msgs]) => {
+              const idxNum = Number(idxStr);
+              newSpecCardErrors[idxNum] = msgs;
+            });
           }
         }
       }
@@ -1147,11 +1332,20 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
       newErrors.terms = 'يجب قراءة سياسة التعاون مع شاطر والموافقة عليها لمتابعة تقديم الطلب';
     }
 
+    setSpecCardErrors(newSpecCardErrors);
     setErrors(newErrors);
 
     if (Object.keys(newErrors).length > 0) {
-      // Scroll to the first error element
+      // Scroll to the first affected specialization card if applicable, or first error element
       const firstErrorKey = Object.keys(newErrors)[0];
+      if (firstErrorKey === 'schoolSpecializations' && Object.keys(newSpecCardErrors).length > 0) {
+        const firstSpecIdx = Number(Object.keys(newSpecCardErrors)[0]);
+        const cardEl = document.getElementById(`form-field-schoolSpecialization-${firstSpecIdx}`);
+        if (cardEl) {
+          cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return false;
+        }
+      }
       const el = document.getElementById(`form-field-${firstErrorKey}`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1831,7 +2025,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
             {/* School Track: Structured Multi-Specializations */}
             {formData.track === 'school' ? (
               <div className="space-y-4 pt-1">
-                {errors.schoolSpecializations && (
+                {errors.schoolSpecializations && Object.keys(specCardErrors).length === 0 && (
                   <p className="text-xs text-red-600 font-bold p-3 rounded-xl bg-red-50 border border-red-200 flex items-center gap-1.5">
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     <span>{errors.schoolSpecializations}</span>
@@ -1840,11 +2034,43 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
                 <div className="space-y-4">
                   {formData.schoolSpecializations.map((spec, index) => {
-                    const stageGrades = allGrades.filter((g) => g.stageId === spec.stageId);
+                    const catalog = spec.subjectId
+                      ? getSupportedCatalogForSubject(spec.subjectId, liveCourseOptions, allGrades)
+                      : null;
+                    const allowedCurrIds = catalog ? new Set<string>(catalog.allowedCurricula) : null;
+                    const cardCurricula = curricula.filter(
+                      (c) => !allowedCurrIds || allowedCurrIds.has(c.id) || c.id === spec.curriculumType
+                    );
+                    const allowedStageIds = catalog
+                      ? new Set<string>(catalog.getAllowedStages(spec.curriculumType))
+                      : null;
+                    const cardStages = stages.filter(
+                      (stg) => !allowedStageIds || allowedStageIds.has(stg.id) || stg.id === spec.stageId
+                    );
+                    const allowedGradeIds = catalog
+                      ? new Set<string>(catalog.getAllowedGrades(spec.curriculumType, spec.stageId))
+                      : null;
+                    const stageGrades = allGrades.filter(
+                      (g) =>
+                        g.stageId === spec.stageId &&
+                        (!allowedGradeIds || allowedGradeIds.has(g.id) || spec.gradeIds.includes(g.id))
+                    );
+                    const matchedSubjDef = FORM_SUBJECT_DEFINITIONS.find(
+                      (d) =>
+                        d.id === spec.subjectId &&
+                        (!spec.teachingLanguage || d.teachingLanguage === spec.teachingLanguage)
+                    );
+                    const selectSubjValue = matchedSubjDef ? matchedSubjDef.id : '';
+                    const cardErrorList = specCardErrors[index] || [];
                     return (
                       <div
                         key={spec.id}
-                        className="p-4 sm:p-5 rounded-2xl bg-[#F8FAFD] border border-[#CBD5E1] space-y-4 relative transition-all"
+                        id={`form-field-schoolSpecialization-${index}`}
+                        className={`p-4 sm:p-5 rounded-2xl bg-[#F8FAFD] border space-y-4 relative transition-all ${
+                          cardErrorList.length > 0
+                            ? 'border-red-400 ring-2 ring-red-100'
+                            : 'border-[#CBD5E1]'
+                        }`}
                       >
                         {/* Header of Specialization Card */}
                         <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[#E2E8F0]">
@@ -1869,6 +2095,20 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                           )}
                         </div>
 
+                        {cardErrorList.length > 0 && (
+                          <div
+                            role="alert"
+                            className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 font-bold space-y-1.5"
+                          >
+                            {cardErrorList.map((errMsg, errIdx) => (
+                              <div key={errIdx} className="flex items-start gap-1.5">
+                                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                                <span className="leading-relaxed">{errMsg}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         {/* Subject Selection (Clearly separating Arabic & English teaching) */}
                         <div className="space-y-1.5">
                           <label className="text-xs font-bold text-[#1F2A44] flex items-center justify-between">
@@ -1878,10 +2118,17 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                             </span>
                           </label>
                           <select
-                            value={spec.subjectId}
+                            value={selectSubjValue}
                             onChange={(e) => updateSpecialization(spec.id, { subjectId: e.target.value })}
-                            className="w-full h-11 px-3 rounded-xl bg-white border border-[#CBD5E1] text-xs sm:text-sm font-bold text-[#1F2A44] focus:outline-none focus:ring-2 focus:ring-[#0D4E8B]"
+                            className={`w-full h-11 px-3 rounded-xl bg-white border text-xs sm:text-sm font-bold text-[#1F2A44] focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] ${
+                              !selectSubjValue ? 'border-red-400' : 'border-[#CBD5E1]'
+                            }`}
                           >
+                            {!selectSubjValue && (
+                              <option value="" disabled>
+                                — اختر المادة ولغة التدريس المعتمدة —
+                              </option>
+                            )}
                             <optgroup label="الرياضيات واللغات">
                               {FORM_SUBJECT_DEFINITIONS.filter((s) => s.category === 'core').map((s) => (
                                 <option key={s.id} value={s.id}>
@@ -1912,7 +2159,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-[#1F2A44] block">نوع المنهج:</label>
                             <select
-                              value={spec.curriculumType}
+                              value={cardCurricula.some((c) => c.id === spec.curriculumType) ? spec.curriculumType : ''}
                               onChange={(e) =>
                                 updateSpecialization(spec.id, {
                                   curriculumType: e.target.value as CurriculumType,
@@ -1920,7 +2167,12 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                               }
                               className="w-full h-10 px-3 rounded-xl bg-white border border-[#CBD5E1] text-xs text-[#1F2A44] font-medium focus:outline-none focus:ring-2 focus:ring-[#0D4E8B]"
                             >
-                              {curricula.map((c) => (
+                              {!cardCurricula.some((c) => c.id === spec.curriculumType) && (
+                                <option value="" disabled>
+                                  — اختر نوع المنهج —
+                                </option>
+                              )}
+                              {cardCurricula.map((c) => (
                                 <option key={c.id} value={c.id}>
                                   {c.name}
                                 </option>
@@ -1932,7 +2184,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-[#1F2A44] block">المرحلة الدراسية:</label>
                             <select
-                              value={spec.stageId}
+                              value={cardStages.some((stg) => stg.id === spec.stageId) ? spec.stageId : ''}
                               onChange={(e) =>
                                 updateSpecialization(spec.id, {
                                   stageId: e.target.value as StageId,
@@ -1940,7 +2192,12 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                               }
                               className="w-full h-10 px-3 rounded-xl bg-white border border-[#CBD5E1] text-xs text-[#1F2A44] font-medium focus:outline-none focus:ring-2 focus:ring-[#0D4E8B]"
                             >
-                              {stages.map((stg) => (
+                              {!cardStages.some((stg) => stg.id === spec.stageId) && (
+                                <option value="" disabled>
+                                  — اختر المرحلة الدراسية —
+                                </option>
+                              )}
+                              {cardStages.map((stg) => (
                                 <option key={stg.id} value={stg.id}>
                                   {stg.name}
                                 </option>
@@ -2979,6 +3236,9 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
         initialMode={authModalMode}
         onSuccess={(user) => {
           const shouldResumeSubmit = pendingSubmitAfterAuth;
+          if (user?.id) {
+            lastLoadedAuthUserIdRef.current = user.id;
+          }
           setIsAuthModalOpen(false);
           setCurrentUser(user);
           loadMyApplication(true, shouldResumeSubmit);

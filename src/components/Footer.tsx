@@ -1,10 +1,11 @@
 import React from 'react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { trackWhatsAppClicked } from '../services/analytics';
+import { toArabicDigits } from '../utils/formatters';
 import { MessageCircle } from 'lucide-react';
 
 interface FooterProps {
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard') => void;
+  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard' | 'privacy' | 'terms') => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
@@ -29,13 +30,18 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           <div className="space-y-3 max-w-md">
             <div className="flex items-center gap-2.5">
               <img
-                src="https://lh3.googleusercontent.com/aida/AEtjO1UolB2EZg5wI-hdvQk-DgSs34vjBDfqtw6OgT1GEuYaj1E4RQhBB4TuVRd10UsVfiqY4KzIMhPXYEUjrDImcT7u4roLgWtr43n62oIP7BKAd1jjluVdsrQ9K7L1Z2ra_YYN6jQWhYQ012_17GBZXBV5OIbZVOPG3GE39F-m7z1AynGUU02TBmDzkj-a8YCMUNnoBnpncqN6Au1kHrFFGvJCnzV4pe7gAhv_6DSQoJ2SUCHlhkKHxl8-zz5fo_ExWQbNa7LvILPfgw"
+                src="/logo.png"
                 alt="شعار شاطر"
                 className="w-8 h-8 rounded-full object-cover border border-white/20"
                 onError={(e) => {
                   e.currentTarget.style.display = 'none';
+                  const fallback = e.currentTarget.parentElement?.querySelector('.logo-fallback');
+                  if (fallback) fallback.classList.remove('hidden');
                 }}
               />
+              <div className="logo-fallback hidden w-8 h-8 rounded-full bg-[#0D4E8B] text-white flex items-center justify-center font-bold text-xs font-['Cairo'] border border-[#FFC629]">
+                شاطر
+              </div>
               <span className="font-['Cairo'] font-bold text-lg text-white">
                 شاطر <span className="text-[#FFC629]">كلاسيز</span>
               </span>
@@ -91,20 +97,56 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               >
                 تقدّم كمعلم
               </button>
+              <a
+                href="#privacy"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onNavigate('privacy');
+                }}
+                className="text-right hover:text-white transition-colors cursor-pointer py-1"
+              >
+                سياسة الخصوصية
+              </a>
+              <a
+                href="#terms"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onNavigate('terms');
+                }}
+                className="text-right hover:text-white transition-colors cursor-pointer py-1"
+              >
+                الشروط والأحكام
+              </a>
             </div>
           </div>
         </div>
 
         {/* Bottom Bar: Copyright with auto-updating year */}
         <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#C2C6D1]">
-          <span>© {new Date().getFullYear()} شاطر (Shatir Classes). جميع الحقوق محفوظة.</span>
-          <button
-            type="button"
-            onClick={() => onNavigate('admin')}
-            className="text-slate-400 hover:text-white transition-colors cursor-pointer text-[11px]"
-          >
-            لوحة الإدارة
-          </button>
+          <span>© {toArabicDigits(new Date().getFullYear())} شاطر (Shatir Classes). جميع الحقوق محفوظة.</span>
+          <div className="flex items-center gap-4 text-[11px] text-[#C2C6D1]">
+            <a
+              href="#privacy"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigate('privacy');
+              }}
+              className="hover:text-white transition-colors"
+            >
+              سياسة الخصوصية
+            </a>
+            <span>•</span>
+            <a
+              href="#terms"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigate('terms');
+              }}
+              className="hover:text-white transition-colors"
+            >
+              الشروط والأحكام
+            </a>
+          </div>
         </div>
       </div>
     </footer>

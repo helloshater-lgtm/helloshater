@@ -3,7 +3,7 @@
  * Main Application Orchestrator
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import {
   SearchCriteria,
   Tutor,
@@ -26,8 +26,8 @@ import { WhatsAppFloatingButton } from './components/WhatsAppFloatingButton';
 import { HomeView } from './components/HomeView';
 import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
-import { AdminDashboardView } from './components/admin/AdminDashboardView';
-import { TutorDashboardView } from './components/tutor/TutorDashboardView';
+import { LegalPagesView } from './components/LegalPagesView';
+import { ConsentBanner } from './components/ConsentBanner';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import {
   trackPageView,
@@ -35,7 +35,28 @@ import {
   resetTutorProfileTracking,
 } from './services/analytics';
 
-type AppView = 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard';
+const AdminDashboardView = lazy(() =>
+  import('./components/admin/AdminDashboardView').then((mod) => ({
+    default: mod.AdminDashboardView,
+  }))
+);
+const TutorDashboardView = lazy(() =>
+  import('./components/tutor/TutorDashboardView').then((mod) => ({
+    default: mod.TutorDashboardView,
+  }))
+);
+
+type AppView =
+  | 'home'
+  | 'tutor-profile'
+  | 'join-as-tutor'
+  | 'admin'
+  | 'tutor-dashboard'
+  | 'privacy'
+  | 'terms';
+
+const DEFAULT_DOCUMENT_TITLE =
+  'شاطر كلاسيز — Shatir Classes | منصة أولياء الأمور لاختيار أفضل المعلمين الخصوصيين';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
@@ -93,6 +114,12 @@ export default function App() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (view === 'admin') {
       window.location.hash = '#admin';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (view === 'privacy') {
+      window.location.hash = '#privacy';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (view === 'terms') {
+      window.location.hash = '#terms';
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, []);
@@ -172,6 +199,12 @@ export default function App() {
         setCurrentView('tutor-dashboard');
       } else if (hash.startsWith('#admin')) {
         setCurrentView('admin');
+      } else if (hash === '#privacy') {
+        setCurrentView('privacy');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else if (hash === '#terms') {
+        setCurrentView('terms');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
         setCurrentView('home');
         if (savedScrollPosition > 0) {
@@ -201,11 +234,31 @@ export default function App() {
     } else if (currentView === 'admin') {
       trackPageView('/#admin', 'لوحة إدارة شاطر كلاسيز');
       resetTutorProfileTracking();
+    } else if (currentView === 'privacy') {
+      trackPageView('/#privacy', 'سياسة الخصوصية | شاطر كلاسيز');
+      resetTutorProfileTracking();
+    } else if (currentView === 'terms') {
+      trackPageView('/#terms', 'الشروط والأحكام | شاطر كلاسيز');
+      resetTutorProfileTracking();
     } else if (currentView === 'tutor-profile' && selectedTutorId) {
       trackPageView(`/#tutor/${selectedTutorId}`, 'ملف المعلم | شاطر كلاسيز');
       trackTutorProfileOpened(selectedTutorId);
     }
   }, [currentView, selectedTutorId]);
+
+  // Update document.title dynamically based on current view & loaded tutor
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (currentView === 'tutor-profile' && currentTutor?.name) {
+      document.title = `${currentTutor.name} | شاطر كلاسيز`;
+    } else if (currentView === 'privacy') {
+      document.title = 'سياسة الخصوصية | شاطر كلاسيز';
+    } else if (currentView === 'terms') {
+      document.title = 'الشروط والأحكام | شاطر كلاسيز';
+    } else {
+      document.title = DEFAULT_DOCUMENT_TITLE;
+    }
+  }, [currentView, currentTutor]);
 
   // Fetch tutor from Supabase. If old mock tutor or unpublished, show "ملف المعلم غير متاح"
   useEffect(() => {
@@ -362,20 +415,49 @@ export default function App() {
         )}
 
         {currentView === 'tutor-dashboard' && (
-          <TutorDashboardView
-            onNavigateHome={() => handleNavigate('home')}
-            onNavigateToJoin={() => handleNavigate('join-as-tutor')}
-            onNavigateToPublicProfile={(tutorId) => handleSelectTutor(tutorId)}
-          />
+          <Suspense
+            fallback={
+              <div className="max-w-md mx-auto my-20 p-10 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
+                <p className="text-sm font-medium text-[#64748B]">جاري تحميل لوحة المعلم...</p>
+              </div>
+            }
+          >
+            <TutorDashboardView
+              onNavigateHome={() => handleNavigate('home')}
+              onNavigateToJoin={() => handleNavigate('join-as-tutor')}
+              onNavigateToPublicProfile={(tutorId) => handleSelectTutor(tutorId)}
+            />
+          </Suspense>
         )}
 
         {currentView === 'admin' && (
-          <AdminDashboardView onNavigateHome={() => handleNavigate('home')} />
+          <Suspense
+            fallback={
+              <div className="max-w-md mx-auto my-20 p-10 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
+                <p className="text-sm font-medium text-[#64748B]">جاري تحميل لوحة الإدارة...</p>
+              </div>
+            }
+          >
+            <AdminDashboardView onNavigateHome={() => handleNavigate('home')} />
+          </Suspense>
+        )}
+
+        {(currentView === 'privacy' || currentView === 'terms') && (
+          <LegalPagesView
+            page={currentView}
+            onNavigateHome={() => handleNavigate('home')}
+            onSwitchPage={(page) => handleNavigate(page)}
+          />
         )}
       </main>
 
       {/* Global Footer */}
       <Footer onNavigate={handleNavigate} />
+
+      {/* Google Consent Mode Banner */}
+      <ConsentBanner />
 
       {/* Persistent Floating WhatsApp Action Button */}
       <WhatsAppFloatingButton hideOnMobileSticky={currentView === 'tutor-profile'} />

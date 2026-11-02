@@ -163,7 +163,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
           </div>
           <div className="space-y-1.5 max-w-md">
             <h3 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
-              لا يوجد معلم منشور يطابق هذا الاختيار حاليًا
+              لا يوجد معلمون متاحون لهذا الاختيار حاليًا
             </h3>
             <p className="text-xs sm:text-sm text-[#535E7B] leading-relaxed">
               تواصل مع فريق شاطر عبر واتساب لتسجيل احتياج طفلك، وسنرشح لك المعلم المناسب ونساعدك في
@@ -204,7 +204,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
       {!isLoading && !error && tutors.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
           {tutors.map((tutor) => (
-            <TutorCard key={tutor.id} tutor={tutor} onSelect={onSelectTutor} />
+            <TutorCard key={tutor.id} tutor={tutor} criteria={criteria} onSelect={onSelectTutor} />
           ))}
         </div>
       )}

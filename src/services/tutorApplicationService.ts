@@ -340,7 +340,8 @@ export const TutorApplicationService = {
         email: user.email || formData.fullName,
         track: formData.track,
         schoolSpecializations: normalizedSpecs,
-        schoolCourseOptionIds: formData.schoolCourseOptionIds || [],
+        schoolCourseOptionIds:
+          normalizedSpecs.length > 0 ? [] : formData.schoolCourseOptionIds || [],
         quranOfferings: explicitQuranOfferings,
         quranAgeGroups: formData.quranAgeGroups || [],
         quranLevels: formData.quranLevels || [],

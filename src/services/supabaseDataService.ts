@@ -49,6 +49,15 @@ export interface DatabaseSchoolCourseOption {
   created_at: string;
 }
 
+// In-memory promise cache for static reference tables so each table is queried only once per session
+let stagesPromiseCache: Promise<Stage[]> | null = null;
+let allGradesPromiseCache: Promise<Grade[]> | null = null;
+let curriculumTypesPromiseCache: Promise<CurriculumOption[]> | null = null;
+let subjectsPromiseCache: Promise<Subject[]> | null = null;
+let quranAgeGroupsPromiseCache: Promise<QuranAgeGroup[]> | null = null;
+let quranLevelsPromiseCache: Promise<QuranLevel[]> | null = null;
+let schoolCourseOptionsPromiseCache: Promise<DatabaseSchoolCourseOption[]> | null = null;
+
 /**
  * Service for querying live Supabase database for Shatir Classes
  * Built directly against migration 001_initial_schema.sql
@@ -97,114 +106,168 @@ export const SupabaseDataService = {
   },
 
   /**
-   * 2. Taxonomy Read Functions
+   * 2. Taxonomy Read Functions (Cached to prevent duplicate network requests)
    */
   async getStages(): Promise<Stage[]> {
-    const { data, error } = await supabase
-      .from('educational_stages')
-      .select('id, name, grades_desc, display_order')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true });
-
-    if (error) throw error;
-
-    return (data || []).map((row) => ({
-      id: row.id as any,
-      name: row.name,
-      gradesDesc: row.grades_desc,
-      order: row.display_order,
-    }));
+    if (!stagesPromiseCache) {
+      stagesPromiseCache = Promise.resolve(
+        supabase
+          .from('educational_stages')
+          .select('id, name, grades_desc, display_order')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+      )
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map((row) => ({
+            id: row.id as any,
+            name: row.name,
+            gradesDesc: row.grades_desc,
+            order: row.display_order,
+          }));
+        })
+        .catch((err) => {
+          stagesPromiseCache = null;
+          throw err;
+        });
+    }
+    return stagesPromiseCache;
   },
 
   async getGrades(stageId?: string): Promise<Grade[]> {
-    let query = supabase
-      .from('educational_grades')
-      .select('id, stage_id, name, display_order')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true });
-
-    if (stageId) {
-      query = query.eq('stage_id', stageId);
+    if (!allGradesPromiseCache) {
+      allGradesPromiseCache = Promise.resolve(
+        supabase
+          .from('educational_grades')
+          .select('id, stage_id, name, display_order')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+      )
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map((row) => ({
+            id: row.id,
+            stageId: row.stage_id as any,
+            name: row.name,
+            order: row.display_order,
+          }));
+        })
+        .catch((err) => {
+          allGradesPromiseCache = null;
+          throw err;
+        });
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-
-    return (data || []).map((row) => ({
-      id: row.id,
-      stageId: row.stage_id as any,
-      name: row.name,
-      order: row.display_order,
-    }));
+    const allGrades = await allGradesPromiseCache;
+    if (stageId) {
+      return allGrades.filter((g) => g.stageId === stageId);
+    }
+    return allGrades;
   },
 
   async getCurriculumTypes(): Promise<CurriculumOption[]> {
-    const { data, error } = await supabase
-      .from('curriculum_types')
-      .select('id, name, description')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true });
-
-    if (error) throw error;
-
-    return (data || []).map((row) => ({
-      id: row.id as any,
-      name: row.name,
-      description: row.description,
-    }));
+    if (!curriculumTypesPromiseCache) {
+      curriculumTypesPromiseCache = Promise.resolve(
+        supabase
+          .from('curriculum_types')
+          .select('id, name, description')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+      )
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map((row) => ({
+            id: row.id as any,
+            name: row.name,
+            description: row.description,
+          }));
+        })
+        .catch((err) => {
+          curriculumTypesPromiseCache = null;
+          throw err;
+        });
+    }
+    return curriculumTypesPromiseCache;
   },
 
   async getSubjects(): Promise<Subject[]> {
-    const { data, error } = await supabase
-      .from('subjects')
-      .select('id, name, english_name, category')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true });
-
-    if (error) throw error;
-
-    return (data || []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      englishName: row.english_name || undefined,
-      category: row.category,
-    }));
+    if (!subjectsPromiseCache) {
+      subjectsPromiseCache = Promise.resolve(
+        supabase
+          .from('subjects')
+          .select('id, name, english_name, category')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+      )
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map((row) => ({
+            id: row.id,
+            name: row.name,
+            englishName: row.english_name || undefined,
+            category: row.category,
+          }));
+        })
+        .catch((err) => {
+          subjectsPromiseCache = null;
+          throw err;
+        });
+    }
+    return subjectsPromiseCache;
   },
 
   async getQuranAgeGroups(): Promise<QuranAgeGroup[]> {
-    const { data, error } = await supabase
-      .from('quran_age_groups')
-      .select('id, name, age_range')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true });
-
-    if (error) throw error;
-
-    return (data || []).map((row) =>
-      normalizeQuranAgeGroup({
-        id: row.id,
-        name: row.name,
-        ageRange: row.age_range,
-      })
-    );
+    if (!quranAgeGroupsPromiseCache) {
+      quranAgeGroupsPromiseCache = Promise.resolve(
+        supabase
+          .from('quran_age_groups')
+          .select('id, name, age_range')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+      )
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map((row) =>
+            normalizeQuranAgeGroup({
+              id: row.id,
+              name: row.name,
+              ageRange: row.age_range,
+            })
+          );
+        })
+        .catch((err) => {
+          quranAgeGroupsPromiseCache = null;
+          throw err;
+        });
+    }
+    return quranAgeGroupsPromiseCache;
   },
 
   async getQuranLevels(): Promise<QuranLevel[]> {
-    const { data, error } = await supabase
-      .from('quran_levels')
-      .select('id, name, description')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true });
-
-    if (error) throw error;
-
-    return (data || []).map((row) =>
-      normalizeQuranLevel({
-        id: row.id,
-        name: row.name,
-        description: row.description,
-      })
-    );
+    if (!quranLevelsPromiseCache) {
+      quranLevelsPromiseCache = Promise.resolve(
+        supabase
+          .from('quran_levels')
+          .select('id, name, description')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+      )
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []).map((row) =>
+            normalizeQuranLevel({
+              id: row.id,
+              name: row.name,
+              description: row.description,
+            })
+          );
+        })
+        .catch((err) => {
+          quranLevelsPromiseCache = null;
+          throw err;
+        });
+    }
+    return quranLevelsPromiseCache;
   },
 
   /**
@@ -215,18 +278,32 @@ export const SupabaseDataService = {
     subjectId?: string;
     curriculumId?: string;
   }): Promise<DatabaseSchoolCourseOption[]> {
-    let query = supabase
-      .from('school_course_options')
-      .select('id, grade_id, subject_id, curriculum_id, is_active, created_at')
-      .eq('is_active', true);
+    if (!schoolCourseOptionsPromiseCache) {
+      schoolCourseOptionsPromiseCache = Promise.resolve(
+        supabase
+          .from('school_course_options')
+          .select('id, grade_id, subject_id, curriculum_id, is_active, created_at')
+          .eq('is_active', true)
+      )
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return (data || []) as DatabaseSchoolCourseOption[];
+        })
+        .catch((err) => {
+          schoolCourseOptionsPromiseCache = null;
+          throw err;
+        });
+    }
 
-    if (filters?.gradeId) query = query.eq('grade_id', filters.gradeId);
-    if (filters?.subjectId) query = query.eq('subject_id', filters.subjectId);
-    if (filters?.curriculumId) query = query.eq('curriculum_id', filters.curriculumId);
+    const allOptions = await schoolCourseOptionsPromiseCache;
+    if (!filters) return allOptions;
 
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data || []) as DatabaseSchoolCourseOption[];
+    return allOptions.filter((opt) => {
+      if (filters.gradeId && opt.grade_id !== filters.gradeId) return false;
+      if (filters.subjectId && opt.subject_id !== filters.subjectId) return false;
+      if (filters.curriculumId && opt.curriculum_id !== filters.curriculumId) return false;
+      return true;
+    });
   },
 
   /**
@@ -473,13 +550,20 @@ export const SupabaseDataService = {
       })),
     ];
 
+    const mappedQualifications = qualifications.map((q) => ({
+      title: q.title,
+      institution: q.institution,
+      verified: Boolean(q.verified),
+    }));
+    const hasVerifiedQualification = mappedQualifications.some((q) => q.verified === true);
+
     return {
       id: row.id,
       name: row.name,
       honorific: row.honorific || 'أ.',
       headline: row.headline || '',
       avatarUrl: row.avatar_url || '',
-      verifiedCredentials: Boolean(row.verified_credentials),
+      verifiedCredentials: hasVerifiedQualification,
       yearsOfExperience: row.years_of_experience || 0,
       experienceBadgeText:
         formatTutorExperience(row.years_of_experience, row.experience_badge_text) || '',
@@ -524,12 +608,7 @@ export const SupabaseDataService = {
         title: ts.title,
         description: ts.description,
       })),
-      qualifications: qualifications.map((q) => ({
-        title: q.title,
-        institution: q.institution,
-        verified: Boolean(q.verified),
-        notes: q.notes || undefined,
-      })),
+      qualifications: mappedQualifications,
       offerings,
     };
   },

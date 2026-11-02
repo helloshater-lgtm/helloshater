@@ -19,6 +19,8 @@ import {
   normalizeQuranAgeGroup,
   normalizeQuranLevel,
   CANONICAL_QURAN_LEVELS,
+  formatParentSubjectCardDisplay,
+  toArabicDigits,
 } from '../utils/formatters';
 import {
   trackParentSelectorStarted,
@@ -106,6 +108,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
         loadedQuranAges,
         loadedQuranLevels,
         loadedCourseOptions,
+        flatGrades,
       ] = await Promise.all([
         DataService.getStages(),
         DataService.getCurriculumOptions(),
@@ -113,6 +116,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
         DataService.getQuranAgeGroups(),
         DataService.getQuranLevels(),
         DataService.getSchoolCourseOptions(),
+        DataService.getAllGrades(),
       ]);
 
       const normalizedQuranAges = loadedQuranAges.map(normalizeQuranAgeGroup);
@@ -124,11 +128,6 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
       setQuranAgeGroups(normalizedQuranAges);
       setQuranLevels(normalizedQuranLevels);
       setSchoolCourseOptions(loadedCourseOptions);
-
-      // Pre-fetch all grades for easy lookup
-      const gradesPromises = loadedStages.map((s) => DataService.getGradesByStage(s.id));
-      const gradesResults = await Promise.all(gradesPromises);
-      const flatGrades = gradesResults.flat();
       setAllGrades(flatGrades);
 
       onTaxonomyLoaded?.({
@@ -168,19 +167,28 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   // Cascading Grade update when stage changes
   useEffect(() => {
     if (stageId) {
-      DataService.getGradesByStage(stageId).then((grades) => {
-        setAvailableGrades(grades);
-        if (gradeId && !grades.some((g) => g.id === gradeId)) {
+      const preloadedStageGrades = allGrades.filter((g) => g.stageId === stageId);
+      if (preloadedStageGrades.length > 0) {
+        setAvailableGrades(preloadedStageGrades);
+        if (gradeId && !preloadedStageGrades.some((g) => g.id === gradeId)) {
           setGradeId('');
           setSubjectId('');
         }
-      });
+      } else {
+        DataService.getGradesByStage(stageId).then((grades) => {
+          setAvailableGrades(grades);
+          if (gradeId && !grades.some((g) => g.id === gradeId)) {
+            setGradeId('');
+            setSubjectId('');
+          }
+        });
+      }
     } else {
       setAvailableGrades([]);
       setGradeId('');
       setSubjectId('');
     }
-  }, [stageId]);
+  }, [stageId, allGrades]);
 
   // Extract available subjects strictly based on active school_course_options in Supabase
   const availableSubjectsForSelection = useMemo(() => {
@@ -253,7 +261,10 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   const selectedStageShort = selectedStage ? getStageShortName(selectedStage) : '';
   const selectedGradeName = allGrades.find((g) => g.id === gradeId)?.name;
   const selectedCurriculumName = curriculumOptions.find((c) => c.id === curriculumType)?.name;
-  const selectedSubjectName = allSubjects.find((s) => s.id === subjectId)?.name;
+  const selectedSubjectObj = allSubjects.find((s) => s.id === subjectId);
+  const selectedSubjectName = selectedSubjectObj
+    ? formatParentSubjectCardDisplay(selectedSubjectObj, curriculumType || undefined).title
+    : undefined;
 
   const selectedQuranAgeObj = quranAgeGroups.find((a) => a.id === ageGroupId);
   const selectedQuranAgeDisplay = selectedQuranAgeObj
@@ -576,7 +587,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
                               </div>
                             </div>
                             <span className="text-[11px] text-[#64748B] mt-1 line-clamp-1">
-                              {stg.gradesDesc}
+                              {toArabicDigits(stg.gradesDesc)}
                             </span>
                           </button>
                         );
@@ -676,6 +687,8 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-2.5">
                           {availableSubjectsForSelection.map((subj) => {
                             const isSelected = subjectId === subj.id;
+                            const { title: cardTitle, subtitle: cardSubtitle } =
+                              formatParentSubjectCardDisplay(subj, curriculumType || undefined);
                             return (
                               <button
                                 key={subj.id}
@@ -689,15 +702,15 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
                               >
                                 <div className="min-w-0">
                                   <div className="font-['Cairo'] font-bold text-xs sm:text-sm truncate">
-                                    {subj.name}
+                                    {cardTitle}
                                   </div>
-                                  {subj.englishName && (
+                                  {cardSubtitle && (
                                     <div
                                       className={`text-[10px] truncate ${
                                         isSelected ? 'text-blue-100' : 'text-[#64748B]'
                                       }`}
                                     >
-                                      {subj.englishName}
+                                      {cardSubtitle}
                                     </div>
                                   )}
                                 </div>

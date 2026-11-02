@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   SearchCriteria,
   Tutor,
@@ -85,23 +85,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const selectorRef = useRef<HTMLDivElement>(null);
   const searchRequestIdRef = useRef<number>(0);
   const hasAutoScrolledRef = useRef<boolean>(Boolean(savedCriteria));
-
-  useEffect(() => {
-    // Initial fetch of taxonomy for label lookups
-    Promise.all([
-      DataService.getStages().catch(() => []),
-      DataService.getCurriculumOptions().catch(() => []),
-      DataService.getSubjects().catch(() => []),
-      DataService.getQuranAgeGroups().catch(() => []),
-      DataService.getQuranLevels().catch(() => []),
-    ]).then(([stgs, currs, subjs, qAges, qLvls]) => {
-      setStages(stgs);
-      setCurricula(currs);
-      setSubjects(subjs);
-      setQuranAges(qAges);
-      setQuranLevels(qLvls);
-    });
-  }, []);
 
   const handleTaxonomyLoaded = (loaded: {
     stages: Stage[];
@@ -354,10 +337,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </span>
               <div className="space-y-0.5 sm:space-y-1 text-right">
                 <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-                  اختَر موعدًا مناسبًا
+                  حدّد الموعد المناسب
                 </h3>
                 <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
-                  شاهد المواعيد المتاحة في ملف المعلم واختر ما يناسب طفلك.
+                  اختر من مواعيد المعلم إن كانت متاحة، أو نرتّب معك الموعد عبر واتساب.
                 </p>
               </div>
             </div>
@@ -452,7 +435,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     اختَر الموعد وتابع عبر واتساب
                   </h3>
                   <p className="text-xs text-[#535E7B] leading-relaxed font-normal">
-                    اختَر من مواعيد المعلم المتاحة، وأرسل الطلب عبر واتساب للتأكيد والمتابعة.
+                    اختر موعدًا متاحًا أو اطلب التنسيق، وتابع معنا عبر واتساب حتى التأكيد.
                   </p>
                 </div>
               </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Tutor,
   SearchCriteria,
@@ -31,6 +32,7 @@ import {
   formatTimeArabic12h,
   formatSlotDateArabic,
   getTimezoneArabicLabel,
+  toArabicDigits,
 } from '../utils/formatters';
 import {
   ArrowRight,
@@ -162,6 +164,10 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     tutor.reviewsCount > 0 &&
     typeof tutor.rating === 'number' &&
     tutor.rating > 0;
+
+  const hasVerifiedQualification = Boolean(
+    Array.isArray(tutor.qualifications) && tutor.qualifications.some((q) => q.verified === true)
+  );
 
   const hasRealVideo = Boolean(tutor.videoPreview?.available);
 
@@ -552,13 +558,13 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   return (
     <div className="w-full pb-24 lg:pb-16 animate-fade-in">
       {/* Top Breadcrumb & Back Bar */}
-      <div className="w-full py-3 mb-4 sm:mb-6 border-b border-[#E2E8F0] bg-white">
+      <div className="w-full py-2.5 mb-4 sm:mb-6 border-b border-[#E2E8F0] bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between flex-wrap gap-2 text-xs sm:text-sm">
           <div className="flex items-center gap-2 flex-wrap text-[#535E7B]">
             <button
               type="button"
               onClick={onBack}
-              className="text-[#0D4E8B] hover:text-[#003767] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="min-h-[44px] px-2.5 rounded-xl text-[#0D4E8B] hover:text-[#003767] hover:bg-[#F0F6FD] font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <ArrowRight className="w-4 h-4" />
               <span>{hasCriteria ? 'العودة إلى نتائج البحث' : 'العودة لاختيار معلم'}</span>
@@ -576,7 +582,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
           </div>
 
           <span className="text-[11px] font-bold text-[#0D4E8B] bg-[#F0F5FA] px-2.5 py-1 rounded-lg border border-[#D1DCFE]">
-            ملف المعلم المعتمد
+            {hasVerifiedQualification ? 'ملف المعلم المعتمد' : 'ملف المعلم'}
           </span>
         </div>
       </div>
@@ -608,7 +614,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                     <span>{tutor.name.charAt(0)}</span>
                   )}
                 </div>
-                {tutor.verifiedCredentials && (
+                {hasVerifiedQualification && (
                   <span
                     className="absolute -bottom-1 -left-1 w-6 h-6 rounded-full bg-[#0D4E8B] text-white flex items-center justify-center shadow-xs border-2 border-white"
                     title="تمت مراجعة المؤهلات"
@@ -624,8 +630,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                     {tutor.honorific} {tutor.name}
                   </h1>
 
-                  {/* Verified Credentials Badge: strictly only when verifiedCredentials === true */}
-                  {tutor.verifiedCredentials && (
+                  {/* Verified Credentials Badge: strictly only when at least one qualification has verified === true */}
+                  {hasVerifiedQualification && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                       <span>تمت مراجعة المؤهلات</span>
@@ -636,8 +642,10 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                   {hasValidReviews ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold">
                       <Star className="w-3 h-3 fill-[#FFC629] text-[#FFC629]" />
-                      <span>{tutor.rating?.toFixed(1)}</span>
-                      <span className="text-[#64748B] font-normal">({tutor.reviewsCount})</span>
+                      <span>{toArabicDigits(tutor.rating?.toFixed(1) || '')}</span>
+                      <span className="text-[#64748B] font-normal">
+                        ({toArabicDigits(tutor.reviewsCount)})
+                      </span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-[#535E7B] text-[11px] font-bold">
@@ -673,12 +681,12 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
             {/* Left side: Clear Session Price + Primary Trial CTA */}
             <div className="pt-3 lg:pt-0 border-t lg:border-t-0 lg:border-r border-[#E2E8F0] lg:pr-6 flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end justify-between gap-3 shrink-0">
               <div className="text-right lg:text-left space-y-0.5">
-                <span className="text-[11px] text-[#64748B] block">سعر الحصة الخاصة (1:1)</span>
+                <span className="text-[11px] text-[#64748B] block">سعر الحصة الخاصة (١:١)</span>
                 <div className="font-['Cairo'] text-sm sm:text-base font-extrabold text-[#1F2A44]">
                   {sessionPriceText}
                 </div>
                 <span className="text-[11px] font-bold text-emerald-700 block">
-                  التجربة الأولى مجانًا — {tutor.trialDurationMinutes || 20} دقيقة
+                  التجربة الأولى مجانًا — {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة
                 </span>
               </div>
 
@@ -689,7 +697,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
               >
                 <span>اطلب تجربة مجانية</span>
                 <span className="text-[11px] font-bold bg-[#1F2A44]/10 px-2 py-0.5 rounded-md">
-                  {tutor.trialDurationMinutes || 20} دقيقة
+                  {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة
                 </span>
               </button>
             </div>
@@ -862,7 +870,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                     >
                       <div className="flex items-center gap-1.5">
                         <span className="w-5 h-5 rounded-md bg-[#0D4E8B] text-white flex items-center justify-center text-[11px] font-bold">
-                          {idx + 1}
+                          {toArabicDigits(idx + 1)}
                         </span>
                         <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
                           {pillar.title}
@@ -881,7 +889,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                 <div className="pt-3 border-t border-[#F2F3F6] space-y-2">
                   <div className="flex items-center justify-between">
                     <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                      ماذا يحدث في التجربة المجانية ({tutor.trialDurationMinutes || 20} دقيقة)؟
+                      ماذا يحدث في التجربة المجانية ({toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة)؟
                     </h3>
                   </div>
                   <p className="text-xs text-[#535E7B] leading-relaxed">
@@ -894,7 +902,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                         className="p-3 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1"
                       >
                         <div className="font-['Cairo'] text-xs font-bold text-[#0D4E8B]">
-                          {step.stepNumber}. {step.title}
+                          {toArabicDigits(step.stepNumber)}. {step.title}
                         </div>
                         <p className="text-[11px] text-[#535E7B] leading-relaxed">
                           {step.description}
@@ -938,16 +946,13 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                         {q.institution && (
                           <p className="text-xs text-[#0D4E8B] font-medium">{q.institution}</p>
                         )}
-                        {q.notes && (
-                          <p className="text-[11px] text-[#64748B] leading-relaxed">{q.notes}</p>
-                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <p className="text-xs text-[#535E7B]">
-                  {academicDegree || 'معلم معتمد في منصة شاطر كلاسيز.'}
+                  {academicDegree || 'معلم في منصة شاطر كلاسيز.'}
                 </p>
               )}
             </section>
@@ -998,7 +1003,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                       activeBookingTab === 'trial' ? 'text-[#FFC629]' : 'text-emerald-700'
                     }`}
                   >
-                    {tutor.trialDurationMinutes || 20} دقيقة
+                    {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة
                   </span>
                 </button>
 
@@ -1019,7 +1024,9 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                       activeBookingTab === 'private' ? 'text-blue-100' : 'text-[#64748B]'
                     }`}
                   >
-                    {validPrivateSlots.length > 0 ? `${validPrivateSlots.length} موعد` : 'فردي 1:1'}
+                    {validPrivateSlots.length > 0
+                      ? `${toArabicDigits(validPrivateSlots.length)} موعد`
+                      : 'فردي ١:١'}
                   </span>
                 </button>
 
@@ -1040,7 +1047,9 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                       activeBookingTab === 'groups' ? 'text-blue-100' : 'text-[#64748B]'
                     }`}
                   >
-                    {publicGroups.length > 0 ? `${publicGroups.length} متاحة` : 'صغيرة'}
+                    {publicGroups.length > 0
+                      ? `${toArabicDigits(publicGroups.length)} متاحة`
+                      : 'صغيرة'}
                   </span>
                 </button>
               </div>
@@ -1061,7 +1070,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1F2A44]">
-                            ١. اختر اليوم المتاح ({availableTrialDates.length} أيام):
+                            ١. اختر اليوم المتاح ({toArabicDigits(availableTrialDates.length)} أيام):
                           </span>
                           <div className="flex items-center gap-1">
                             {availableTrialDates.length > DAYS_WINDOW_SIZE && (
@@ -1177,7 +1186,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                                     isSelected ? 'text-[#FFC629]' : 'text-emerald-700'
                                   }`}
                                 >
-                                  {count === 1 ? 'موعد واحد' : `${count} أوقات`}
+                                  {count === 1 ? 'موعد واحد' : `${toArabicDigits(count)} أوقات`}
                                 </div>
                               </button>
                             );
@@ -1255,7 +1264,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                             <div>
                               <span className="text-[11px] text-[#64748B] block">المدة والسعر:</span>
                               <span className="font-bold text-emerald-700">
-                                {tutor.trialDurationMinutes || 20} دقيقة • مجانًا
+                                {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة • مجانًا
                               </span>
                             </div>
                           </div>
@@ -1286,7 +1295,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                           لا توجد مواعيد تجريبية مضافة حاليًا
                         </h3>
                         <p className="text-xs text-[#535E7B] leading-relaxed">
-                          يمكنك إرسال طلب تنسيق عبر إدارة شاطر لتحديد أقرب موعد تجربة مجانية ({tutor.trialDurationMinutes || 20} دقيقة) يناسب جدولكم مع المعلم.
+                          يمكنك إرسال طلب تنسيق عبر إدارة شاطر لتحديد أقرب موعد تجربة مجانية ({toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة) يناسب جدولكم مع المعلم.
                         </p>
                       </div>
                       <button
@@ -1321,7 +1330,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1F2A44]">
-                            ١. اختر اليوم المتاح ({availablePrivateDates.length} أيام):
+                            ١. اختر اليوم المتاح ({toArabicDigits(availablePrivateDates.length)} أيام):
                           </span>
                           <div className="flex items-center gap-1">
                             {availablePrivateDates.length > DAYS_WINDOW_SIZE && (
@@ -1435,7 +1444,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                                     isSelected ? 'text-[#FFC629]' : 'text-[#0D4E8B]'
                                   }`}
                                 >
-                                  {count === 1 ? 'موعد واحد' : `${count} أوقات`}
+                                  {count === 1 ? 'موعد واحد' : `${toArabicDigits(count)} أوقات`}
                                 </div>
                               </button>
                             );
@@ -1501,7 +1510,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                               {isMultiSpec && (
                                 <div className="p-3 rounded-xl bg-[#F0F5FA]/70 border border-[#D1DCFE] space-y-2">
                                   <span className="text-xs font-bold text-[#0D4E8B] block">
-                                    ٣. اختر التخصص المطلوب لهذا الموعد ({specs.length} بدائل معتمدة):
+                                    ٣. اختر التخصص المطلوب لهذا الموعد ({toArabicDigits(specs.length)} بدائل معتمدة):
                                   </span>
                                   <div className="space-y-1.5">
                                     {specs.map((sp) => {
@@ -1546,7 +1555,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                                     })}
                                   </div>
                                   <p className="text-[10px] text-[#535E7B] leading-relaxed">
-                                    السعر والمدة المحددان ينطبقان على جميع بدائل هذا الموعد، وعند تأكيد الحجز يُخصّص الموعد بالكامل (1:1) للتخصص المختار.
+                                    السعر والمدة المحددان ينطبقان على جميع بدائل هذا الموعد، وعند تأكيد الحجز يُخصّص الموعد بالكامل (١:١) للتخصص المختار.
                                   </p>
                                 </div>
                               )}
@@ -1555,10 +1564,10 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                               <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#D1DCFE] space-y-3">
                                 <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-2">
                                   <span className="font-['Cairo'] text-xs font-extrabold text-[#0D4E8B]">
-                                    ملخص طلب الحصة الخاصة (1:1)
+                                    ملخص طلب الحصة الخاصة (١:١)
                                   </span>
                                   <span className="text-xs font-extrabold text-[#1F2A44]">
-                                    {selectedPrivateSlot.priceAmount}{' '}
+                                    {toArabicDigits(selectedPrivateSlot.priceAmount)}{' '}
                                     {selectedPrivateSlot.currency} للحصة
                                   </span>
                                 </div>
@@ -1588,13 +1597,13 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                                   <div>
                                     <span className="text-[11px] text-[#64748B] block">المدة:</span>
                                     <span className="font-bold text-[#1F2A44]">
-                                      {selectedPrivateSlot.durationMinutes} دقيقة (فردي 1:1)
+                                      {toArabicDigits(selectedPrivateSlot.durationMinutes)} دقيقة (فردي ١:١)
                                     </span>
                                   </div>
                                   <div>
                                     <span className="text-[11px] text-[#64748B] block">السعر:</span>
                                     <span className="font-bold text-[#0D4E8B]">
-                                      {selectedPrivateSlot.priceAmount}{' '}
+                                      {toArabicDigits(selectedPrivateSlot.priceAmount)}{' '}
                                       {selectedPrivateSlot.currency} للحصة
                                     </span>
                                   </div>
@@ -1699,13 +1708,13 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                               <div>
                                 <span className="text-[#64748B] block">تاريخ البداية وعدد الحصص:</span>
                                 <span className="font-bold text-[#1F2A44]">
-                                  {group.startDate} ({group.sessionsCount} حصص)
+                                  {toArabicDigits(group.startDate)} ({toArabicDigits(group.sessionsCount)} حصص)
                                 </span>
                               </div>
                               <div>
                                 <span className="text-[#64748B] block">الجدول المختصر:</span>
                                 <span className="font-bold text-[#1F2A44]">
-                                  {group.weeklyScheduleSummary}
+                                  {toArabicDigits(group.weeklyScheduleSummary)}
                                 </span>
                               </div>
                               <div>
@@ -1719,7 +1728,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                               <div>
                                 <span className="text-[#64748B] block">المقاعد المتبقية:</span>
                                 <span className="font-bold text-emerald-700">
-                                  متبقي {remainingSeats} من {group.maxStudents} مقاعد
+                                  متبقي {toArabicDigits(remainingSeats)} من {toArabicDigits(group.maxStudents)} مقاعد
                                 </span>
                               </div>
                             </div>
@@ -1750,7 +1759,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                           لا توجد مجموعات مفتوحة حاليًا لهذا المعلم
                         </h3>
                         <p className="text-xs text-[#535E7B] leading-relaxed">
-                          يمكنك بدء تجربة مجانية فردية ({tutor.trialDurationMinutes || 20} دقيقة) أو طلب إبلاغك عند فتح مجموعة جديدة عبر الإدارة.
+                          يمكنك بدء تجربة مجانية فردية ({toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة) أو طلب إبلاغك عند فتح مجموعة جديدة عبر الإدارة.
                         </p>
                       </div>
                       <button
@@ -1777,7 +1786,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                   <span>ضمان شاطر لراحة ولي الأمر</span>
                 </div>
                 <p className="leading-relaxed">
-                  تجربة مجانية لمدة {tutor.trialDurationMinutes || 20} دقيقة لتقييم مستوى الطفل والاطمئنان لأسلوب المعلم، مع متابعة مباشرة من فريق شاطر.
+                  تجربة مجانية لمدة {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة لتقييم مستوى الطفل والاطمئنان لأسلوب المعلم، مع متابعة مباشرة من فريق شاطر.
                 </p>
               </div>
             </section>
@@ -1786,29 +1795,36 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* MOBILE STICKY BOTTOM BAR (< 15% viewport height, no collision with FAB) */}
+      {/* MOBILE STICKY BOTTOM BAR (Rendered via Portal into document.body) */}
       {/* ========================================================================= */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] px-4 py-2.5 shadow-lg flex items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="font-['Cairo'] font-extrabold text-xs text-[#1F2A44] truncate">
-            {sessionPriceText}
-          </div>
-          <div className="text-[11px] font-bold text-emerald-700 truncate">
-            {selectedTrialSlotPayload
-              ? `تجربة مجانية: ${selectedTrialSlotPayload.dayName} ${selectedTrialSlotPayload.timeRange.split('–')[0]}`
-              : `تجربة مجانية — ${tutor.trialDurationMinutes || 20} دقيقة`}
-          </div>
-        </div>
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            dir="rtl"
+            className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] px-4 py-2.5 shadow-lg flex items-center justify-between gap-3"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="font-['Cairo'] font-extrabold text-xs text-[#1F2A44] truncate">
+                {sessionPriceText}
+              </div>
+              <div className="text-[11px] font-bold text-emerald-700 truncate">
+                {selectedTrialSlotPayload
+                  ? `تجربة مجانية: ${selectedTrialSlotPayload.dayName} ${selectedTrialSlotPayload.timeRange.split('–')[0]}`
+                  : `تجربة مجانية — ${toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة`}
+              </div>
+            </div>
 
-        <button
-          type="button"
-          onClick={() => setIsWhatsAppModalOpen(true)}
-          className="shrink-0 py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-        >
-          <MessageCircle className="w-3.5 h-3.5 text-[#1F2A44]" />
-          <span>اطلب تجربة مجانية</span>
-        </button>
-      </div>
+            <button
+              type="button"
+              onClick={() => setIsWhatsAppModalOpen(true)}
+              className="shrink-0 min-h-[44px] py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-[#1F2A44]" />
+              <span>اطلب تجربة مجانية</span>
+            </button>
+          </div>,
+          document.body
+        )}
 
       {/* Modals */}
       <VideoModal

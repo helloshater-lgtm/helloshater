@@ -5,8 +5,8 @@ import { TutorAccountNavStatus } from '../services/tutorApplicationService';
 import { Menu, X, MessageCircle, Loader2 } from 'lucide-react';
 
 interface HeaderProps {
-  currentView: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard';
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard') => void;
+  currentView: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard' | 'privacy' | 'terms';
+  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard' | 'privacy' | 'terms') => void;
   onScrollToSelector?: () => void;
   tutorNavStatus: TutorAccountNavStatus;
 }
@@ -101,7 +101,7 @@ export const Header: React.FC<HeaderProps> = ({
           aria-label="الرئيسية - شاطر كلاسيز"
         >
           <img
-            src="https://lh3.googleusercontent.com/aida/AEtjO1UolB2EZg5wI-hdvQk-DgSs34vjBDfqtw6OgT1GEuYaj1E4RQhBB4TuVRd10UsVfiqY4KzIMhPXYEUjrDImcT7u4roLgWtr43n62oIP7BKAd1jjluVdsrQ9K7L1Z2ra_YYN6jQWhYQ012_17GBZXBV5OIbZVOPG3GE39F-m7z1AynGUU02TBmDzkj-a8YCMUNnoBnpncqN6Au1kHrFFGvJCnzV4pe7gAhv_6DSQoJ2SUCHlhkKHxl8-zz5fo_ExWQbNa7LvILPfgw"
+            src="/logo.png"
             alt="شعار شاطر"
             className="w-9 h-9 rounded-full object-cover shadow-xs border border-[#E2E8F0]"
             onError={(e) => {

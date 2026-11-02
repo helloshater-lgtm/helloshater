@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Tutor } from '../types';
+import { Tutor, SearchCriteria } from '../types';
 import {
   formatTutorExperience,
   formatSessionPriceSummary,
@@ -23,10 +23,11 @@ import {
 
 interface TutorCardProps {
   tutor: Tutor;
+  criteria?: SearchCriteria;
   onSelect: (tutorId: string) => void;
 }
 
-export const TutorCard: React.FC<TutorCardProps> = ({ tutor, onSelect }) => {
+export const TutorCard: React.FC<TutorCardProps> = ({ tutor, criteria, onSelect }) => {
   const [isBioExpanded, setIsBioExpanded] = useState(false);
 
   // 1. Reviews check: never show a star for tutors without actual reviews
@@ -36,9 +37,9 @@ export const TutorCard: React.FC<TutorCardProps> = ({ tutor, onSelect }) => {
     tutor.rating !== null &&
     tutor.rating > 0;
 
-  // 2. Specialization & age/grade summary
+  // 2. Specialization & age/grade summary (shows parent-selected subject/program first)
   const { primarySpecialization, suitableAgesOrGrades, secondaryTags } =
-    getTutorSpecializationSummary(tutor);
+    getTutorSpecializationSummary(tutor, criteria);
 
   // 3. Descriptive headline vs academic degree in its proper place
   const { descriptiveHeadline, academicDegree } = getTutorHeadlineAndDegree(tutor);
@@ -54,12 +55,14 @@ export const TutorCard: React.FC<TutorCardProps> = ({ tutor, onSelect }) => {
       ? rawBio
       : `${rawBio.slice(0, rawBio.lastIndexOf(' ', BIO_CHAR_LIMIT) || BIO_CHAR_LIMIT).trim()}...`;
 
-  // 5. Unified experience text & strict verified credentials check
+  // 5. Unified experience text & strict verified credentials check (at least one qualification with verified = true)
   const experienceText = formatTutorExperience(
     tutor.yearsOfExperience,
     tutor.experienceBadgeText
   );
-  const isCredentialsVerified = Boolean(tutor.verifiedCredentials);
+  const isCredentialsVerified = Boolean(
+    Array.isArray(tutor.qualifications) && tutor.qualifications.some((q) => q.verified === true)
+  );
 
   // 6. Unified session price & duration (150 ج.م للحصة — 50 دقيقة when min === max)
   const priceSummary = formatSessionPriceSummary({

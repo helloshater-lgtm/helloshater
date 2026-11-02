@@ -7,6 +7,7 @@ import {
   TutorGroup,
   SchoolOffering,
   QuranOffering,
+  SearchCriteria,
 } from '../types';
 
 /**
@@ -496,8 +497,12 @@ export function getTutorHeadlineAndDegree(tutor: Tutor): {
 
 /**
  * Summarize the tutor's approved specializations and target ages/grades for quick comparison on TutorCard.
+ * If search criteria is provided and the tutor offers the selected subject or program, it is displayed first.
  */
-export function getTutorSpecializationSummary(tutor: Tutor): {
+export function getTutorSpecializationSummary(
+  tutor: Tutor,
+  criteria?: SearchCriteria
+): {
   primarySpecialization: string;
   suitableAgesOrGrades: string;
   secondaryTags: string[];
@@ -509,19 +514,53 @@ export function getTutorSpecializationSummary(tutor: Tutor): {
     (o): o is QuranOffering => o.track === 'quran'
   );
 
-  const subjectNames = Array.from(
-    new Set(
-      schoolOfferings
-        .map((o) => SUBJECT_ARABIC_NAMES[o.subjectId])
-        .filter(Boolean)
-    )
+  const moveSelectedToFront = (items: string[], preferred?: string): string[] => {
+    if (!preferred) return items;
+    const idx = items.indexOf(preferred);
+    if (idx <= 0) return items;
+    return [preferred, ...items.slice(0, idx), ...items.slice(idx + 1)];
+  };
+
+  const preferredSubjectName =
+    criteria?.track === 'school' && criteria.subjectId
+      ? SUBJECT_ARABIC_NAMES[criteria.subjectId]
+      : undefined;
+  const preferredGradeName =
+    criteria?.track === 'school' && criteria.gradeId
+      ? GRADE_ARABIC_NAMES[criteria.gradeId]
+      : undefined;
+  const preferredCurriculumName =
+    criteria?.track === 'school' && criteria.curriculumType
+      ? CURRICULUM_ARABIC_NAMES[criteria.curriculumType]
+      : undefined;
+  const preferredQuranProgramName =
+    criteria?.track === 'quran' && criteria.levelId
+      ? CANONICAL_QURAN_LEVELS[criteria.levelId]?.name
+      : undefined;
+  const preferredQuranAgeLabel =
+    criteria?.track === 'quran' && criteria.ageGroupId && CANONICAL_QURAN_AGE_GROUPS[criteria.ageGroupId]
+      ? `${CANONICAL_QURAN_AGE_GROUPS[criteria.ageGroupId].name} (${CANONICAL_QURAN_AGE_GROUPS[criteria.ageGroupId].ageRange})`
+      : undefined;
+
+  const subjectNames = moveSelectedToFront(
+    Array.from(
+      new Set(
+        schoolOfferings
+          .map((o) => SUBJECT_ARABIC_NAMES[o.subjectId])
+          .filter(Boolean)
+      )
+    ),
+    preferredSubjectName
   );
-  const gradeNames = Array.from(
-    new Set(
-      schoolOfferings
-        .map((o) => GRADE_ARABIC_NAMES[o.gradeId])
-        .filter(Boolean)
-    )
+  const gradeNames = moveSelectedToFront(
+    Array.from(
+      new Set(
+        schoolOfferings
+          .map((o) => GRADE_ARABIC_NAMES[o.gradeId])
+          .filter(Boolean)
+      )
+    ),
+    preferredGradeName
   );
   const stageNames = Array.from(
     new Set(
@@ -530,51 +569,77 @@ export function getTutorSpecializationSummary(tutor: Tutor): {
         .filter(Boolean)
     )
   );
-  const curriculaNames = Array.from(
-    new Set(
-      schoolOfferings
-        .map((o) => CURRICULUM_ARABIC_NAMES[o.curriculumType])
-        .filter(Boolean)
-    )
+  const curriculaNames = moveSelectedToFront(
+    Array.from(
+      new Set(
+        schoolOfferings
+          .map((o) => CURRICULUM_ARABIC_NAMES[o.curriculumType])
+          .filter(Boolean)
+      )
+    ),
+    preferredCurriculumName
   );
 
-  const quranAgeLabels = Array.from(
-    new Set(
-      quranOfferings
-        .map((o) => {
-          const ag = CANONICAL_QURAN_AGE_GROUPS[o.ageGroupId];
-          return ag ? `${ag.name} (${ag.ageRange})` : '';
-        })
-        .filter(Boolean)
-    )
+  const quranAgeLabels = moveSelectedToFront(
+    Array.from(
+      new Set(
+        quranOfferings
+          .map((o) => {
+            const ag = CANONICAL_QURAN_AGE_GROUPS[o.ageGroupId];
+            return ag ? `${ag.name} (${ag.ageRange})` : '';
+          })
+          .filter(Boolean)
+      )
+    ),
+    preferredQuranAgeLabel
   );
 
-  const quranProgramLabels = Array.from(
-    new Set(
-      quranOfferings
-        .map((o) => CANONICAL_QURAN_LEVELS[o.levelId]?.name)
-        .filter(Boolean)
-    )
+  const quranProgramLabels = moveSelectedToFront(
+    Array.from(
+      new Set(
+        quranOfferings
+          .map((o) => CANONICAL_QURAN_LEVELS[o.levelId]?.name)
+          .filter(Boolean)
+      )
+    ),
+    preferredQuranProgramName
   );
 
   let primarySpecialization = '';
-  if (subjectNames.length > 0 && quranProgramLabels.length > 0) {
+  if (criteria?.track === 'quran' && quranProgramLabels.length > 0) {
+    primarySpecialization =
+      subjectNames.length > 0
+        ? `${quranProgramLabels.slice(0, 2).join(' • ')} • ${subjectNames[0]}`
+        : quranProgramLabels.slice(0, 2).join(' • ');
+  } else if (subjectNames.length > 0 && quranProgramLabels.length > 0) {
     primarySpecialization = `${subjectNames.slice(0, 2).join(' • ')} + القرآن والتأسيس`;
   } else if (subjectNames.length > 0) {
     primarySpecialization = subjectNames.slice(0, 3).join(' • ');
   } else if (quranProgramLabels.length > 0) {
     primarySpecialization = quranProgramLabels.slice(0, 2).join(' • ');
   } else if (tutor.subjectsTaughtSummary && tutor.subjectsTaughtSummary.length > 0) {
-    primarySpecialization = tutor.subjectsTaughtSummary
-      .slice(0, 2)
-      .map((s) => normalizeLegacyAgeGroupText(s.title))
-      .join(' • ');
+    const summaryTitles = tutor.subjectsTaughtSummary.map((s) =>
+      normalizeLegacyAgeGroupText(s.title)
+    );
+    const preferredKeyword = preferredSubjectName || preferredQuranProgramName;
+    const orderedSummaries = preferredKeyword
+      ? [
+          ...summaryTitles.filter((t) => t.includes(preferredKeyword)),
+          ...summaryTitles.filter((t) => !t.includes(preferredKeyword)),
+        ]
+      : summaryTitles;
+    primarySpecialization = orderedSummaries.slice(0, 2).join(' • ');
   } else {
     primarySpecialization = 'تخصصات تعليمية معتمدة';
   }
 
   let suitableAgesOrGrades = '';
-  if (gradeNames.length > 0 && quranAgeLabels.length > 0) {
+  if (criteria?.track === 'quran' && quranAgeLabels.length > 0) {
+    suitableAgesOrGrades =
+      gradeNames.length > 0
+        ? `${quranAgeLabels.slice(0, 2).join(' • ')} • ${gradeNames[0]}`
+        : quranAgeLabels.join(' • ');
+  } else if (gradeNames.length > 0 && quranAgeLabels.length > 0) {
     suitableAgesOrGrades = `${gradeNames.slice(0, 2).join('، ')} • ${quranAgeLabels[0]}`;
   } else if (gradeNames.length > 0) {
     if (gradeNames.length <= 3) {
@@ -1093,6 +1158,106 @@ export interface SchoolSpecializationReferenceData {
   }>;
 }
 
+const SCHOOL_SUBJECT_ARABIC_DISPLAY_LABELS: Record<string, string> = {
+  math: 'الرياضيات — تدريس بالعربية',
+  math_ar: 'الرياضيات — تدريس بالعربية',
+  math_en: 'Math — الرياضيات باللغة الإنجليزية',
+  science: 'العلوم — تدريس بالعربية',
+  science_ar: 'العلوم — تدريس بالعربية',
+  science_en: 'Science — العلوم باللغة الإنجليزية',
+  physics: 'الفيزياء — تدريس بالعربية',
+  physics_ar: 'الفيزياء — تدريس بالعربية',
+  physics_en: 'Physics — الفيزياء باللغة الإنجليزية',
+  chemistry: 'الكيمياء — تدريس بالعربية',
+  chemistry_ar: 'الكيمياء — تدريس بالعربية',
+  chemistry_en: 'Chemistry — الكيمياء باللغة الإنجليزية',
+  biology: 'الأحياء — تدريس بالعربية',
+  biology_ar: 'الأحياء — تدريس بالعربية',
+  biology_en: 'Biology — الأحياء باللغة الإنجليزية',
+  arabic: 'اللغة العربية',
+  english: 'اللغة الإنجليزية (English)',
+  social: 'الدراسات الاجتماعية',
+};
+
+/**
+ * Formats a school subject label in clear Arabic matching the teacher registration dropdown,
+ * avoiding confusing "(Math)" or "(Physics)" suffixes when Arabic teaching is selected.
+ */
+export function formatSchoolSubjectArabicName(
+  subjectId: string | null | undefined,
+  rawSubjectName?: string | null,
+  teachingLanguage?: string | null
+): string {
+  const cleanId = String(subjectId || '').trim();
+  const cleanLang = String(teachingLanguage || '').trim().toLowerCase();
+
+  if (cleanId && SCHOOL_SUBJECT_ARABIC_DISPLAY_LABELS[cleanId]) {
+    return SCHOOL_SUBJECT_ARABIC_DISPLAY_LABELS[cleanId];
+  }
+
+  const rawName = String(rawSubjectName || '').trim();
+  if (rawName) {
+    if (cleanLang !== 'english' && !ENGLISH_TAUGHT_SUBJECT_IDS.has(cleanId)) {
+      const stripped = rawName.replace(/\s*\([A-Za-z\s]+\)\s*$/, '').trim();
+      if (stripped) {
+        return ARABIC_TAUGHT_SUBJECT_IDS.has(cleanId) && cleanId !== 'arabic' && cleanId !== 'social'
+          ? `${stripped} — تدريس بالعربية`
+          : stripped;
+      }
+    }
+    return rawName;
+  }
+
+  return cleanId || 'غير محدد';
+}
+
+/**
+ * Normalizes any legacy/backend error text so Arabic-taught subjects do not show "(Math)" / "(Physics)"
+ * in Arabic error messages.
+ */
+export function normalizeSchoolValidationErrorText(message: string): string {
+  if (!message) return '';
+  return message
+    .replace(/الرياضيات\s*\(Math\)/g, 'الرياضيات — تدريس بالعربية')
+    .replace(/العلوم\s*\(Science\)/g, 'العلوم — تدريس بالعربية')
+    .replace(/الفيزياء\s*\(Physics\)/g, 'الفيزياء — تدريس بالعربية')
+    .replace(/الكيمياء\s*\(Chemistry\)/g, 'الكيمياء — تدريس بالعربية')
+    .replace(/الأحياء\s*\(Biology\)/g, 'الأحياء — تدريس بالعربية');
+}
+
+/**
+ * Extracts per-specialization error messages keyed by 0-based specialization index
+ * from a combined validation error message containing "التخصص الدراسي رقم (N): ...".
+ */
+export function extractSpecializationErrorsFromMessage(
+  errorMessage: string | null | undefined
+): Record<number, string[]> {
+  const result: Record<number, string[]> = {};
+  if (!errorMessage) return result;
+
+  const normalized = normalizeSchoolValidationErrorText(errorMessage);
+  const parts = normalized
+    .split(/(?=التخصص الدراسي رقم\s*\(\d+\))|\n+/)
+    .map((p) => p.replace(/^\s*—\s*|\s*—\s*$/g, '').trim())
+    .filter(Boolean);
+
+  const specRegex = /التخصص الدراسي رقم\s*\((\d+)\)/;
+  for (const part of parts) {
+    const match = part.match(specRegex);
+    if (match) {
+      const idx = parseInt(match[1], 10) - 1;
+      if (Number.isFinite(idx) && idx >= 0) {
+        if (!result[idx]) result[idx] = [];
+        if (!result[idx].includes(part)) {
+          result[idx].push(part);
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 export interface SchoolSpecializationValidationResult {
   isValid: boolean;
   matchedOptionIds: string[];
@@ -1101,6 +1266,8 @@ export interface SchoolSpecializationValidationResult {
   stages: string[];
   curricula: string[];
   unmatchedItems: string[];
+  errorsBySpecIndex: Record<number, string[]>;
+  errorsBySpecId: Record<string, string[]>;
 }
 
 /**
@@ -1108,7 +1275,7 @@ export interface SchoolSpecializationValidationResult {
  * - Never strips '_en' or merges 'math_en' (Math) into 'math' (الرياضيات).
  * - Validates subject, grade, stage (grade.stage_id === stageId), curriculum, teachingLanguage, and is_active.
  * - Never silently drops unmatched specialization items or grades when another item succeeds;
- *   returns all items needing correction in `unmatchedItems`.
+ *   returns all items needing correction in `unmatchedItems` and per-card `errorsBySpecIndex` / `errorsBySpecId`.
  */
 export function validateAndResolveSchoolSpecializations(params: {
   specializations?: any[] | null;
@@ -1134,9 +1301,26 @@ export function validateAndResolveSchoolSpecializations(params: {
   const stagesSet = new Set<string>();
   const curriculaSet = new Set<string>();
   const unmatchedItems: string[] = [];
+  const errorsBySpecIndex: Record<number, string[]> = {};
+  const errorsBySpecId: Record<string, string[]> = {};
 
-  // 1. Validate direct school_course_option_ids if provided
-  if (Array.isArray(directCourseOptionIds) && directCourseOptionIds.length > 0) {
+  const recordSpecError = (index: number, specId: string | undefined, msg: string) => {
+    unmatchedItems.push(msg);
+    if (!errorsBySpecIndex[index]) {
+      errorsBySpecIndex[index] = [];
+    }
+    errorsBySpecIndex[index].push(msg);
+    if (specId) {
+      if (!errorsBySpecId[specId]) {
+        errorsBySpecId[specId] = [];
+      }
+      errorsBySpecId[specId].push(msg);
+    }
+  };
+
+  // 1. Validate direct school_course_option_ids if provided ONLY when no structured specializations are given
+  const specsList = Array.isArray(specializations) ? specializations : [];
+  if (specsList.length === 0 && Array.isArray(directCourseOptionIds) && directCourseOptionIds.length > 0) {
     for (const rawOptId of directCourseOptionIds) {
       const optId = String(rawOptId || '').trim();
       if (!optId) continue;
@@ -1175,11 +1359,11 @@ export function validateAndResolveSchoolSpecializations(params: {
   }
 
   // 2. Validate structured specializations
-  const specsList = Array.isArray(specializations) ? specializations : [];
   specsList.forEach((spec, index) => {
     const specNum = index + 1;
+    const specId = spec && typeof spec === 'object' ? String(spec.id || '').trim() || undefined : undefined;
     if (!spec || typeof spec !== 'object') {
-      unmatchedItems.push(`التخصص الدراسي رقم (${specNum}): بنية بيانات التخصص غير صالحة.`);
+      recordSpecError(index, specId, `التخصص الدراسي رقم (${specNum}): بنية بيانات التخصص غير صالحة.`);
       normalizedSpecializations.push(spec);
       return;
     }
@@ -1188,7 +1372,11 @@ export function validateAndResolveSchoolSpecializations(params: {
     if (directCoId) {
       const opt = courseOptionsById.get(directCoId);
       if (!opt) {
-        unmatchedItems.push(`التخصص الدراسي رقم (${specNum}): معرف خيار المقرر (${directCoId}) غير موجود في قاعدة البيانات.`);
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}): معرف خيار المقرر (${directCoId}) غير موجود في قاعدة البيانات.`
+        );
         normalizedSpecializations.push(spec);
         return;
       }
@@ -1204,7 +1392,11 @@ export function validateAndResolveSchoolSpecializations(params: {
         Boolean(curr && curr.is_active !== false);
 
       if (!allActive) {
-        unmatchedItems.push(`التخصص الدراسي رقم (${specNum}): خيار المقرر (${directCoId}) غير مفعّل حالياً.`);
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}): خيار المقرر (${directCoId}) غير مفعّل حالياً.`
+        );
         normalizedSpecializations.push(spec);
         return;
       }
@@ -1228,7 +1420,7 @@ export function validateAndResolveSchoolSpecializations(params: {
     ).trim();
 
     if (!rawSubjId) {
-      unmatchedItems.push(`التخصص الدراسي رقم (${specNum}): لم يتم تحديد المادة الدراسية.`);
+      recordSpecError(index, specId, `التخصص الدراسي رقم (${specNum}): لم يتم تحديد المادة الدراسية.`);
       normalizedSpecializations.push(spec);
       return;
     }
@@ -1241,7 +1433,9 @@ export function validateAndResolveSchoolSpecializations(params: {
       : '';
 
     if (rawLang && rawLang !== 'arabic' && rawLang !== 'english') {
-      unmatchedItems.push(
+      recordSpecError(
+        index,
+        specId,
         `التخصص الدراسي رقم (${specNum}): لغة التدريس (${rawLang}) غير صالحة للمادة (${rawSubjId}).`
       );
       normalizedSpecializations.push(spec);
@@ -1249,8 +1443,12 @@ export function validateAndResolveSchoolSpecializations(params: {
     }
 
     if (expectedLang && rawLang && rawLang !== expectedLang) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}): تعارض بين المادة المختارة (${rawSubjId}) ولغة التدريس (${rawLang}).`
+      const displaySubj = formatSchoolSubjectArabicName(rawSubjId, undefined, expectedLang);
+      const langAr = rawLang === 'english' ? 'الإنجليزية' : 'العربية';
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}): تعارض بين المادة المختارة (${displaySubj}) ولغة التدريس المحفوظة (${langAr}). يرجى إعادة اختيار المادة ولغة التدريس.`
       );
       normalizedSpecializations.push(spec);
       return;
@@ -1258,26 +1456,37 @@ export function validateAndResolveSchoolSpecializations(params: {
 
     const resolvedSubjId = resolveExplicitSubjectId(rawSubjId, rawLang || expectedLang, availableSubjectIds);
     const subjectObj = subjectsMap.get(resolvedSubjId);
+    const subjectDisplayName = formatSchoolSubjectArabicName(
+      subjectObj?.id || resolvedSubjId,
+      subjectObj?.name,
+      rawLang || expectedLang
+    );
 
     if (!subjectObj) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}): المادة (${rawSubjId}) غير موجودة في جدول المواد المرجعية المعتمدة.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}): المادة (${subjectDisplayName}) غير موجودة في جدول المواد المرجعية المعتمدة.`
       );
       normalizedSpecializations.push(spec);
       return;
     }
 
     if (subjectObj.is_active === false) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}): المادة (${subjectObj.name || resolvedSubjId}) غير مفعّلة حالياً.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}): المادة (${subjectDisplayName}) غير مفعّلة حالياً.`
       );
       normalizedSpecializations.push(spec);
       return;
     }
 
     if (!rawStageId) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): لم يتم تحديد المرحلة الدراسية.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): لم يتم تحديد المرحلة الدراسية.`
       );
       normalizedSpecializations.push(spec);
       return;
@@ -1285,24 +1494,30 @@ export function validateAndResolveSchoolSpecializations(params: {
 
     const stageObj = stagesMap.get(rawStageId);
     if (!stageObj) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): المرحلة الدراسية (${rawStageId}) غير موجودة في جدول المراحل المرجعية.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): المرحلة الدراسية (${rawStageId}) غير موجودة في جدول المراحل المرجعية.`
       );
       normalizedSpecializations.push(spec);
       return;
     }
 
     if (stageObj.is_active === false) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): المرحلة الدراسية (${stageObj.name}) غير مفعّلة حالياً.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): المرحلة الدراسية (${stageObj.name}) غير مفعّلة حالياً.`
       );
       normalizedSpecializations.push(spec);
       return;
     }
 
     if (!rawCurrId) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): لم يتم تحديد نوع المنهج الدراسي.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): لم يتم تحديد نوع المنهج الدراسي.`
       );
       normalizedSpecializations.push(spec);
       return;
@@ -1310,16 +1525,20 @@ export function validateAndResolveSchoolSpecializations(params: {
 
     const currObj = curriculaMap.get(rawCurrId);
     if (!currObj) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): نوع المنهج (${rawCurrId}) غير موجود في جدول المناهج المرجعية.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): نوع المنهج (${rawCurrId}) غير موجود في جدول المناهج المرجعية.`
       );
       normalizedSpecializations.push(spec);
       return;
     }
 
     if (currObj.is_active === false) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): نوع المنهج (${currObj.name}) غير مفعّل حالياً.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): نوع المنهج (${currObj.name}) غير مفعّل حالياً.`
       );
       normalizedSpecializations.push(spec);
       return;
@@ -1327,8 +1546,10 @@ export function validateAndResolveSchoolSpecializations(params: {
 
     const gradeIds: string[] = Array.isArray(spec.gradeIds) ? spec.gradeIds : [];
     if (gradeIds.length === 0) {
-      unmatchedItems.push(
-        `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): يجب اختيار صف دراسي واحد على الأقل.`
+      recordSpecError(
+        index,
+        specId,
+        `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): يجب اختيار صف دراسي واحد على الأقل.`
       );
       normalizedSpecializations.push(spec);
       return;
@@ -1338,45 +1559,57 @@ export function validateAndResolveSchoolSpecializations(params: {
     for (const rawGradeId of gradeIds) {
       const gradeId = String(rawGradeId || '').trim();
       if (!gradeId) {
-        unmatchedItems.push(
-          `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): يحتوي على معرف صف دراسي فارغ.`
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): يحتوي على معرف صف دراسي فارغ.`
         );
         continue;
       }
 
       const gradeObj = gradesMap.get(gradeId);
       if (!gradeObj) {
-        unmatchedItems.push(
-          `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): الصف الدراسي (${gradeId}) غير موجود في جدول الصفوف المرجعية.`
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): الصف الدراسي (${gradeId}) غير موجود في جدول الصفوف المرجعية.`
         );
         continue;
       }
 
       if (gradeObj.is_active === false) {
-        unmatchedItems.push(
-          `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): الصف الدراسي (${gradeObj.name}) غير مفعّل حالياً.`
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): الصف الدراسي (${gradeObj.name}) غير مفعّل حالياً.`
         );
         continue;
       }
 
       if (gradeObj.stage_id !== stageObj.id) {
-        unmatchedItems.push(
-          `التخصص الدراسي رقم (${specNum}) (${subjectObj.name}): الصف الدراسي (${gradeObj.name}) لا يتبع المرحلة المختارة (${stageObj.name}).`
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}) (${subjectDisplayName}): الصف الدراسي (${gradeObj.name}) لا يتبع المرحلة المختارة (${stageObj.name}).`
         );
         continue;
       }
 
       const courseOpt = courseOptionsByTriplet.get(`${gradeObj.id}|${subjectObj.id}|${currObj.id}`);
       if (!courseOpt) {
-        unmatchedItems.push(
-          `التخصص الدراسي رقم (${specNum}): لا يوجد خيار مقرر معتمد للتركيبة (المادة: ${subjectObj.name}، الصف: ${gradeObj.name}، المنهج: ${currObj.name}).`
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}): لا يوجد خيار مقرر معتمد للتركيبة (المادة: ${subjectDisplayName}، الصف: ${gradeObj.name}، المنهج: ${currObj.name}).`
         );
         continue;
       }
 
       if (courseOpt.is_active === false) {
-        unmatchedItems.push(
-          `التخصص الدراسي رقم (${specNum}): خيار المقرر (المادة: ${subjectObj.name}، الصف: ${gradeObj.name}، المنهج: ${currObj.name}) غير مفعّل حالياً.`
+        recordSpecError(
+          index,
+          specId,
+          `التخصص الدراسي رقم (${specNum}): خيار المقرر (المادة: ${subjectDisplayName}، الصف: ${gradeObj.name}، المنهج: ${currObj.name}) غير مفعّل حالياً.`
         );
         continue;
       }
@@ -1416,6 +1649,8 @@ export function validateAndResolveSchoolSpecializations(params: {
     stages: Array.from(stagesSet),
     curricula: Array.from(curriculaSet),
     unmatchedItems,
+    errorsBySpecIndex,
+    errorsBySpecId,
   };
 }
 
@@ -1554,6 +1789,243 @@ export function validateAndResolveQuranSpecializations(params: {
     levels: validLevels,
     quranOfferings: validOfferings,
     unmatchedItems,
+  };
+}
+
+/**
+ * Formats subject card title and subtitle for Parent TutorSelector so Arabic-taught
+ * and English-taught subjects are always unmistakably distinct.
+ */
+export function formatParentSubjectCardDisplay(
+  subj: { id: string; name: string; englishName?: string },
+  curriculumType?: string
+): { title: string; subtitle: string } {
+  const id = String(subj?.id || '').trim();
+  const isLangCurr = curriculumType === 'languages_experimental';
+
+  switch (id) {
+    case 'math':
+      return {
+        title: isLangCurr ? 'الرياضيات (بالعربية)' : 'الرياضيات',
+        subtitle: 'تدريس باللغة العربية',
+      };
+    case 'math_en':
+      return {
+        title: 'Math — الرياضيات بالإنجليزية',
+        subtitle: 'تدريس باللغة الإنجليزية',
+      };
+    case 'science':
+      return {
+        title: isLangCurr ? 'العلوم (بالعربية)' : 'العلوم',
+        subtitle: 'تدريس باللغة العربية',
+      };
+    case 'science_en':
+      return {
+        title: 'Science — العلوم بالإنجليزية',
+        subtitle: 'تدريس باللغة الإنجليزية',
+      };
+    case 'physics':
+      return {
+        title: isLangCurr ? 'الفيزياء (بالعربية)' : 'الفيزياء',
+        subtitle: 'تدريس باللغة العربية',
+      };
+    case 'physics_en':
+      return {
+        title: 'Physics — الفيزياء بالإنجليزية',
+        subtitle: 'تدريس باللغة الإنجليزية',
+      };
+    case 'chemistry':
+      return {
+        title: isLangCurr ? 'الكيمياء (بالعربية)' : 'الكيمياء',
+        subtitle: 'تدريس باللغة العربية',
+      };
+    case 'chemistry_en':
+      return {
+        title: 'Chemistry — الكيمياء بالإنجليزية',
+        subtitle: 'تدريس باللغة الإنجليزية',
+      };
+    case 'biology':
+      return {
+        title: isLangCurr ? 'الأحياء (بالعربية)' : 'الأحياء',
+        subtitle: 'تدريس باللغة العربية',
+      };
+    case 'biology_en':
+      return {
+        title: 'Biology — الأحياء بالإنجليزية',
+        subtitle: 'تدريس باللغة الإنجليزية',
+      };
+    case 'arabic':
+      return {
+        title: 'اللغة العربية',
+        subtitle: 'تأسيس وقواعد ونصوص',
+      };
+    case 'english':
+      return {
+        title: 'اللغة الإنجليزية',
+        subtitle: 'English',
+      };
+    case 'social':
+      return {
+        title: 'الدراسات الاجتماعية',
+        subtitle: 'تاريخ وجغرافيا',
+      };
+    default:
+      return {
+        title: subj.name,
+        subtitle: subj.englishName || '',
+      };
+  }
+}
+
+/**
+ * Returns the canonical supported curricula, stages, and grades for a given subjectId,
+ * backed by active school_course_options when loaded from the database and falling back
+ * to the platform's canonical pedagogical rules (never a blind Cartesian product).
+ */
+export function getSupportedCatalogForSubject(
+  subjectId: string,
+  liveCourseOptions?: Array<{
+    grade_id: string;
+    subject_id: string;
+    curriculum_id: string;
+    is_active?: boolean;
+  }>,
+  allGrades?: Array<{ id: string; stageId: string }>
+): {
+  defaultCurriculum: 'national_arabic' | 'languages_experimental';
+  allowedCurricula: Array<'national_arabic' | 'languages_experimental'>;
+  getAllowedStages: (curriculumId: string) => Array<'elementary' | 'preparatory' | 'secondary'>;
+  getAllowedGrades: (curriculumId: string, stageId: string) => string[];
+} {
+  const cleanSubj = String(subjectId || '').trim();
+  const isEnglishStem = ['math_en', 'science_en', 'physics_en', 'chemistry_en', 'biology_en'].includes(cleanSubj);
+  const isArabicStem = ['math', 'science', 'physics', 'chemistry', 'biology'].includes(cleanSubj);
+  const isSecondaryScience = [
+    'physics',
+    'chemistry',
+    'biology',
+    'physics_en',
+    'chemistry_en',
+    'biology_en',
+  ].includes(cleanSubj);
+  const isGeneralScience = ['science', 'science_en'].includes(cleanSubj);
+  const isUpperElemSubject = ['science', 'science_en', 'social'].includes(cleanSubj);
+
+  const canonicalCurricula: Array<'national_arabic' | 'languages_experimental'> = isEnglishStem
+    ? ['languages_experimental']
+    : isArabicStem
+    ? ['national_arabic']
+    : ['national_arabic', 'languages_experimental'];
+
+  const defaultCurriculum: 'national_arabic' | 'languages_experimental' = isEnglishStem
+    ? 'languages_experimental'
+    : 'national_arabic';
+
+  const canonicalStages: Array<'elementary' | 'preparatory' | 'secondary'> = isSecondaryScience
+    ? ['secondary']
+    : isGeneralScience
+    ? ['elementary', 'preparatory']
+    : ['elementary', 'preparatory', 'secondary'];
+
+  const getCanonicalGradesForStage = (stageId: string): string[] => {
+    if (stageId === 'elementary') {
+      return isUpperElemSubject
+        ? ['elem_4', 'elem_5', 'elem_6']
+        : ['elem_1', 'elem_2', 'elem_3', 'elem_4', 'elem_5', 'elem_6'];
+    }
+    if (stageId === 'preparatory') {
+      return ['prep_1', 'prep_2', 'prep_3'];
+    }
+    if (stageId === 'secondary') {
+      return ['sec_1', 'sec_2', 'sec_3'];
+    }
+    return [];
+  };
+
+  const activeSubjectOpts = Array.isArray(liveCourseOptions)
+    ? liveCourseOptions.filter((o) => o.subject_id === cleanSubj && o.is_active !== false)
+    : [];
+
+  const gradeToStageMap = new Map<string, string>();
+  if (Array.isArray(allGrades)) {
+    allGrades.forEach((g) => gradeToStageMap.set(g.id, g.stageId));
+  }
+  ['elem_1', 'elem_2', 'elem_3', 'elem_4', 'elem_5', 'elem_6'].forEach((id) => {
+    if (!gradeToStageMap.has(id)) gradeToStageMap.set(id, 'elementary');
+  });
+  ['prep_1', 'prep_2', 'prep_3'].forEach((id) => {
+    if (!gradeToStageMap.has(id)) gradeToStageMap.set(id, 'preparatory');
+  });
+  ['sec_1', 'sec_2', 'sec_3'].forEach((id) => {
+    if (!gradeToStageMap.has(id)) gradeToStageMap.set(id, 'secondary');
+  });
+
+  // For curricula: prefer canonical curricula, plus any active DB curriculum for shared subjects
+  const dbCurricula = Array.from(
+    new Set(
+      activeSubjectOpts
+        .map((o) => o.curriculum_id)
+        .filter(
+          (c): c is 'national_arabic' | 'languages_experimental' =>
+            c === 'national_arabic' || c === 'languages_experimental'
+        )
+    )
+  );
+
+  // Keep strict separation between Arabic STEM ('math', 'physics', etc.) and English STEM ('math_en', 'physics_en', etc.)
+  const allowedCurricula =
+    isEnglishStem || isArabicStem
+      ? canonicalCurricula
+      : dbCurricula.length > 0
+      ? dbCurricula
+      : canonicalCurricula;
+
+  const getAllowedStages = (
+    curriculumId: string
+  ): Array<'elementary' | 'preparatory' | 'secondary'> => {
+    const currOpts = activeSubjectOpts.filter((o) => o.curriculum_id === curriculumId);
+    if (currOpts.length === 0) {
+      return canonicalStages;
+    }
+    const dbStages = new Set(
+      currOpts
+        .map((o) => gradeToStageMap.get(o.grade_id))
+        .filter(
+          (s): s is 'elementary' | 'preparatory' | 'secondary' =>
+            s === 'elementary' || s === 'preparatory' || s === 'secondary'
+        )
+    );
+    // Combine with canonicalStages if DB is missing rows (e.g. before migration 016 is run),
+    // or use dbStages if all canonical stages are covered
+    const ordered: Array<'elementary' | 'preparatory' | 'secondary'> = [
+      'elementary',
+      'preparatory',
+      'secondary',
+    ];
+    const filtered = ordered.filter((s) => dbStages.has(s) || canonicalStages.includes(s));
+    return filtered.length > 0 ? filtered : canonicalStages;
+  };
+
+  const getAllowedGrades = (curriculumId: string, stageId: string): string[] => {
+    const stageCurrOpts = activeSubjectOpts.filter(
+      (o) => o.curriculum_id === curriculumId && gradeToStageMap.get(o.grade_id) === stageId
+    );
+    if (stageCurrOpts.length > 0) {
+      const dbGradeSet = new Set(stageCurrOpts.map((o) => o.grade_id));
+      const canonicalForStage = getCanonicalGradesForStage(stageId);
+      const merged = canonicalForStage.filter((g) => dbGradeSet.has(g));
+      if (merged.length > 0) {
+        return merged;
+      }
+    }
+    return getCanonicalGradesForStage(stageId);
+  };
+
+  return {
+    defaultCurriculum,
+    allowedCurricula,
+    getAllowedStages,
+    getAllowedGrades,
   };
 }
 
