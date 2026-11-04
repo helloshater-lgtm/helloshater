@@ -69,6 +69,9 @@ interface TutorProfileViewProps {
   curriculumName?: string;
   quranAgeName?: string;
   quranLevelName?: string;
+  previewTrialSlots?: TutorAvailableSlot[];
+  previewPrivateSlots?: TutorPrivateSlot[];
+  previewGroups?: TutorGroup[];
 }
 
 type BookingTabType = 'trial' | 'private' | 'groups';
@@ -83,6 +86,9 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   curriculumName,
   quranAgeName,
   quranLevelName,
+  previewTrialSlots,
+  previewPrivateSlots,
+  previewGroups,
 }) => {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -217,6 +223,12 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
   // Fetch Trial Slots
   useEffect(() => {
+    if (previewTrialSlots !== undefined) {
+      setRawTrialSlots(previewTrialSlots);
+      setIsLoadingTrialSlots(false);
+      return;
+    }
+
     let isMounted = true;
     setIsLoadingTrialSlots(true);
     DataService.getTutorAvailableSlots(tutor.id)
@@ -233,7 +245,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [tutor.id]);
+  }, [tutor.id, previewTrialSlots]);
 
   // Initialize earliest trial date & first slot automatically when validTrialSlots load
   useEffect(() => {
@@ -253,6 +265,31 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
   // Fetch Private Slots & Groups
   useEffect(() => {
+    if (previewPrivateSlots !== undefined || previewGroups !== undefined) {
+      const slots = previewPrivateSlots || [];
+      setRawPrivateSlots(slots);
+      const initialSelections: Record<string, string> = {};
+      slots.forEach((slot) => {
+        const specs = Array.isArray(slot.allowedSpecializations)
+          ? slot.allowedSpecializations
+          : [];
+        if (specs.length > 0) {
+          initialSelections[slot.id] = specs[0].id;
+        }
+      });
+      setSelectedSpecBySlotId(initialSelections);
+      setPublicGroups(
+        (previewGroups || []).filter(
+          (g) =>
+            !g.adminSuspended &&
+            (g.status === 'open' || g.status === 'in_progress') &&
+            (g.reviewStatus === undefined || g.reviewStatus === 'approved')
+        )
+      );
+      setIsLoadingOffers(false);
+      return;
+    }
+
     let isMounted = true;
     setIsLoadingOffers(true);
     Promise.allSettled([
@@ -298,7 +335,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [tutor.id, subjectName, gradeName, quranLevelName]);
+  }, [tutor.id, subjectName, gradeName, quranLevelName, previewPrivateSlots, previewGroups]);
 
   // Initialize earliest private date & first slot automatically when validPrivateSlots load
   useEffect(() => {

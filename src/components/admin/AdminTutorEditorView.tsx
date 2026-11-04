@@ -6,6 +6,7 @@ import {
   TutorAvailableSlot,
   QuranAgeGroup,
   QuranLevel,
+  AdminProfileDraftItem,
 } from '../../types';
 import { AdminService } from '../../services/adminService';
 import { DataService } from '../../services/dataService';
@@ -160,6 +161,21 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Pending profile draft review state (e.g. avatar-only draft)
+  const [pendingDraft, setPendingDraft] = useState<AdminProfileDraftItem | null>(null);
+  const [draftReviewNotes, setDraftReviewNotes] = useState('');
+  const [isReviewingDraft, setIsReviewingDraft] = useState(false);
+
+  const loadPendingDraftForTutor = async (id: string) => {
+    if (!id) return;
+    try {
+      const drafts = await AdminService.getPendingProfileDrafts(id);
+      setPendingDraft(drafts.length > 0 ? drafts[0] : null);
+    } catch {
+      setPendingDraft(null);
+    }
+  };
+
   // Load course options and Quran taxonomy on mount
   useEffect(() => {
     Promise.all([
@@ -173,7 +189,50 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
       if (ages.length > 0) setNewQuranAgeId(ages[0].id);
       if (lvls.length > 0) setNewQuranLevelId(lvls[0].id);
     });
-  }, []);
+
+    if (!isNew && initialDetail?.tutor.id) {
+      loadPendingDraftForTutor(initialDetail.tutor.id);
+    }
+  }, [isNew, initialDetail?.tutor.id]);
+
+  const handleReviewPendingDraft = async (action: 'approve' | 'needs_revision' | 'reject') => {
+    if (!pendingDraft) return;
+    if ((action === 'needs_revision' || action === 'reject') && !draftReviewNotes.trim()) {
+      setErrorMessage('يرجى كتابة سبب طلب التعديل أو الرفض ليظهر للمعلم.');
+      return;
+    }
+
+    setIsReviewingDraft(true);
+    setErrorMessage(null);
+    setSaveSuccessMsg(null);
+
+    try {
+      await AdminService.reviewProfileDraft(pendingDraft.id, action, draftReviewNotes.trim() || undefined);
+      setPendingDraft(null);
+      setDraftReviewNotes('');
+
+      if (action === 'approve' && tutorId) {
+        const refreshed = await AdminService.getTutorForEdit(tutorId);
+        setAvatarUrl(refreshed.tutor.avatarUrl || '');
+        setHeadline(refreshed.tutor.headline || '');
+        setHelpChildQuote(refreshed.tutor.helpChildQuote || '');
+        setHelpChildSummary(refreshed.tutor.helpChildSummary || '');
+      }
+
+      setSaveSuccessMsg(
+        action === 'approve'
+          ? 'تم اعتماد التعديل وتحديث ملف المعلم بنجاح.'
+          : action === 'needs_revision'
+          ? 'تم إرسال ملاحظة طلب التعديل إلى المعلم.'
+          : 'تم رفض المسودة.'
+      );
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'فشل تنفيذ قرار مراجعة المسودة.');
+    } finally {
+      setIsReviewingDraft(false);
+    }
+  };
 
   // Avatar Upload Handler via Supabase Storage
   const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -580,6 +639,130 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
           <div className="space-y-0.5">
             <span className="font-bold block">خطأ في العملية:</span>
             <span className="leading-relaxed">{errorMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Profile Draft Review Card (Handles image-only drafts where headline === null without showing empty text fields) */}
+      {pendingDraft && (
+        <div className="bg-amber-50/70 rounded-2xl border border-amber-200 p-4 sm:p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-xs font-bold">
+                مراجعة معلقة
+              </span>
+              <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                {pendingDraft.headline === null &&
+                !pendingDraft.helpChildQuote &&
+                !pendingDraft.helpChildSummary
+                  ? 'طلب تحديث الصورة الشخصية للمعلم'
+                  : 'طلب تحديث بيانات الملف الشخصي للمعلم'}
+              </h3>
+            </div>
+            {pendingDraft.submittedAt && (
+              <span className="text-[11px] text-[#64748B]">
+                تاريخ الإرسال: {new Date(pendingDraft.submittedAt).toLocaleString('ar-EG')}
+              </span>
+            )}
+          </div>
+
+          {/* Proposed Image (shown when avatarUrl is present or when headline === null) */}
+          {(pendingDraft.avatarUrl || pendingDraft.pendingAvatarSignedUrl || pendingDraft.headline === null) && (
+            <div className="flex flex-wrap items-center gap-6 bg-white p-4 rounded-xl border border-amber-200/80">
+              {avatarUrl && (
+                <div className="flex items-center gap-3">
+                  <img
+                    src={avatarUrl}
+                    alt="الصورة الحالية"
+                    className="w-16 h-16 rounded-2xl object-cover border border-slate-200"
+                  />
+                  <div>
+                    <span className="text-[11px] font-bold text-[#64748B] block">الصورة الحالية</span>
+                    <span className="text-xs text-[#1F2A44]">المنشورة بالملف</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                {pendingDraft.pendingAvatarSignedUrl ? (
+                  <img
+                    src={pendingDraft.pendingAvatarSignedUrl}
+                    alt="الصورة الجديدة المقترحة"
+                    className="w-20 h-20 rounded-2xl object-cover border-2 border-amber-400 shadow-xs"
+                  />
+                ) : (
+                  <div className="w-20 h-20 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-[11px] text-[#64748B] text-center p-2">
+                    صورة مرفوعة ({pendingDraft.avatarUrl || 'بدون مسار'})
+                  </div>
+                )}
+                <div>
+                  <span className="text-[11px] font-bold text-amber-800 block">الصورة الجديدة المقترحة</span>
+                  <span className="text-xs text-[#1F2A44]">بانتظار موافقة الإدارة</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Only render text fields when they are NOT null (never show empty text fields for image-only drafts) */}
+          {(pendingDraft.headline !== null ||
+            pendingDraft.helpChildQuote !== null ||
+            pendingDraft.helpChildSummary !== null) && (
+            <div className="grid grid-cols-1 gap-3 bg-white p-4 rounded-xl border border-amber-200/80 text-xs">
+              {pendingDraft.headline !== null && (
+                <div>
+                  <span className="font-bold text-[#64748B] block mb-1">الجملة القصيرة:</span>
+                  <p className="text-[#1F2A44] font-medium">{pendingDraft.headline}</p>
+                </div>
+              )}
+              {pendingDraft.helpChildQuote !== null && (
+                <div>
+                  <span className="font-bold text-[#64748B] block mb-1">جملة مساعدة الطفل:</span>
+                  <p className="text-[#1F2A44] font-medium">{pendingDraft.helpChildQuote}</p>
+                </div>
+              )}
+              {pendingDraft.helpChildSummary !== null && (
+                <div>
+                  <span className="font-bold text-[#64748B] block mb-1">النبذة:</span>
+                  <p className="text-[#1F2A44] whitespace-pre-line">{pendingDraft.helpChildSummary}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
+            <input
+              type="text"
+              value={draftReviewNotes}
+              onChange={(e) => setDraftReviewNotes(e.target.value)}
+              placeholder="ملاحظات للمعلم (مطلوبة عند طلب تعديل أو رفض)..."
+              className="flex-1 px-3.5 py-2 rounded-xl border border-amber-300 bg-white text-xs text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isReviewingDraft}
+                onClick={() => handleReviewPendingDraft('approve')}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                اعتماد الصورة
+              </button>
+              <button
+                type="button"
+                disabled={isReviewingDraft}
+                onClick={() => handleReviewPendingDraft('needs_revision')}
+                className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                طلب تعديل
+              </button>
+              <button
+                type="button"
+                disabled={isReviewingDraft}
+                onClick={() => handleReviewPendingDraft('reject')}
+                className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                رفض
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -17,6 +17,8 @@ import {
   resolveSpecializationLabel,
 } from '../utils/formatters';
 import {
+  Tutor,
+  TutorOffering,
   TutorPortalContext,
   TutorAvailableSlot,
   TutorProfileDraft,
@@ -497,28 +499,244 @@ export const TutorPortalService = {
 
   /**
    * 6. Submit profile draft for administrative review
-   * Saves the permanent private storagePath (not temporary Signed URL)
+  /**
+   * 6.1 Immediate update of tutor profile text fields via RPC tutor_update_profile_text
+   */
+  async updateProfileText(payload: {
+    headline: string;
+    helpChildQuote?: string | null;
+    helpChildSummary?: string | null;
+  }): Promise<{ changed: boolean; tutor?: any }> {
+    const trimmedHeadline = (payload.headline || '').trim();
+    const trimmedQuote = payload.helpChildQuote ? payload.helpChildQuote.trim() : '';
+    const trimmedSummary = payload.helpChildSummary ? payload.helpChildSummary.trim() : '';
+
+    if (!trimmedHeadline || trimmedHeadline.length < 10 || trimmedHeadline.length > 250) {
+      throw new Error('الجملة القصيرة عنك مطلوبة، ويجب أن تكون بين 10 و 250 حرفًا.');
+    }
+
+    if (trimmedQuote.length > 0 && (trimmedQuote.length < 5 || trimmedQuote.length > 350)) {
+      throw new Error('جملة مساعدة الطفل يجب أن تكون بين 5 و 350 حرفًا عند كتابتها.');
+    }
+
+    if (trimmedSummary.length > 0 && (trimmedSummary.length < 20 || trimmedSummary.length > 2500)) {
+      throw new Error('النبذة يجب أن تكون بين 20 و 2500 حرفًا عند كتابتها.');
+    }
+
+    const { data, error: rpcError } = await supabase.rpc('tutor_update_profile_text', {
+      p_headline: trimmedHeadline,
+      p_help_child_quote: trimmedQuote.length > 0 ? trimmedQuote : null,
+      p_help_child_summary: trimmedSummary.length > 0 ? trimmedSummary : null,
+    });
+
+    if (rpcError) {
+      throw new Error(rpcError.message || 'تعذر حفظ التعديلات.');
+    }
+
+    if (data && typeof data === 'object' && data.success === false && data.message) {
+      throw new Error(String(data.message));
+    }
+
+    const changed =
+      data && typeof data === 'object' && 'changed' in data ? Boolean(data.changed) : true;
+
+    return {
+      changed,
+      tutor: data?.tutor,
+    };
+  },
+
+  /**
+   * 6.2 Submit avatar alone for administrative review via RPC tutor_submit_profile_draft
+   * Does not depend on any text field validity.
+   */
+  async submitAvatarDraft(avatarPath: string): Promise<void> {
+    const cleanedPath = (avatarPath || '').trim();
+    if (!cleanedPath) {
+      throw new Error('يرجى رفع الصورة الجديدة أولاً.');
+    }
+
+    const { error: rpcError } = await supabase.rpc('tutor_submit_profile_draft', {
+      p_headline: null,
+      p_avatar_url: cleanedPath,
+      p_help_child_quote: null,
+      p_help_child_summary: null,
+    });
+
+    if (rpcError) {
+      throw new Error(rpcError.message || 'تعذر إرسال الصورة للمراجعة.');
+    }
+  },
+
+  /**
+   * 6.3 Submit profile draft (kept for compatibility, allows null headline for image-only drafts)
    */
   async submitProfileDraft(payload: {
-    headline: string;
+    headline?: string | null;
     avatarPath?: string | null;
     helpChildQuote?: string | null;
     helpChildSummary?: string | null;
   }): Promise<void> {
-    if (!payload.headline.trim() || payload.headline.trim().length < 10) {
-      throw new Error('العنوان التعريفي مطلوب ويجب أن يحتوي على 10 أحرف على الأقل.');
-    }
-
     const { error: rpcError } = await supabase.rpc('tutor_submit_profile_draft', {
-      p_headline: payload.headline.trim(),
-      p_avatar_url: payload.avatarPath || null,
-      p_help_child_quote: payload.helpChildQuote?.trim() || null,
-      p_help_child_summary: payload.helpChildSummary?.trim() || null,
+      p_headline: payload.headline ? payload.headline.trim() : null,
+      p_avatar_url: payload.avatarPath ? payload.avatarPath.trim() : null,
+      p_help_child_quote: payload.helpChildQuote ? payload.helpChildQuote.trim() : null,
+      p_help_child_summary: payload.helpChildSummary ? payload.helpChildSummary.trim() : null,
     });
 
     if (rpcError) {
-      throw new Error(`فشل إرسال مقترح التعديل: ${rpcError.message}`);
+      throw new Error(rpcError.message || 'تعذر إرسال الصورة للمراجعة.');
     }
+  },
+
+  /**
+   * 6.4 Build full Tutor object for "شوف ملفك زي ولي الأمر" preview
+   * Works even if the tutor profile is currently unpublished (!isPublished) and never publishes it.
+   */
+  async getMyPreviewTutor(
+    contextTutor: TutorPortalContext['tutor'],
+    specializations: ApprovedSpecializationItem[]
+  ): Promise<Tutor> {
+    const tutorId = contextTutor.id;
+
+    const [pillarsRes, qualRes, trialRes, summaryRes] = await Promise.all([
+      supabase
+        .from('tutor_methodology_pillars')
+        .select('*')
+        .eq('tutor_id', tutorId)
+        .order('display_order', { ascending: true }),
+      supabase
+        .from('tutor_qualifications')
+        .select('*')
+        .eq('tutor_id', tutorId)
+        .order('display_order', { ascending: true }),
+      supabase
+        .from('tutor_trial_steps')
+        .select('*')
+        .eq('tutor_id', tutorId)
+        .order('step_number', { ascending: true }),
+      supabase
+        .from('tutor_subjects_taught_summary')
+        .select('*')
+        .eq('tutor_id', tutorId)
+        .order('display_order', { ascending: true }),
+    ]);
+
+    const offerings: TutorOffering[] = [];
+    for (const spec of specializations) {
+      if (spec.track === 'school' && spec.stageId && spec.gradeId && spec.subjectId && spec.curriculumId) {
+        offerings.push({
+          track: 'school',
+          stageId: spec.stageId as any,
+          gradeId: spec.gradeId,
+          subjectId: spec.subjectId,
+          curriculumType: spec.curriculumId as any,
+        });
+      } else if (spec.track === 'quran' && spec.ageGroupId && spec.levelId) {
+        offerings.push({
+          track: 'quran',
+          ageGroupId: spec.ageGroupId,
+          levelId: spec.levelId,
+        });
+      }
+    }
+
+    const methodologyPillars =
+      pillarsRes.data && pillarsRes.data.length > 0
+        ? pillarsRes.data.map((p: any) => ({
+            title: p.title,
+            description: p.description,
+            iconName: p.icon_name || 'smile',
+          }))
+        : [
+            {
+              title: 'تبسيط المفاهيم الصعبة',
+              description: 'ربط الدرس بأمثلة عملية ممتعة تناسب عمر الطفل.',
+              iconName: 'smile',
+            },
+            {
+              title: 'الصبر والتشجيع المستمر',
+              description: 'بناء ثقة الطالب بنفسه وتحويل رهبة المادة إلى حماس.',
+              iconName: 'heart',
+            },
+            {
+              title: 'تطبيق مباشر وتثبيت للمعلومة',
+              description: 'حل تدريبات فورية للتأكد من استيعاب كل نقطة.',
+              iconName: 'target',
+            },
+          ];
+
+    const whatHappensInTrial =
+      trialRes.data && trialRes.data.length > 0
+        ? trialRes.data.map((t: any) => ({
+            stepNumber: t.step_number,
+            title: t.title,
+            description: t.description,
+          }))
+        : [
+            {
+              stepNumber: 1,
+              title: 'التعارف وكسر الجليد',
+              description: 'حديث ودي خفيف مع الطالب لبناء الألفة وتخفيف أي توتر.',
+            },
+            {
+              stepNumber: 2,
+              title: 'تشخيص مستوى الاستيعاب',
+              description: 'تحديد نقاط القوة والفجوات التعليمية التي تحتاج لدعم.',
+            },
+            {
+              stepNumber: 3,
+              title: 'شرح نموذج مبسط',
+              description: 'شرح جزء من المنهج لتجربة أسلوب المعلم وتفاعله.',
+            },
+            {
+              stepNumber: 4,
+              title: 'خطة مقترحة مع ولي الأمر',
+              description: 'مشاركة التوصيات وعدد الحصص الأنسب لتحقيق أفضل نتيجة.',
+            },
+          ];
+
+    const qualifications = (qualRes.data || []).map((q: any) => ({
+      title: q.title,
+      institution: q.institution,
+      verified: Boolean(q.verified),
+      notes: q.notes || undefined,
+    }));
+
+    const subjectsTaughtSummary = (summaryRes.data || []).map((s: any) => ({
+      title: s.title,
+      gradesRange: s.grades_range || '',
+      curriculumNote: s.curriculum_note || '',
+      icon: (s.icon_name || 'book') as any,
+    }));
+
+    return {
+      id: contextTutor.id,
+      name: contextTutor.name,
+      honorific: contextTutor.honorific || 'أ.',
+      headline: contextTutor.headline || '',
+      avatarUrl: contextTutor.avatarUrl || '',
+      verifiedCredentials: Boolean(contextTutor.verifiedCredentials),
+      yearsOfExperience: Number(contextTutor.yearsOfExperience) || 0,
+      experienceBadgeText: contextTutor.experienceBadgeText || '',
+      curriculumTags: contextTutor.curriculumTags || [],
+      hourlyRateMin: Number(contextTutor.hourlyRateMin) || 0,
+      hourlyRateMax: Number(contextTutor.hourlyRateMax) || 0,
+      currency: contextTutor.currency || 'ج.م',
+      sessionDurationMinutes: Number(contextTutor.sessionDurationMinutes) || 50,
+      trialDurationMinutes: Number(contextTutor.trialDurationMinutes) || 20,
+      rating: typeof contextTutor.rating === 'number' ? contextTutor.rating : null,
+      reviewsCount: Number(contextTutor.reviewsCount) || 0,
+      totalStudentsTaught: 0,
+      isPublished: Boolean(contextTutor.isPublished),
+      helpChildQuote: contextTutor.helpChildQuote || '',
+      helpChildSummary: contextTutor.helpChildSummary || '',
+      methodologyPillars,
+      subjectsTaughtSummary,
+      whatHappensInTrial,
+      qualifications,
+      offerings,
+    };
   },
 
   /**

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { TutorPortalService } from '../../services/tutorPortalService';
 import {
+  Tutor,
   TutorPortalContext,
   TutorAvailableSlot,
   ApprovedSpecializationItem,
@@ -10,6 +11,7 @@ import {
 } from '../../types';
 import { TutorApplicationService } from '../../services/tutorApplicationService';
 import { TutorAuthModal } from './TutorAuthModal';
+import { TutorProfileView } from '../TutorProfileView';
 import { formatTutorExperience, formatSessionPriceSummary } from '../../utils/formatters';
 import {
   GraduationCap,
@@ -216,10 +218,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [editSlotSpecIds, setEditSlotSpecIds] = useState<string[]>([]);
   const [isUpdatingSlot, setIsUpdatingSlot] = useState(false);
 
-  // 4. Profile Draft State
+  // 4. Profile Text & Avatar State (Separated: immediate text update vs avatar review)
   const [draftHeadline, setDraftHeadline] = useState('');
   const [draftQuote, setDraftQuote] = useState('');
   const [draftSummary, setDraftSummary] = useState('');
+  const [isSavingProfileText, setIsSavingProfileText] = useState(false);
+  const [textSaveSuccess, setTextSaveSuccess] = useState<string | null>(null);
+  const [textSaveError, setTextSaveError] = useState<string | null>(null);
+
   const [draftAvatarPath, setDraftAvatarPath] = useState<string | null>(null);
   const [draftAvatarPreview, setDraftAvatarPreview] = useState<string | null>(null);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
@@ -227,9 +233,16 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [avatarUploadSuccess, setAvatarUploadSuccess] = useState<string | null>(null);
   const [isSubmittingDraft, setIsSubmittingDraft] = useState(false);
 
+  // 5. Preview Mode State ("شوف ملفك زي ولي الأمر")
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [previewTutorData, setPreviewTutorData] = useState<Tutor | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+
   // Load Data & Verify Eligibility
-  const loadPortalData = async () => {
-    setIsLoading(true);
+  const loadPortalData = async (preserveTextInputs = false) => {
+    if (!preserveTextInputs) {
+      setIsLoading(true);
+    }
     setErrorMessage(null);
     try {
       const user = await TutorApplicationService.getCurrentUser();
@@ -244,12 +257,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       const portalContext = await TutorPortalService.getMyContext();
       setContext(portalContext);
 
-      // Populate draft form initial values
+      // Populate text form initial values from current tutor record (not pendingDraft, since texts update immediately)
       const tutor = portalContext.tutor;
       const existingDraft = portalContext.pendingDraft;
-      setDraftHeadline(existingDraft?.headline || tutor.headline || '');
-      setDraftQuote(existingDraft?.helpChildQuote || tutor.helpChildQuote || '');
-      setDraftSummary(existingDraft?.helpChildSummary || tutor.helpChildSummary || '');
+      if (!preserveTextInputs) {
+        setDraftHeadline(tutor.headline || '');
+        setDraftQuote(tutor.helpChildQuote || '');
+        setDraftSummary(tutor.helpChildSummary || '');
+      }
 
       if (existingDraft?.avatarUrl) {
         setDraftAvatarPath(existingDraft.avatarUrl);
@@ -716,40 +731,115 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       const uploaded = await TutorPortalService.uploadDraftAvatar(file);
       setDraftAvatarPath(uploaded.storagePath);
       setDraftAvatarPreview(uploaded.previewSignedUrl);
-      setAvatarUploadSuccess('تم رفع الصورة بنجاح وتجهيزها! اضغط زر (إرسال مقترح التعديل للمراجعة) لاعتمادها رسمياً من الإدارة.');
+      setAvatarUploadSuccess('تم رفع الصورة بنجاح! اضغط على (إرسال الصورة للمراجعة) لاعتمادها من الإدارة.');
     } catch (err: any) {
-      setAvatarUploadError(err?.message || 'فشل رفع الصورة المقترحة.');
+      setAvatarUploadError(err?.message || 'فشل رفع الصورة.');
     } finally {
       setIsUploadingAvatar(false);
     }
   };
 
-  const handleSubmitProfileDraft = async (e?: React.FormEvent) => {
+  // Immediate text update handler (does not require review)
+  const handleSaveProfileText = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!draftHeadline.trim() || draftHeadline.trim().length < 10) {
-      setErrorMessage('العنوان التعريفي مطلوب ويجب أن يحتوي على 10 أحرف على الأقل.');
+
+    setTextSaveError(null);
+    setTextSaveSuccess(null);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const trimmedHeadline = draftHeadline.trim();
+    const trimmedQuote = draftQuote.trim();
+    const trimmedSummary = draftSummary.trim();
+
+    if (!trimmedHeadline || trimmedHeadline.length < 10 || trimmedHeadline.length > 250) {
+      setTextSaveError('الجملة القصيرة عنك مطلوبة، ويجب أن تكون من 10 إلى 250 حرفًا.');
+      return;
+    }
+
+    if (trimmedQuote.length > 0 && (trimmedQuote.length < 5 || trimmedQuote.length > 350)) {
+      setTextSaveError('جملة "إزاي بتساعد الطفل يفهم؟" يجب أن تكون من 5 إلى 350 حرفًا عند كتابتها.');
+      return;
+    }
+
+    if (trimmedSummary.length > 0 && (trimmedSummary.length < 20 || trimmedSummary.length > 2500)) {
+      setTextSaveError('النبذة عنك لولي الأمر يجب أن تكون من 20 إلى 2500 حرفًا عند كتابتها.');
+      return;
+    }
+
+    setIsSavingProfileText(true);
+    try {
+      const res = await TutorPortalService.updateProfileText({
+        headline: trimmedHeadline,
+        helpChildQuote: trimmedQuote.length > 0 ? trimmedQuote : null,
+        helpChildSummary: trimmedSummary.length > 0 ? trimmedSummary : null,
+      });
+
+      // Immediately update displayed tutor data in state
+      setContext((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          tutor: {
+            ...prev.tutor,
+            headline: trimmedHeadline,
+            helpChildQuote: trimmedQuote.length > 0 ? trimmedQuote : '',
+            helpChildSummary: trimmedSummary.length > 0 ? trimmedSummary : '',
+          },
+        };
+      });
+
+      if (res.changed === false) {
+        setTextSaveSuccess('لا توجد تعديلات جديدة.');
+      } else {
+        setTextSaveSuccess('تم الحفظ وتحديث ملفك للزوار.');
+      }
+    } catch (err: any) {
+      // Display Arabic error as-is and preserve the user's typed text
+      setTextSaveError(err?.message || 'حدث خطأ أثناء حفظ التعديلات.');
+    } finally {
+      setIsSavingProfileText(false);
+    }
+  };
+
+  // Separate avatar submission handler (does NOT depend on any text field)
+  const handleSubmitAvatarDraft = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    if (!draftAvatarPath) {
+      setAvatarUploadError('يرجى اختيار ورفع صورة جديدة أولاً قبل الإرسال للمراجعة.');
       return;
     }
 
     setIsSubmittingDraft(true);
+    setAvatarUploadError(null);
     setErrorMessage(null);
     setSuccessMessage(null);
-    setAvatarUploadError(null);
 
     try {
-      await TutorPortalService.submitProfileDraft({
-        headline: draftHeadline.trim(),
-        avatarPath: draftAvatarPath,
-        helpChildQuote: draftQuote.trim() || null,
-        helpChildSummary: draftSummary.trim() || null,
-      });
-      setSuccessMessage('تم إرسال مقترح التعديل بنجاح لإدارة شاطر للمراجعة والاعتماد! تظهر حالة المقترح الآن: «بانتظار اعتماد الإدارة».');
-      setAvatarUploadSuccess(null);
-      await loadPortalData();
+      await TutorPortalService.submitAvatarDraft(draftAvatarPath);
+      setAvatarUploadSuccess('تم إرسال الصورة الجديدة للمراجعة بنجاح.');
+      await loadPortalData(true);
     } catch (err: any) {
-      setErrorMessage(err?.message || 'فشل إرسال مقترح تعديل الملف.');
+      setAvatarUploadError(err?.message || 'فشل إرسال الصورة للمراجعة.');
     } finally {
       setIsSubmittingDraft(false);
+    }
+  };
+
+  // Open parent preview ("شوف ملفك زي ولي الأمر") with current displayed data without publishing
+  const handleOpenParentPreview = async () => {
+    if (!context) return;
+    setIsLoadingPreview(true);
+    try {
+      const fullTutor = await TutorPortalService.getMyPreviewTutor(context.tutor, specializations);
+      setPreviewTutorData(fullTutor);
+      setIsPreviewMode(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'تعذر فتح معاينة الملف.');
+    } finally {
+      setIsLoadingPreview(false);
     }
   };
 
@@ -833,7 +923,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           </button>
           <button
             type="button"
-            onClick={loadPortalData}
+            onClick={() => loadPortalData(false)}
             className="px-4 py-2.5 rounded-xl border border-[#CBD5E1] hover:bg-slate-50 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className="w-4 h-4" />
@@ -859,7 +949,54 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     );
   }
 
-  const { tutor, pendingDraft, application } = context;
+  const { tutor, pendingDraft } = context;
+
+  // Calculate Profile Strength ("قوة ملفك ٪") in frontend from the 6 items:
+  // 1. صورة, 2. جملة قصيرة, 3. نبذة, 4. جملة "إزاي بتساعد الطفل", 5. تخصص واحد على الأقل, 6. موعد واحد على الأقل
+  const hasAvatar = Boolean(tutor.avatarUrl && tutor.avatarUrl.trim().length > 0);
+  const hasShortHeadline = Boolean(tutor.headline && tutor.headline.trim().length >= 10);
+  const hasSummary = Boolean(tutor.helpChildSummary && tutor.helpChildSummary.trim().length >= 20);
+  const hasHelpChildQuote = Boolean(tutor.helpChildQuote && tutor.helpChildQuote.trim().length >= 5);
+  const hasAtLeastOneSpec = specializations.length >= 1;
+  const hasAtLeastOneSlot =
+    trialSlots.length > 0 || privateSlots.length > 0 || groups.length > 0;
+
+  const strengthItems = [
+    hasAvatar,
+    hasShortHeadline,
+    hasSummary,
+    hasHelpChildQuote,
+    hasAtLeastOneSpec,
+    hasAtLeastOneSlot,
+  ];
+  const completedStrengthCount = strengthItems.filter(Boolean).length;
+  const profileStrengthPercent = Math.round((completedStrengthCount / 6) * 100);
+
+  let topNextStepTip = 'ملفك مكتمل وجاهز لاستقبال أولياء الأمور والطلاب.';
+  let topNextStepActionTab: 'profile-draft' | 'trials' | 'overview' | null = null;
+  if (!hasAvatar) {
+    if (pendingDraft?.status === 'pending_review' && pendingDraft?.avatarUrl) {
+      topNextStepTip = 'صورتك الشخصية الجديدة قيد المراجعة حاليًا لدى الإدارة.';
+    } else {
+      topNextStepTip = 'استخدم صورة واضحة لوجهك بإضاءة جيدة وخلفية بسيطة.';
+      topNextStepActionTab = 'profile-draft';
+    }
+  } else if (!hasShortHeadline) {
+    topNextStepTip = 'اكتب جملة قصيرة عنك توضح بتساعد مين وفي إيه.';
+    topNextStepActionTab = 'profile-draft';
+  } else if (!hasHelpChildQuote) {
+    topNextStepTip = 'أضف جملة توضح إزاي بتساعد الطفل يفهم بطريقة مبسطة.';
+    topNextStepActionTab = 'profile-draft';
+  } else if (!hasSummary) {
+    topNextStepTip = 'اكتب نبذة عنك لولي الأمر تذكر فيها خبرتك وطريقتك وإزاي بتتابع معاه.';
+    topNextStepActionTab = 'profile-draft';
+  } else if (!hasAtLeastOneSpec) {
+    topNextStepTip = 'تأكد من وجود تخصص دراسي واحد على الأقل معتمد في ملفك.';
+    topNextStepActionTab = 'overview';
+  } else if (!hasAtLeastOneSlot) {
+    topNextStepTip = 'أضف موعدًا واحدًا على الأقل (تجريبي أو حصة خاصة أو مجموعة) ليتمكن أولياء الأمور من الحجز.';
+    topNextStepActionTab = 'trials';
+  }
 
   // Counters for future private slots
   const nowTime = Date.now();
@@ -868,6 +1005,41 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   );
   const futurePrivateAvailableCount = futurePrivateSlots.filter((s) => s.isAvailable && !s.isBooked).length;
   const futurePrivateBookedCount = futurePrivateSlots.filter((s) => s.isBooked).length;
+
+  // Parent Preview Mode ("شوف ملفك زي ولي الأمر")
+  if (isPreviewMode && previewTutorData) {
+    return (
+      <div className="w-full space-y-4 pb-12" dir="rtl">
+        <div className="bg-[#1F2A44] text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs font-bold sticky top-0 z-50 shadow-md">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Eye className="w-4 h-4 text-[#FFC629]" />
+            <span>معاينة ملفك كما يراه ولي الأمر</span>
+            <span className="text-slate-400">·</span>
+            <span className={tutor.isPublished ? 'text-emerald-400' : 'text-amber-400'}>
+              {tutor.isPublished ? 'ملفك منشور للزوار' : 'ملفك غير منشور حالياً (معاينة خاصة بك بدون نشر)'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsPreviewMode(false)}
+            className="px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <span>العودة للوحة المعلم</span>
+            <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+          </button>
+        </div>
+
+        <TutorProfileView
+          tutor={previewTutorData}
+          previewTrialSlots={trialSlots}
+          previewPrivateSlots={privateSlots}
+          previewGroups={groups}
+          onBack={() => setIsPreviewMode(false)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6" dir="rtl">
@@ -907,16 +1079,20 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         </div>
 
         {/* Quick Nav Actions */}
-        <div className="flex items-center gap-2 self-end md:self-center shrink-0">
-          {onNavigateToPublicProfile && tutor.isPublished && (
-            <button
-              onClick={() => onNavigateToPublicProfile(tutor.id)}
-              className="px-3 py-2 rounded-xl border border-[#CBD5E1] hover:bg-slate-50 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 cursor-pointer"
-            >
+        <div className="flex flex-wrap items-center gap-2 self-end md:self-center shrink-0">
+          <button
+            type="button"
+            onClick={handleOpenParentPreview}
+            disabled={isLoadingPreview}
+            className="px-3.5 py-2 rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+          >
+            {isLoadingPreview ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
               <Eye className="w-4 h-4" />
-              <span>معاينة ملفي العام</span>
-            </button>
-          )}
+            )}
+            <span>شوف ملفك زي ولي الأمر</span>
+          </button>
 
           <button
             onClick={onNavigateHome}
@@ -933,6 +1109,71 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <LogOut className="w-3.5 h-3.5" />
             <span>خروج</span>
           </button>
+        </div>
+      </div>
+
+      {/* 1.1 Profile Strength Indicator ("قوة ملفك ٪" & "أهم خطوة دلوقتي") */}
+      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-[#E2E8F0] shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <span className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+              قوة ملفك {profileStrengthPercent}٪
+            </span>
+            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#F0F6FD] text-[#0D4E8B]">
+              {completedStrengthCount} من 6 عناصر مكتملة
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className={`px-2 py-0.5 rounded-md font-bold ${hasAvatar ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              {hasAvatar ? '✓ صورة' : '○ صورة'}
+            </span>
+            <span className={`px-2 py-0.5 rounded-md font-bold ${hasShortHeadline ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              {hasShortHeadline ? '✓ جملة قصيرة' : '○ جملة قصيرة'}
+            </span>
+            <span className={`px-2 py-0.5 rounded-md font-bold ${hasHelpChildQuote ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              {hasHelpChildQuote ? '✓ إزاي بتساعد الطفل' : '○ إزاي بتساعد الطفل'}
+            </span>
+            <span className={`px-2 py-0.5 rounded-md font-bold ${hasSummary ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              {hasSummary ? '✓ نبذة' : '○ نبذة'}
+            </span>
+            <span className={`px-2 py-0.5 rounded-md font-bold ${hasAtLeastOneSpec ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              {hasAtLeastOneSpec ? '✓ تخصص' : '○ تخصص'}
+            </span>
+            <span className={`px-2 py-0.5 rounded-md font-bold ${hasAtLeastOneSlot ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              {hasAtLeastOneSlot ? '✓ موعد متاح' : '○ موعد متاح'}
+            </span>
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${
+              profileStrengthPercent === 100 ? 'bg-emerald-600' : 'bg-[#0D4E8B]'
+            }`}
+            style={{ width: `${profileStrengthPercent}%` }}
+          />
+        </div>
+
+        {/* Single Clear Tip: "أهم خطوة دلوقتي" */}
+        <div className="p-3 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-start sm:items-center gap-2">
+            <Sparkles className="w-4 h-4 text-[#0D4E8B] shrink-0 mt-0.5 sm:mt-0" />
+            <div>
+              <span className="font-bold text-[#1F2A44] ml-1.5">أهم خطوة دلوقتي:</span>
+              <span className="text-[#64748B]">{topNextStepTip}</span>
+            </div>
+          </div>
+          {topNextStepActionTab && activeTab !== topNextStepActionTab && (
+            <button
+              type="button"
+              onClick={() => setActiveTab(topNextStepActionTab!)}
+              className="px-3 py-1 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-[11px] font-bold transition-colors self-end sm:self-auto cursor-pointer shrink-0"
+            >
+              انتقل الآن
+            </button>
+          )}
         </div>
       </div>
 
@@ -1033,10 +1274,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
             }`}
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="text-xs font-bold font-['Cairo']">اقتراح تعديل الملف</span>
+            <Edit3 className="w-3.5 h-3.5" />
+            <span className="text-xs font-bold font-['Cairo']">تعديل ملفي وصورتي</span>
             {pendingDraft && (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="يوجد مقترح معلق" />
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="توجد صورة جديدة" />
             )}
           </button>
 
@@ -1128,7 +1369,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <span>ملخص ملفي وتخصصاتي</span>
         </button>
 
-        {/* Tab 5: Profile Draft */}
+        {/* Tab 5: Profile Edit */}
         <button
           type="button"
           onClick={() => setActiveTab('profile-draft')}
@@ -1138,10 +1379,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
           }`}
         >
-          <Sparkles className="w-4 h-4" />
-          <span>اقتراح تعديل الملف</span>
+          <Edit3 className="w-4 h-4" />
+          <span>تعديل ملفي وصورتي</span>
           {pendingDraft && (
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title="يوجد مقترح معلق" />
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title="توجد صورة جديدة" />
           )}
         </button>
       </div>
@@ -2453,40 +2694,51 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
           {/* Details Card */}
           <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-5">
-            <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
-              <GraduationCap className="w-5 h-5 text-[#0D4E8B]" />
-              <span>بيانات ملفك المعتمدة الحالية</span>
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-[#0D4E8B]" />
+                <span>بيانات ملفك الحالية</span>
+              </h3>
+              <button
+                type="button"
+                onClick={handleOpenParentPreview}
+                disabled={isLoadingPreview}
+                className="px-3 py-1.5 rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-[#0D4E8B] text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>شوف ملفك زي ولي الأمر</span>
+              </button>
+            </div>
 
             <div className="space-y-4 text-xs sm:text-sm">
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                <span className="font-bold text-[#1F2A44] block">العنوان التعريفي المعتمد:</span>
+                <span className="font-bold text-[#1F2A44] block">جملة قصيرة عنك:</span>
                 <p className="text-slate-700 leading-relaxed">{tutor.headline || 'لم يحدد'}</p>
               </div>
 
               {tutor.helpChildQuote && (
                 <div className="p-4 rounded-2xl bg-[#F0F6FD] border border-[#CBD5E1] space-y-1">
-                  <span className="font-bold text-[#0D4E8B] block">اقتباس تبسيط المنهج للطفل:</span>
+                  <span className="font-bold text-[#0D4E8B] block">إزاي بتساعد الطفل يفهم؟:</span>
                   <p className="text-[#1F2A44] italic leading-relaxed">"{tutor.helpChildQuote}"</p>
                 </div>
               )}
 
               {tutor.helpChildSummary && (
                 <div className="p-4 rounded-2xl bg-white border border-[#E2E8F0] space-y-1">
-                  <span className="font-bold text-[#1F2A44] block">نبذة أسلوب التدريس وطريقة الشرح:</span>
+                  <span className="font-bold text-[#1F2A44] block">نبذة عنك لولي الأمر:</span>
                   <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{tutor.helpChildSummary}</p>
                 </div>
               )}
             </div>
 
             <div className="pt-2 flex items-center justify-between border-t border-[#F1F5F9] text-xs text-[#64748B]">
-              <span>ترغب في تحديث العنوان أو النبذة أو الصورة؟</span>
+              <span>ترغب في تعديل نصوص ملفك أو تغيير صورتك الشخصية؟</span>
               <button
                 type="button"
                 onClick={() => setActiveTab('profile-draft')}
                 className="font-bold text-[#0D4E8B] hover:underline cursor-pointer flex items-center gap-1"
               >
-                <span>تقديم مقترح تعديل</span>
+                <span>تعديل ملفي وصورتي</span>
                 <ArrowRight className="w-3.5 h-3.5 rotate-180" />
               </button>
             </div>
@@ -2495,241 +2747,340 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* SECTION 5: PROFILE DRAFT PROPOSAL */}
+      {/* SECTION 5: PROFILE TEXTS (IMMEDIATE UPDATE) & AVATAR (SEPARATE REVIEW) */}
       {/* ========================================================================= */}
       {activeTab === 'profile-draft' && (
-        <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 sm:p-8 shadow-xs space-y-6 animate-fade-in">
-          <div className="border-b border-[#F1F5F9] pb-4 space-y-1">
-            <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-[#0D4E8B]" />
-              <span>اقتراح تعديل الملف التعريفي للمراجعة الإدارية</span>
-            </h3>
-            <p className="text-xs text-[#64748B] leading-relaxed">
-              لحماية موثوقية المنصة أمام أولياء الأمور، تخضع التعديلات لمراجعة سريعة من الإدارة قبل نشرها للجمهور. النسخة المعتمدة تظل ظاهرة للجميع لحين الموافقة.
-            </p>
+        <div className="space-y-6 animate-fade-in">
+          {/* PART A: TEXTS FORM — IMMEDIATE UPDATE (NO REVIEW WORDING) */}
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F1F5F9] pb-4">
+              <div className="space-y-1">
+                <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
+                  <Edit3 className="w-5 h-5 text-[#0D4E8B]" />
+                  <span>تعديل نصوص ملفك التعريفي</span>
+                </h3>
+                <p className="text-xs text-[#64748B] leading-relaxed">
+                  عدّل الجملة القصيرة ونبذتك التعريفية وسيتم حفظها وتحديثها في ملفك فوراً.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleOpenParentPreview}
+                disabled={isLoadingPreview}
+                className="px-3.5 py-2 rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer shrink-0"
+              >
+                {isLoadingPreview ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Eye className="w-3.5 h-3.5" />
+                )}
+                <span>شوف ملفك زي ولي الأمر</span>
+              </button>
+            </div>
+
+            {/* General Notice Banner */}
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>ممنوع كتابة أرقام هاتف أو روابط أو حسابات تواصل.</span>
+            </div>
+
+            {textSaveError && (
+              <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <span className="font-bold">{textSaveError}</span>
+              </div>
+            )}
+
+            {textSaveSuccess && (
+              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <span className="font-bold">{textSaveSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProfileText} className="space-y-5">
+              {/* 1. Short Headline ("جملة قصيرة عنك") */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] block">
+                    جملة قصيرة عنك <span className="text-rose-500">*</span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-mono font-bold ${
+                      draftHeadline.trim().length < 10 || draftHeadline.trim().length > 250
+                        ? 'text-amber-600'
+                        : 'text-emerald-700'
+                    }`}
+                  >
+                    {draftHeadline.trim().length} / 250 (من 10 إلى 250 حرفًا)
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={draftHeadline}
+                  onChange={(e) => setDraftHeadline(e.target.value)}
+                  maxLength={250}
+                  placeholder="أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة"
+                  required
+                  className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                />
+                <p className="text-[11px] text-[#64748B]">
+                  اكتب بتساعد مين وفي إيه. مثال: أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة.
+                </p>
+              </div>
+
+              {/* 2. Help Child Quote ("إزاي بتساعد الطفل يفهم؟") */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] block">
+                    إزاي بتساعد الطفل يفهم؟ <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-mono font-bold ${
+                      draftQuote.trim().length > 0 &&
+                      (draftQuote.trim().length < 5 || draftQuote.trim().length > 350)
+                        ? 'text-amber-600'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    {draftQuote.trim().length} / 350 {draftQuote.trim().length > 0 ? '(من 5 إلى 350 حرفًا)' : ''}
+                  </span>
+                </div>
+                <textarea
+                  rows={2}
+                  value={draftQuote}
+                  onChange={(e) => setDraftQuote(e.target.value)}
+                  maxLength={350}
+                  placeholder="مثال: أبسّط الدرس بأمثلة عملية قريبة من الطفل وأتأكد إنه حل بنفسه قبل نهاية الحصة."
+                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                />
+              </div>
+
+              {/* 3. Summary ("اكتب نبذة عنك لولي الأمر") */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] block">
+                    اكتب نبذة عنك لولي الأمر <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-mono font-bold ${
+                      draftSummary.trim().length > 0 &&
+                      (draftSummary.trim().length < 20 || draftSummary.trim().length > 2500)
+                        ? 'text-amber-600'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    {draftSummary.trim().length} / 2500 {draftSummary.trim().length > 0 ? '(من 20 إلى 2500 حرفًا)' : ''}
+                  </span>
+                </div>
+                <textarea
+                  rows={5}
+                  value={draftSummary}
+                  onChange={(e) => setDraftSummary(e.target.value)}
+                  maxLength={2500}
+                  placeholder="اكتب نبذة واضحة لولي الأمر..."
+                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                />
+                <p className="text-[11px] text-[#64748B]">
+                  اذكر خبرتك وطريقتك وإزاي بتتابع مع ولي الأمر.
+                </p>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end">
+                <button
+                  type="submit"
+                  disabled={isSavingProfileText}
+                  className="px-6 py-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  {isSavingProfileText ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>حفظ التعديلات</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
 
-          {/* Pending Draft Status Banner if exists */}
-          {pendingDraft && (
-            <div
-              className={`p-4 rounded-2xl border text-xs sm:text-sm space-y-2 ${
-                pendingDraft.status === 'pending_review'
-                  ? 'bg-blue-50 border-blue-200 text-[#0D4E8B]'
-                  : pendingDraft.status === 'needs_revision'
-                  ? 'bg-amber-50 border-amber-200 text-amber-900'
-                  : 'bg-slate-50 border-slate-200 text-slate-800'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-bold flex items-center gap-1.5">
-                  <Clock3 className="w-4 h-4" />
+          {/* PART B: AVATAR FORM — SEPARATE ADMIN REVIEW */}
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 sm:p-8 shadow-xs space-y-5">
+            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-[#F1F5F9] pb-4">
+              <div>
+                <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
+                  <Camera className="w-5 h-5 text-[#0D4E8B]" />
+                  <span>الصورة الشخصية لملفك</span>
+                </h3>
+                <p className="text-xs text-[#64748B] mt-0.5">
+                  استخدم صورة واضحة لوجهك بإضاءة جيدة وخلفية بسيطة.
+                </p>
+              </div>
+
+              {pendingDraft && (pendingDraft.status === 'pending_review' || pendingDraft.status === 'needs_revision') && (
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${
+                    pendingDraft.status === 'pending_review'
+                      ? 'bg-blue-50 text-[#0D4E8B] border border-blue-200'
+                      : 'bg-amber-50 text-amber-900 border border-amber-200'
+                  }`}
+                >
+                  <Clock3 className="w-3.5 h-3.5" />
                   <span>
-                    {pendingDraft.status === 'pending_review'
-                      ? 'يوجد مقترح تعديل قيد مراجعة الإدارة حالياً'
-                      : pendingDraft.status === 'needs_revision'
-                      ? 'مطلوب تعديل على مقترحك وفق ملاحظات الإدارة'
-                      : 'حالة المسودة: ' + pendingDraft.status}
+                    حالة الصورة الجديدة:{' '}
+                    {pendingDraft.status === 'pending_review' ? 'قيد المراجعة' : 'مطلوب تعديل'}
                   </span>
                 </span>
-                {pendingDraft.submittedAt && (
-                  <span className="text-[11px] text-[#64748B]">
-                    تاريخ الإرسال: {new Date(pendingDraft.submittedAt).toLocaleDateString('ar-EG')}
-                  </span>
-                )}
-              </div>
-
-              {pendingDraft.adminNotes && (
-                <div className="p-3 rounded-xl bg-white/80 border border-inherit text-xs">
-                  <span className="font-bold block mb-0.5">ملاحظات الإدارة:</span>
-                  <p>{pendingDraft.adminNotes}</p>
-                </div>
               )}
             </div>
-          )}
 
-          <form onSubmit={handleSubmitProfileDraft} className="space-y-6">
-            {/* Proposed Avatar Upload Section */}
-            <div className="p-5 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-4">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] flex items-center gap-1.5">
-                    <Camera className="w-4 h-4 text-[#0D4E8B]" />
-                    <span>الصورة الشخصية لملف المعلم</span>
+            {/* Status & Admin Reason for New Avatar */}
+            {pendingDraft && (pendingDraft.status === 'pending_review' || pendingDraft.status === 'needs_revision' || pendingDraft.status === 'rejected') && (
+              <div
+                className={`p-4 rounded-2xl border text-xs sm:text-sm space-y-2 ${
+                  pendingDraft.status === 'pending_review'
+                    ? 'bg-blue-50 border-blue-200 text-[#0D4E8B]'
+                    : pendingDraft.status === 'needs_revision'
+                    ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                }`}
+              >
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-bold flex items-center gap-1.5">
+                    <Clock3 className="w-4 h-4" />
+                    <span>
+                      حالة الصورة الجديدة:{' '}
+                      {pendingDraft.status === 'pending_review'
+                        ? 'قيد المراجعة'
+                        : pendingDraft.status === 'needs_revision'
+                        ? 'مطلوب تعديل'
+                        : 'مرفوضة'}
+                    </span>
+                  </span>
+                  {pendingDraft.submittedAt && (
+                    <span className="text-[11px] text-[#64748B]">
+                      تاريخ الإرسال: {new Date(pendingDraft.submittedAt).toLocaleDateString('ar-EG')}
+                    </span>
+                  )}
+                </div>
+
+                {pendingDraft.adminNotes && (
+                  <div className="p-3 rounded-xl bg-white/80 border border-inherit text-xs">
+                    <span className="font-bold block mb-0.5">سبب الإدارة / الملاحظات:</span>
+                    <p>{pendingDraft.adminNotes}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Side-by-side: Current vs New Avatar */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* 1. Current Avatar */}
+              <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3">
+                <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
+                  {tutor.avatarUrl ? (
+                    <img src={tutor.avatarUrl} alt={tutor.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-8 h-8 text-slate-400" />
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-500 block">الصورة الحالية:</span>
+                  <span className="text-xs font-bold text-[#1F2A44] block">
+                    {tutor.avatarUrl ? 'الصورة المعتمدة حالياً في ملفك' : 'لا توجد صورة حالية'}
+                  </span>
+                </div>
+              </div>
+
+              {/* 2. New Avatar Upload */}
+              <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3 relative">
+                <div className="relative w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
+                  {draftAvatarPreview ? (
+                    <img src={draftAvatarPreview} alt="صورة جديدة" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-slate-400">
+                      <Camera className="w-7 h-7" />
+                    </div>
+                  )}
+
+                  {isUploadingAvatar && (
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center text-white">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-bold text-[#0D4E8B] block">الصورة الجديدة:</span>
+                    {pendingDraft?.status === 'pending_review' && (
+                      <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-blue-100 text-[#0D4E8B]">
+                        قيد المراجعة
+                      </span>
+                    )}
+                    {pendingDraft?.status === 'needs_revision' && (
+                      <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-amber-100 text-amber-900">
+                        مطلوب تعديل
+                      </span>
+                    )}
+                  </div>
+                  <label className="px-3 py-1.5 rounded-xl border border-[#0D4E8B] bg-blue-50/70 hover:bg-blue-100/70 text-xs font-bold text-[#0D4E8B] transition-all cursor-pointer inline-flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{isUploadingAvatar ? 'جاري الرفع...' : 'اختيار صورة جديدة'}</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handleAvatarFileChange}
+                      disabled={isUploadingAvatar || pendingDraft?.status === 'pending_review'}
+                      className="hidden"
+                    />
                   </label>
-                  <p className="text-[11px] text-[#64748B] mt-0.5">
-                    اختر صورة شخصية مهنية واضحة، تخضع لمراجعة سريعة من الإدارة قبل نشرها للجمهور.
+                  <p className="text-[10px] text-[#64748B]">
+                    صيغ مدعومة: JPG أو PNG أو WebP بحد أقصى 2 ميجابايت.
                   </p>
                 </div>
-
-                {pendingDraft?.avatarUrl && (
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-900 border border-amber-200 flex items-center gap-1">
-                    <Clock3 className="w-3.5 h-3.5 text-amber-600" />
-                    <span>بانتظار اعتماد الإدارة</span>
-                  </span>
-                )}
               </div>
+            </div>
 
-              {/* Side-by-side: Current vs Proposed Avatar */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                {/* 1. Current Published Avatar */}
-                <div className="p-4 rounded-xl bg-white border border-[#CBD5E1] flex items-center gap-3">
-                  <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
-                    {tutor.avatarUrl ? (
-                      <img src={tutor.avatarUrl} alt={tutor.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <User className="w-8 h-8 text-slate-400" />
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-bold text-slate-500 block">الصورة الحالية في ملفك:</span>
-                    <span className="text-xs font-bold text-[#1F2A44] block">
-                      {tutor.avatarUrl ? 'معتمدة ومنشورة للجمهور' : 'لا توجد صورة معتمدة'}
-                    </span>
-                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full inline-block font-bold">
-                      النسخة المنشورة
-                    </span>
-                  </div>
-                </div>
-
-                {/* 2. Proposed Avatar (with upload & preview) */}
-                <div className="p-4 rounded-xl bg-white border border-[#CBD5E1] flex items-center gap-3 relative">
-                  <div className="relative w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
-                    {draftAvatarPreview ? (
-                      <img src={draftAvatarPreview} alt="صورة مقترحة" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-400">
-                        <Camera className="w-7 h-7" />
-                      </div>
-                    )}
-
-                    {isUploadingAvatar && (
-                      <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center text-white">
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5 flex-1">
-                    <span className="text-[10px] font-bold text-[#0D4E8B] block">الصورة المقترحة الجديدة:</span>
-                    <label className="px-3 py-1.5 rounded-xl border border-[#0D4E8B] bg-blue-50/70 hover:bg-blue-100/70 text-xs font-bold text-[#0D4E8B] transition-all cursor-pointer inline-flex items-center gap-1.5">
-                      <Camera className="w-3.5 h-3.5" />
-                      <span>{isUploadingAvatar ? 'جاري الرفع...' : 'اختيار صورة جديدة'}</span>
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        onChange={handleAvatarFileChange}
-                        disabled={isUploadingAvatar}
-                        className="hidden"
-                      />
-                    </label>
-                    <p className="text-[10px] text-[#64748B]">
-                      صيغ مدعومة: JPG أو PNG أو WebP بحد أقصى 2 ميجابايت.
-                    </p>
-                  </div>
-                </div>
+            {avatarUploadError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span className="font-bold">{avatarUploadError}</span>
               </div>
+            )}
 
-              {/* Upload Error Banner if any */}
-              {avatarUploadError && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span className="font-bold">{avatarUploadError}</span>
-                </div>
-              )}
+            {avatarUploadSuccess && (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-bold">{avatarUploadSuccess}</span>
+              </div>
+            )}
 
-              {/* Upload Success Banner with direct submit CTA */}
-              {avatarUploadSuccess && (
-                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span className="font-bold">{avatarUploadSuccess}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleSubmitProfileDraft()}
-                    disabled={isSubmittingDraft || !draftHeadline.trim() || draftHeadline.trim().length < 10}
-                    className="px-3 py-1.5 rounded-lg bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 self-end sm:self-auto cursor-pointer disabled:opacity-50"
-                  >
-                    {isSubmittingDraft ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Send className="w-3.5 h-3.5" />
-                    )}
-                    <span>إرسال الصورة للمراجعة الآن</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Headline */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#1F2A44] block">
-                العنوان التعريفي المقترح (Headline) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={draftHeadline}
-                onChange={(e) => setDraftHeadline(e.target.value)}
-                placeholder="مثال: معلم رياضيات متميز في تبسيط المفاهيم لطلاب اللغات والتجريبي"
-                required
-                className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
-              />
-              <span className="text-[11px] text-[#64748B]">
-                بين 10 و 250 حرفاً — يظهر مباشرة تحت اسمك في بطاقة المعلم.
-              </span>
-            </div>
-
-            {/* Quote */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#1F2A44] block">
-                اقتباس تبسيط المنهج للطفل (Help Child Quote)
-              </label>
-              <textarea
-                rows={2}
-                value={draftQuote}
-                onChange={(e) => setDraftQuote(e.target.value)}
-                placeholder="مثال: لا يوجد طالب ضعيف، بل توجد طريقة شرح لم تناسبه بعد."
-                className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
-              />
-              <span className="text-[11px] text-[#64748B]">
-                جملة ملهمة تعبر عن فلسفتك مع الطالب (حتى 350 حرفاً).
-              </span>
-            </div>
-
-            {/* Summary */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#1F2A44] block">
-                نبذة أسلوب التدريس وطريقة المتابعة
-              </label>
-              <textarea
-                rows={5}
-                value={draftSummary}
-                onChange={(e) => setDraftSummary(e.target.value)}
-                placeholder="اكتب بالتفصيل كيف تبسط المفاهيم، كيف تشجع الطالب، وكيف تتواصل مع ولي الأمر..."
-                className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
-              />
-              <span className="text-[11px] text-[#64748B]">
-                بين 20 و 2500 حرفاً.
-              </span>
-            </div>
-
-            <div className="pt-2 flex items-center justify-end">
+            <div className="pt-1 flex items-center justify-end">
               <button
-                type="submit"
-                disabled={isSubmittingDraft}
-                className="px-6 py-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+                type="button"
+                onClick={handleSubmitAvatarDraft}
+                disabled={
+                  isSubmittingDraft ||
+                  isUploadingAvatar ||
+                  !draftAvatarPath ||
+                  pendingDraft?.status === 'pending_review'
+                }
+                className="px-6 py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
               >
                 {isSubmittingDraft ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <>
                     <Send className="w-4 h-4" />
-                    <span>إرسال مقترح التعديل للمراجعة</span>
+                    <span>إرسال الصورة للمراجعة</span>
                   </>
                 )}
               </button>
             </div>
-          </form>
+          </div>
         </div>
       )}
 

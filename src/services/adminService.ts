@@ -15,6 +15,9 @@ import {
   AdminStatisticsDataHealthError,
   AdminStatisticsDrilldownRequest,
   AdminStatisticsDrilldownResponse,
+  AdminTutorProfileEditRecord,
+  TutorProfileFieldChange,
+  AdminProfileDraftItem,
 } from '../types';
 import {
   RawStatisticsDataset,
@@ -1345,6 +1348,252 @@ export const AdminService = {
 
     if (error) {
       throw new Error(`فشل تنفيذ قرار مراجعة مسودة المعلم: ${error.message}`);
+    }
+  },
+
+  /**
+   * 18.1 Get pending tutor profile drafts (e.g. avatar-only or profile drafts awaiting admin review)
+   */
+  async getPendingProfileDrafts(tutorId?: string): Promise<AdminProfileDraftItem[]> {
+    let query = supabase
+      .from('tutor_profile_drafts')
+      .select('*, tutors(id, name, avatar_url)')
+      .eq('status', 'pending_review')
+      .order('submitted_at', { ascending: false });
+
+    if (tutorId) {
+      query = query.eq('tutor_id', tutorId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`تعذر جلب مسودات التعديل المعلقة: ${error.message}`);
+    }
+
+    const rows = data || [];
+    const items: AdminProfileDraftItem[] = await Promise.all(
+      rows.map(async (row: any) => {
+        const rawAvatarUrl: string | null = row.avatar_url ?? null;
+        let pendingAvatarSignedUrl: string | null = null;
+
+        if (rawAvatarUrl) {
+          if (
+            rawAvatarUrl.startsWith('http://') ||
+            rawAvatarUrl.startsWith('https://') ||
+            rawAvatarUrl.startsWith('/')
+          ) {
+            pendingAvatarSignedUrl = rawAvatarUrl;
+          } else {
+            try {
+              const { data: signedData } = await supabase.storage
+                .from('tutor-avatars-pending')
+                .createSignedUrl(rawAvatarUrl, 3600);
+              pendingAvatarSignedUrl = signedData?.signedUrl || null;
+            } catch {
+              pendingAvatarSignedUrl = null;
+            }
+          }
+        }
+
+        const tutorObj = Array.isArray(row.tutors) ? row.tutors[0] : row.tutors;
+
+        return {
+          id: row.id,
+          tutorId: row.tutor_id,
+          tutorName: tutorObj?.name || row.tutor_name || row.tutor_id,
+          currentAvatarUrl: tutorObj?.avatar_url || null,
+          headline: row.headline ?? null,
+          avatarUrl: rawAvatarUrl,
+          pendingAvatarSignedUrl,
+          helpChildQuote: row.help_child_quote ?? null,
+          helpChildSummary: row.help_child_summary ?? null,
+          status: row.status,
+          adminNotes: row.admin_notes ?? null,
+          submittedAt: row.submitted_at || row.updated_at || row.created_at,
+          reviewedAt: row.reviewed_at ?? null,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        };
+      })
+    );
+
+    return items;
+  },
+
+  /**
+   * 18.2 Get recent tutor profile text edits via RPC
+   */
+  async getRecentTutorProfileEdits(limit: number = 50): Promise<AdminTutorProfileEditRecord[]> {
+    const { data, error } = await supabase.rpc('admin_get_recent_tutor_profile_edits', {
+      p_limit: limit,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'تعذر تحميل سجل آخر تعديلات المعلمين.');
+    }
+
+    const rawList: any[] = Array.isArray(data)
+      ? data
+      : Array.isArray((data as any)?.items)
+      ? (data as any).items
+      : Array.isArray((data as any)?.edits)
+      ? (data as any).edits
+      : Array.isArray((data as any)?.data)
+      ? (data as any).data
+      : [];
+
+    const fieldLabelMap: Record<string, string> = {
+      headline: 'جملة قصيرة عنك',
+      help_child_quote: 'إزاي بتساعد الطفل يفهم؟',
+      helpChildQuote: 'إزاي بتساعد الطفل يفهم؟',
+      help_child_summary: 'نبذة عن المعلم لولي الأمر',
+      helpChildSummary: 'نبذة عن المعلم لولي الأمر',
+    };
+
+    return rawList.map((row: any, idx: number): AdminTutorProfileEditRecord => {
+      const id = String(row.id ?? row.history_id ?? row.edit_id ?? idx);
+      const tutorId = String(row.tutor_id ?? row.tutorId ?? '');
+      const tutorName = String(
+        row.tutor_name ?? row.tutorName ?? row.name ?? (tutorId || 'معلم')
+      );
+      const createdAt = String(
+        row.created_at ?? row.createdAt ?? row.edited_at ?? row.editedAt ?? new Date().toISOString()
+      );
+      const source = row.source ?? row.edit_source ?? null;
+      const revertedAt = row.reverted_at ?? row.revertedAt ?? null;
+      const revertedBy = row.reverted_by ?? row.revertedBy ?? null;
+
+      const changes: TutorProfileFieldChange[] = [];
+
+      if (Array.isArray(row.changes)) {
+        for (const ch of row.changes) {
+          const key = String(ch.field ?? ch.field_key ?? ch.fieldKey ?? '');
+          changes.push({
+            fieldKey: key,
+            fieldLabel: ch.label ?? ch.field_label ?? ch.fieldLabel ?? fieldLabelMap[key] ?? key,
+            beforeValue:
+              ch.before ?? ch.old_value ?? ch.before_value ?? ch.beforeValue ?? null,
+            afterValue:
+              ch.after ?? ch.new_value ?? ch.after_value ?? ch.afterValue ?? null,
+          });
+        }
+      } else if (row.field_name || row.field) {
+        const key = String(row.field_name ?? row.field);
+        changes.push({
+          fieldKey: key,
+          fieldLabel: fieldLabelMap[key] ?? key,
+          beforeValue: row.old_value ?? row.before_value ?? row.previous_value ?? null,
+          afterValue: row.new_value ?? row.after_value ?? row.current_value ?? null,
+        });
+      } else {
+        const beforeObj = row.before ?? row.old_values ?? row.previous_values ?? {};
+        const afterObj = row.after ?? row.new_values ?? row.current_values ?? {};
+        const changedFieldsList: string[] | null = Array.isArray(row.changed_fields)
+          ? row.changed_fields
+          : null;
+
+        const candidateFields: Array<{
+          key: string;
+          label: string;
+          before: any;
+          after: any;
+        }> = [
+          {
+            key: 'headline',
+            label: fieldLabelMap.headline,
+            before:
+              row.old_headline ??
+              row.previous_headline ??
+              row.before_headline ??
+              beforeObj.headline,
+            after:
+              row.new_headline ??
+              row.after_headline ??
+              row.headline ??
+              afterObj.headline,
+          },
+          {
+            key: 'help_child_quote',
+            label: fieldLabelMap.help_child_quote,
+            before:
+              row.old_help_child_quote ??
+              row.previous_help_child_quote ??
+              row.before_help_child_quote ??
+              beforeObj.help_child_quote ??
+              beforeObj.helpChildQuote,
+            after:
+              row.new_help_child_quote ??
+              row.after_help_child_quote ??
+              row.help_child_quote ??
+              afterObj.help_child_quote ??
+              afterObj.helpChildQuote,
+          },
+          {
+            key: 'help_child_summary',
+            label: fieldLabelMap.help_child_summary,
+            before:
+              row.old_help_child_summary ??
+              row.previous_help_child_summary ??
+              row.before_help_child_summary ??
+              beforeObj.help_child_summary ??
+              beforeObj.helpChildSummary,
+            after:
+              row.new_help_child_summary ??
+              row.after_help_child_summary ??
+              row.help_child_summary ??
+              afterObj.help_child_summary ??
+              afterObj.helpChildSummary,
+          },
+        ];
+
+        for (const f of candidateFields) {
+          const normBefore = f.before !== undefined && f.before !== null ? String(f.before) : null;
+          const normAfter = f.after !== undefined && f.after !== null ? String(f.after) : null;
+          const explicitlyListed = changedFieldsList ? changedFieldsList.includes(f.key) : false;
+          const hasDifference =
+            (f.before !== undefined || f.after !== undefined) &&
+            (normBefore ?? '') !== (normAfter ?? '');
+
+          if (explicitlyListed || hasDifference) {
+            changes.push({
+              fieldKey: f.key,
+              fieldLabel: f.label,
+              beforeValue: normBefore,
+              afterValue: normAfter,
+            });
+          }
+        }
+      }
+
+      return {
+        id,
+        tutorId,
+        tutorName,
+        createdAt,
+        source,
+        revertedAt,
+        revertedBy,
+        changes,
+      };
+    });
+  },
+
+  /**
+   * 18.3 Revert a tutor profile text edit via RPC
+   */
+  async revertTutorProfileEdit(historyId: string): Promise<void> {
+    const { data, error } = await supabase.rpc('admin_revert_tutor_profile_edit', {
+      p_history_id: historyId,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'فشل استرجاع النسخة السابقة.');
+    }
+
+    if (data && typeof data === 'object' && 'success' in data && (data as any).success === false) {
+      throw new Error(
+        (data as any).message || (data as any).error || 'فشل استرجاع النسخة السابقة.'
+      );
     }
   },
 

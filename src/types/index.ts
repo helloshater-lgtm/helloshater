@@ -346,7 +346,7 @@ export interface AdminTutorSavePayload {
 export interface TutorProfileDraft {
   id: string;
   tutorId: string;
-  headline: string;
+  headline: string | null;
   avatarUrl?: string | null;
   helpChildQuote?: string | null;
   helpChildSummary?: string | null;
@@ -356,6 +356,30 @@ export interface TutorProfileDraft {
   reviewedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface TutorProfileFieldChange {
+  fieldKey: string;
+  fieldLabel: string;
+  beforeValue: string | null;
+  afterValue: string | null;
+}
+
+export interface AdminTutorProfileEditRecord {
+  id: string;
+  tutorId: string;
+  tutorName: string;
+  createdAt: string;
+  source?: string | null;
+  revertedAt?: string | null;
+  revertedBy?: string | null;
+  changes: TutorProfileFieldChange[];
+}
+
+export interface AdminProfileDraftItem extends TutorProfileDraft {
+  tutorName: string;
+  currentAvatarUrl?: string | null;
+  pendingAvatarSignedUrl?: string | null;
 }
 
 export interface TutorPortalContext {
