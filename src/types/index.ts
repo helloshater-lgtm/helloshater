@@ -137,6 +137,7 @@ export interface SearchCriteria {
   gradeId?: string;
   subjectId?: string;
   curriculumType?: CurriculumType | '';
+  courseOptionId?: string | null;
   // Quran parameters
   ageGroupId?: string;
   levelId?: string;
@@ -890,5 +891,56 @@ export interface AdminPlatformStatistics {
   generatedAt: string;
 }
 
+export type ParentLeadStatus = 'new' | 'contacted' | 'trial' | 'subscribed' | 'lost';
 
+export interface AdminParentLeadRecord {
+  id: string;
+  referenceCode: string;
+  createdAt: string;
+  guardianName: string;
+  countryCode: string;
+  phone: string;
+  childAge: number | null;
+  requestType: 'trial' | 'private' | 'group' | 'recommendation' | string;
+  track: 'school' | 'quran' | null;
+  tutorId: string | null;
+  tutorName: string | null;
+  courseOptionId: string | null;
+  quranAgeGroupId: string | null;
+  quranLevelId: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+  landingPage: string | null;
+  referrer: string | null;
+  whatsappOpened: boolean;
+  whatsappOpenedAt: string | null;
+  status: ParentLeadStatus;
+  adminNotes: string;
+}
+
+export interface AdminParentLeadSourceStat {
+  source: string;
+  campaign: string;
+  totalLeads: number;
+  contacted: number;
+  trial: number;
+  subscribed: number;
+  lost: number;
+}
+
+export interface AdminLeadBookingDraft {
+  leadId: string;
+  referenceCode: string;
+  guardianName: string;
+  phone: string;
+  tutorId: string | null;
+  tutorName: string | null;
+  requestType: 'trial' | 'private' | 'group' | 'recommendation' | string;
+  courseOptionId?: string | null;
+  quranAgeGroupId?: string | null;
+  quranLevelId?: string | null;
+}
 

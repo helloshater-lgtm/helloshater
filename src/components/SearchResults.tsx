@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Tutor, SearchCriteria } from '../types';
 import { TutorCard } from './TutorCard';
 import { toArabicDigits } from '../utils/formatters';
 import { Edit3, RotateCcw, AlertCircle, Sparkles, MessageCircle, CheckCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
-import { trackWhatsAppClicked } from '../services/analytics';
+import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
 
 interface SearchResultsProps {
   tutors: Tutor[];
@@ -38,6 +38,17 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
   quranAgeName,
   quranLevelName,
 }) => {
+  const [isRecommendationModalOpen, setIsRecommendationModalOpen] = useState(false);
+  const emptySearchWhatsAppUrl = buildInterestRegistrationWhatsAppUrl({
+    track: criteria.track,
+    stageName,
+    gradeName,
+    subjectName,
+    curriculumName,
+    quranAgeGroupName: quranAgeName,
+    quranLevelName,
+  });
+
   return (
     <motion.section
       id="search-results-section"
@@ -171,28 +182,18 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
-            <a
-              href={buildInterestRegistrationWhatsAppUrl({
-                track: criteria.track,
-                stageName,
-                gradeName,
-                subjectName,
-                curriculumName,
-                quranAgeGroupName: quranAgeName,
-                quranLevelName,
-              })}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => trackWhatsAppClicked('empty_search_interest')}
-              className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+            <button
+              type="button"
+              onClick={() => setIsRecommendationModalOpen(true)}
+              className="min-h-[44px] px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-2 cursor-pointer"
             >
               <MessageCircle className="w-4 h-4" />
               <span>تواصل معنا لترشيح معلم مناسب</span>
-            </a>
+            </button>
             <button
               type="button"
               onClick={onModifySearch}
-              className="px-5 py-2.5 rounded-xl border border-[#CBD5E1] text-[#1F2A44] hover:bg-[#F8F9FC] text-xs font-bold transition-all cursor-pointer"
+              className="min-h-[44px] px-5 py-2.5 rounded-xl border border-[#CBD5E1] text-[#1F2A44] hover:bg-[#F8F9FC] text-xs font-bold transition-all cursor-pointer"
             >
               تعديل الاختيارات
             </button>
@@ -208,6 +209,19 @@ export const SearchResults: React.FC<SearchResultsProps> = ({
           ))}
         </div>
       )}
+
+      <WhatsAppNoticeModal
+        isOpen={isRecommendationModalOpen}
+        onClose={() => setIsRecommendationModalOpen(false)}
+        requestType="recommendation"
+        track={criteria.track}
+        tutorId={null}
+        courseOptionId={criteria.track === 'school' ? criteria.courseOptionId || null : null}
+        quranAgeGroupId={criteria.track === 'quran' ? criteria.ageGroupId || null : null}
+        quranLevelId={criteria.track === 'quran' ? criteria.levelId || null : null}
+        customWhatsAppUrl={emptySearchWhatsAppUrl}
+        whatsappAnalyticsSource="empty_search_interest"
+      />
     </motion.section>
   );
 };

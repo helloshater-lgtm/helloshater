@@ -34,6 +34,7 @@ import {
   trackTutorProfileOpened,
   resetTutorProfileTracking,
 } from './services/analytics';
+import { captureInitialAttribution } from './services/parentLeadService';
 
 const AdminDashboardView = lazy(() =>
   import('./components/admin/AdminDashboardView').then((mod) => ({
@@ -81,6 +82,8 @@ export default function App() {
   const [quranLevels, setQuranLevels] = useState<QuranLevel[]>([]);
 
   useEffect(() => {
+    captureInitialAttribution();
+
     Promise.all([
       DataService.getStages().catch(() => []),
       DataService.getAllGrades().catch(() => []),

@@ -19,13 +19,21 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { AdminService } from '../../services/adminService';
+import { AdminLeadBookingDraft } from '../../types';
 
 interface AdminClassesManagementViewProps {
   onNotify?: (message: string, type: 'success' | 'error') => void;
+  initialBookingDraft?: AdminLeadBookingDraft | null;
+  onClearInitialBookingDraft?: () => void;
 }
 
-export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProps> = ({ onNotify }) => {
+export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProps> = ({
+  onNotify,
+  initialBookingDraft,
+  onClearInitialBookingDraft,
+}) => {
   const [subTab, setSubTab] = useState<'private_bookings' | 'group_enrollments' | 'group_reviews'>('group_reviews');
+  const [activeLeadDraft, setActiveLeadDraft] = useState<AdminLeadBookingDraft | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -140,6 +148,42 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
     loadData();
     setStatusFilter('all');
   }, [subTab]);
+
+  // Pre-fill existing booking/enrollment form when opened from a parent lead ("تسجيل حجز")
+  useEffect(() => {
+    if (!initialBookingDraft) return;
+    setActiveLeadDraft(initialBookingDraft);
+
+    const noteParts: string[] = [];
+    if (initialBookingDraft.referenceCode) {
+      noteParts.push(`رقم الطلب: ${initialBookingDraft.referenceCode}`);
+    }
+    if (initialBookingDraft.tutorName) {
+      noteParts.push(`المعلم: ${initialBookingDraft.tutorName}`);
+    }
+    const defaultNote = noteParts.join(' — ');
+
+    if (initialBookingDraft.requestType === 'group') {
+      setSubTab('group_enrollments');
+      setNewEnrollmentGuardianName(initialBookingDraft.guardianName || '');
+      setNewEnrollmentPhone(initialBookingDraft.phone || '');
+      setNewEnrollmentNotes(defaultNote);
+      setIsNewEnrollmentModalOpen(true);
+    } else {
+      setSubTab('private_bookings');
+      setNewBookingGuardianName(initialBookingDraft.guardianName || '');
+      setNewBookingPhone(initialBookingDraft.phone || '');
+      setNewBookingNotes(defaultNote);
+      if (initialBookingDraft.courseOptionId) {
+        setNewBookingSpecCode(`school:${initialBookingDraft.courseOptionId}`);
+      } else if (initialBookingDraft.quranAgeGroupId && initialBookingDraft.quranLevelId) {
+        setNewBookingSpecCode(`quran:${initialBookingDraft.quranAgeGroupId}:${initialBookingDraft.quranLevelId}`);
+      }
+      setIsNewBookingModalOpen(true);
+    }
+
+    onClearInitialBookingDraft?.();
+  }, [initialBookingDraft]);
 
   // Lookup slot info when Admin enters a valid Slot UUID in the New Private Booking modal
   useEffect(() => {
@@ -1210,6 +1254,20 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
               <span>تسجيل طلب حجز حصة خاصة (بيانات واتساب)</span>
             </h3>
 
+            {activeLeadDraft && (
+              <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-[#1F2A44] space-y-1">
+                <div className="font-bold text-[#0D4E8B]">
+                  بيانات محوّلة من طلب ولي أمر ({activeLeadDraft.referenceCode})
+                </div>
+                <div className="text-[#475569]">
+                  المعلم المطلوب:{' '}
+                  <span className="font-bold text-[#1F2A44]">
+                    {activeLeadDraft.tutorName || 'غير محدد (ترشيح عام)'}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
@@ -1379,6 +1437,20 @@ export const AdminClassesManagementView: React.FC<AdminClassesManagementViewProp
               <Users className="w-5 h-5 text-[#0D4E8B]" />
               <span>تسجيل اشتراك مجموعة تعليمية (بيانات واتساب)</span>
             </h3>
+
+            {activeLeadDraft && (
+              <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-[#1F2A44] space-y-1">
+                <div className="font-bold text-[#0D4E8B]">
+                  بيانات محوّلة من طلب ولي أمر ({activeLeadDraft.referenceCode})
+                </div>
+                <div className="text-[#475569]">
+                  المعلم المطلوب:{' '}
+                  <span className="font-bold text-[#1F2A44]">
+                    {activeLeadDraft.tutorName || 'غير محدد (ترشيح عام)'}
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               <div>

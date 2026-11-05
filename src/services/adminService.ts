@@ -18,6 +18,9 @@ import {
   AdminTutorProfileEditRecord,
   TutorProfileFieldChange,
   AdminProfileDraftItem,
+  ParentLeadStatus,
+  AdminParentLeadRecord,
+  AdminParentLeadSourceStat,
 } from '../types';
 import {
   RawStatisticsDataset,
@@ -1595,6 +1598,160 @@ export const AdminService = {
         (data as any).message || (data as any).error || 'فشل استرجاع النسخة السابقة.'
       );
     }
+  },
+
+  /**
+   * 18.4 Admin get parent leads via RPC
+   */
+  async getParentLeads(
+    status?: ParentLeadStatus | null,
+    limit: number = 200
+  ): Promise<AdminParentLeadRecord[]> {
+    const { data, error } = await supabase.rpc('admin_get_parent_leads', {
+      p_status: status || null,
+      p_limit: limit,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'تعذر تحميل قائمة طلبات أولياء الأمور.');
+    }
+
+    const rawList: any[] = Array.isArray(data)
+      ? data
+      : Array.isArray((data as any)?.items)
+      ? (data as any).items
+      : Array.isArray((data as any)?.leads)
+      ? (data as any).leads
+      : Array.isArray((data as any)?.data)
+      ? (data as any).data
+      : [];
+
+    return rawList.map((row: any): AdminParentLeadRecord => {
+      const whatsappOpenedAt = row.whatsapp_opened_at ?? row.whatsappOpenedAt ?? null;
+      const whatsappOpened = Boolean(
+        row.whatsapp_opened ?? row.whatsappOpened ?? row.is_whatsapp_opened ?? whatsappOpenedAt
+      );
+
+      return {
+        id: String(row.id ?? row.lead_id ?? ''),
+        referenceCode: String(row.reference_code ?? row.referenceCode ?? ''),
+        createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
+        guardianName: String(row.guardian_name ?? row.guardianName ?? ''),
+        countryCode: String(row.country_code ?? row.countryCode ?? '+20'),
+        phone: String(row.phone ?? row.phone_number ?? row.phoneNumber ?? ''),
+        childAge:
+          row.child_age !== undefined && row.child_age !== null
+            ? Number(row.child_age)
+            : row.childAge !== undefined && row.childAge !== null
+            ? Number(row.childAge)
+            : null,
+        requestType: String(row.request_type ?? row.requestType ?? 'trial'),
+        track: (row.track ?? null) as 'school' | 'quran' | null,
+        tutorId: row.tutor_id ?? row.tutorId ?? null,
+        tutorName: row.tutor_name ?? row.tutorName ?? null,
+        courseOptionId: row.course_option_id ?? row.courseOptionId ?? null,
+        quranAgeGroupId: row.quran_age_group_id ?? row.quranAgeGroupId ?? null,
+        quranLevelId: row.quran_level_id ?? row.quranLevelId ?? null,
+        utmSource: row.utm_source ?? row.utmSource ?? row.source ?? null,
+        utmMedium: row.utm_medium ?? row.utmMedium ?? null,
+        utmCampaign: row.utm_campaign ?? row.utmCampaign ?? row.campaign ?? null,
+        utmContent: row.utm_content ?? row.utmContent ?? null,
+        utmTerm: row.utm_term ?? row.utmTerm ?? null,
+        landingPage: row.landing_page ?? row.landingPage ?? null,
+        referrer: row.referrer ?? null,
+        whatsappOpened,
+        whatsappOpenedAt,
+        status: ((row.status || 'new') as ParentLeadStatus),
+        adminNotes: String(row.admin_notes ?? row.adminNotes ?? ''),
+      };
+    });
+  },
+
+  /**
+   * 18.5 Admin update parent lead status and notes via RPC
+   */
+  async updateParentLead(
+    leadId: string,
+    status: ParentLeadStatus,
+    adminNotes?: string
+  ): Promise<void> {
+    const { data, error } = await supabase.rpc('admin_update_parent_lead', {
+      p_lead_id: leadId,
+      p_status: status,
+      p_admin_notes: adminNotes !== undefined ? adminNotes.trim() : null,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'تعذر تحديث حالة الطلب وملاحظات الإدارة.');
+    }
+
+    if (data && typeof data === 'object' && 'success' in data && (data as any).success === false) {
+      throw new Error(
+        (data as any).message || (data as any).error || 'تعذر تحديث حالة الطلب.'
+      );
+    }
+  },
+
+  /**
+   * 18.6 Admin delete parent lead via RPC
+   */
+  async deleteParentLead(leadId: string): Promise<void> {
+    const { data, error } = await supabase.rpc('admin_delete_parent_lead', {
+      p_lead_id: leadId,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'تعذر حذف الطلب.');
+    }
+
+    if (data && typeof data === 'object' && 'success' in data && (data as any).success === false) {
+      throw new Error(
+        (data as any).message || (data as any).error || 'تعذر حذف الطلب.'
+      );
+    }
+  },
+
+  /**
+   * 18.7 Admin get parent lead source stats via RPC
+   */
+  async getParentLeadStats(days: number = 30): Promise<AdminParentLeadSourceStat[]> {
+    const { data, error } = await supabase.rpc('admin_get_parent_lead_stats', {
+      p_days: days,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'تعذر تحميل إحصائيات مصادر الطلبات.');
+    }
+
+    const rawList: any[] = Array.isArray(data)
+      ? data
+      : Array.isArray((data as any)?.sources)
+      ? (data as any).sources
+      : Array.isArray((data as any)?.by_source)
+      ? (data as any).by_source
+      : Array.isArray((data as any)?.items)
+      ? (data as any).items
+      : Array.isArray((data as any)?.rows)
+      ? (data as any).rows
+      : Array.isArray((data as any)?.data)
+      ? (data as any).data
+      : [];
+
+    return rawList.map((row: any): AdminParentLeadSourceStat => ({
+      source: String(
+        row.utm_source ?? row.utmSource ?? row.source ?? 'مباشر / غير محدد'
+      ),
+      campaign: String(
+        row.utm_campaign ?? row.utmCampaign ?? row.campaign ?? '—'
+      ),
+      totalLeads: Number(
+        row.total ?? row.total_leads ?? row.leads ?? row.requests ?? row.count ?? 0
+      ),
+      contacted: Number(row.contacted ?? row.contacted_count ?? 0),
+      trial: Number(row.trial ?? row.trial_count ?? 0),
+      subscribed: Number(row.subscribed ?? row.subscribed_count ?? 0),
+      lost: Number(row.lost ?? row.lost_count ?? 0),
+    }));
   },
 
   /**

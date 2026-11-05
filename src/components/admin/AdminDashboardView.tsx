@@ -5,6 +5,7 @@ import {
   Tutor,
   AdminTutorProfileEditRecord,
   AdminProfileDraftItem,
+  AdminLeadBookingDraft,
 } from '../../types';
 import { AdminAuthService } from '../../services/adminAuthService';
 import { AdminService, AdminTutorListItem } from '../../services/adminService';
@@ -15,6 +16,7 @@ import { AdminApplicationsListView } from './AdminApplicationsListView';
 import { AdminApplicationDetailView } from './AdminApplicationDetailView';
 import { AdminClassesManagementView } from './AdminClassesManagementView';
 import { AdminStatisticsView } from './AdminStatisticsView';
+import { AdminParentLeadsView } from './AdminParentLeadsView';
 import { TutorProfileView } from '../TutorProfileView';
 import {
   ShieldCheck,
@@ -32,6 +34,7 @@ import {
   History,
   RotateCcw,
   RefreshCw,
+  MessageCircle,
 } from 'lucide-react';
 
 interface AdminDashboardViewProps {
@@ -42,11 +45,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Top Nav Tab: 'tutors' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
+  // Top Nav Tab: 'tutors' | 'parent-leads' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
   const [activeTab, setActiveTab] = useState<
-    'tutors' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
+    'tutors' | 'parent-leads' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
   >('tutors');
   const [pendingApplicationsCount, setPendingApplicationsCount] = useState<number>(0);
+  const [newParentLeadsCount, setNewParentLeadsCount] = useState<number>(0);
+  const [leadBookingDraft, setLeadBookingDraft] = useState<AdminLeadBookingDraft | null>(null);
 
   // Sub-Views: 'list' | 'edit' | 'new' | 'preview' | 'app-detail'
   const [currentMode, setCurrentMode] = useState<'list' | 'edit' | 'new' | 'preview' | 'app-detail'>('list');
@@ -125,6 +130,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
     if (currentAdmin && currentMode === 'list') {
       loadTutors();
       loadRecentEditsAndDrafts();
+      AdminService.getParentLeads('new', 200)
+        .then((leads) => setNewParentLeadsCount(leads.length))
+        .catch(() => {});
     }
   }, [currentAdmin, currentMode]);
 
@@ -719,10 +727,31 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
         <button
           type="button"
           onClick={() => {
+            setActiveTab('parent-leads');
+            setCurrentMode('list');
+          }}
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'parent-leads'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
+          }`}
+        >
+          <MessageCircle className="w-4 h-4" />
+          <span>طلبات جديدة</span>
+          {newParentLeadsCount > 0 && (
+            <span className="w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
+              {newParentLeadsCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
             setActiveTab('classes');
             setCurrentMode('list');
           }}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'classes'
               ? 'bg-[#0D4E8B] text-white shadow-xs'
               : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
@@ -738,7 +767,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
             setActiveTab('statistics');
             setCurrentMode('list');
           }}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
             activeTab === 'statistics'
               ? 'bg-[#0D4E8B] text-white shadow-xs'
               : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
@@ -779,8 +808,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
             setCurrentMode('list');
           }}
         />
+      ) : activeTab === 'parent-leads' ? (
+        <AdminParentLeadsView
+          tutorsList={tutorsList}
+          onUpdateNewLeadsCount={(count) => setNewParentLeadsCount(count)}
+          onOpenBookingFromLead={(draft) => {
+            setLeadBookingDraft(draft);
+            setActiveTab('classes');
+            setCurrentMode('list');
+          }}
+        />
       ) : activeTab === 'classes' ? (
         <AdminClassesManagementView
+          initialBookingDraft={leadBookingDraft}
+          onClearInitialBookingDraft={() => setLeadBookingDraft(null)}
           onNotify={(msg, type) => {
             if (type === 'error') setGlobalError(msg);
           }}

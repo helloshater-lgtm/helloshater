@@ -40,6 +40,7 @@ const ALLOWED_EVENT_PARAMS = new Set([
   'trigger_mode',
   'source',
   'has_slots',
+  'request_type',
 ]);
 
 // Deduplication state to prevent double-firing on React re-renders
@@ -100,11 +101,6 @@ export function sendGAEvent(eventName: string, params?: Record<string, any>): vo
     window.gtag('event', eventName, safeParams);
   } else if (Array.isArray(window.dataLayer)) {
     window.dataLayer.push(['event', eventName, safeParams]);
-  }
-
-  if (import.meta.env?.DEV) {
-    // Helpful for verification during local testing
-    console.debug(`[GA4 Event] ${eventName}:`, safeParams);
   }
 }
 
@@ -370,4 +366,39 @@ export function trackTutorApplicationSubmitted(params?: {
     track: params?.track,
   });
 }
+
+/**
+ * 10. Parent Lead Funnel Events
+ * Strictly passes ONLY track and request_type. Never sends guardian name, phone, childAge, or referenceCode.
+ */
+export function trackParentLeadFormOpened(params: {
+  track?: 'school' | 'quran' | null;
+  request_type: 'trial' | 'private' | 'group' | 'recommendation';
+}): void {
+  sendGAEvent('parent_lead_form_opened', {
+    track: params.track || undefined,
+    request_type: params.request_type,
+  });
+}
+
+export function trackParentLeadSubmitted(params: {
+  track?: 'school' | 'quran' | null;
+  request_type: 'trial' | 'private' | 'group' | 'recommendation';
+}): void {
+  sendGAEvent('parent_lead_submitted', {
+    track: params.track || undefined,
+    request_type: params.request_type,
+  });
+}
+
+export function trackParentLeadSubmitFailed(params: {
+  track?: 'school' | 'quran' | null;
+  request_type: 'trial' | 'private' | 'group' | 'recommendation';
+}): void {
+  sendGAEvent('parent_lead_submit_failed', {
+    track: params.track || undefined,
+    request_type: params.request_type,
+  });
+}
+
 

@@ -92,6 +92,15 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 }) => {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [modalContext, setModalContext] = useState<{
+    requestType: 'trial' | 'private' | 'group' | 'recommendation';
+    track: 'school' | 'quran' | null;
+    courseOptionId: string | null;
+    quranAgeGroupId: string | null;
+    quranLevelId: string | null;
+    customWhatsAppUrl?: string;
+    whatsappAnalyticsSource: string;
+  } | null>(null);
   const [isBioExpanded, setIsBioExpanded] = useState(false);
 
   // Active tab in the compact booking widget
@@ -485,8 +494,20 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     });
   };
 
+  const openTrialWhatsAppModal = () => {
+    setModalContext({
+      requestType: 'trial',
+      track: detectedTrack as 'school' | 'quran',
+      courseOptionId: isSchool ? criteria?.courseOptionId || null : null,
+      quranAgeGroupId: !isSchool ? criteria?.ageGroupId || null : null,
+      quranLevelId: !isSchool ? criteria?.levelId || null : null,
+      customWhatsAppUrl: undefined,
+      whatsappAnalyticsSource: 'trial_booking_modal',
+    });
+    setIsWhatsAppModalOpen(true);
+  };
+
   const handleBookPrivateSlot = (slot: TutorPrivateSlot) => {
-    trackWhatsAppClicked('private_slot_booking');
     const specs = Array.isArray(slot.allowedSpecializations)
       ? slot.allowedSpecializations
       : [];
@@ -515,7 +536,33 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       priceAmount: slot.priceAmount,
       currency: slot.currency,
     });
-    window.open(url, '_blank', 'noopener,noreferrer');
+
+    const resolvedCourseOptionId =
+      chosenSpec?.courseOptionId ||
+      slot.offeringCourseOptionId ||
+      (isSchool ? criteria?.courseOptionId || null : null);
+    const resolvedAgeGroupId =
+      chosenSpec?.ageGroupId ||
+      slot.quranAgeGroupId ||
+      (!isSchool ? criteria?.ageGroupId || null : null);
+    const resolvedLevelId =
+      chosenSpec?.levelId ||
+      slot.quranLevelId ||
+      (!isSchool ? criteria?.levelId || null : null);
+    const resolvedTrack: 'school' | 'quran' =
+      chosenSpec?.track ||
+      (resolvedCourseOptionId ? 'school' : resolvedAgeGroupId ? 'quran' : (detectedTrack as 'school' | 'quran'));
+
+    setModalContext({
+      requestType: 'private',
+      track: resolvedTrack,
+      courseOptionId: resolvedCourseOptionId,
+      quranAgeGroupId: resolvedAgeGroupId,
+      quranLevelId: resolvedLevelId,
+      customWhatsAppUrl: url,
+      whatsappAnalyticsSource: 'private_slot_booking',
+    });
+    setIsWhatsAppModalOpen(true);
   };
 
   const handleBookGroup = (group: TutorGroup) => {
@@ -524,7 +571,6 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       groupId: group.id,
       bookingType: 'group',
     });
-    trackWhatsAppClicked('group_class_booking');
     const url = buildGroupClassBookingWhatsAppUrl({
       tutorName: tutor.name,
       tutorHonorific: tutor.honorific,
@@ -537,11 +583,37 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       currency: group.currency,
       priceType: group.priceType,
     });
-    window.open(url, '_blank', 'noopener,noreferrer');
+
+    const groupCourseOptionId =
+      (group as any)?.offeringCourseOptionId ||
+      (isSchool ? criteria?.courseOptionId || null : null);
+    const groupAgeGroupId =
+      (group as any)?.quranAgeGroupId ||
+      (!isSchool ? criteria?.ageGroupId || null : null);
+    const groupLevelId =
+      (group as any)?.quranLevelId ||
+      (!isSchool ? criteria?.levelId || null : null);
+
+    setModalContext({
+      requestType: 'group',
+      track: groupCourseOptionId
+        ? 'school'
+        : groupAgeGroupId
+        ? 'quran'
+        : (detectedTrack as 'school' | 'quran'),
+      courseOptionId: groupCourseOptionId,
+      quranAgeGroupId: groupAgeGroupId,
+      quranLevelId: groupLevelId,
+      customWhatsAppUrl: url,
+      whatsappAnalyticsSource: 'group_class_booking',
+    });
+    setIsWhatsAppModalOpen(true);
   };
 
-  const handleRequestAdminCoordination = (contextNote: string) => {
-    trackWhatsAppClicked('profile_empty_slot_coordination');
+  const handleRequestAdminCoordination = (
+    contextNote: string,
+    reqType: 'private' | 'group' = 'private'
+  ) => {
     const url = buildInterestRegistrationWhatsAppUrl({
       track: detectedTrack as 'school' | 'quran',
       stageName: isSchool ? stageName : undefined,
@@ -556,7 +628,17 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
         : undefined,
       customNote: contextNote,
     });
-    window.open(url, '_blank', 'noopener,noreferrer');
+
+    setModalContext({
+      requestType: reqType,
+      track: detectedTrack as 'school' | 'quran',
+      courseOptionId: isSchool ? criteria?.courseOptionId || null : null,
+      quranAgeGroupId: !isSchool ? criteria?.ageGroupId || null : null,
+      quranLevelId: !isSchool ? criteria?.levelId || null : null,
+      customWhatsAppUrl: url,
+      whatsappAnalyticsSource: 'profile_empty_slot_coordination',
+    });
+    setIsWhatsAppModalOpen(true);
   };
 
   const scrollToBookingSection = (tab?: BookingTabType) => {
@@ -1318,8 +1400,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
                           <button
                             type="button"
-                            onClick={() => setIsWhatsAppModalOpen(true)}
-                            className="w-full py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                            onClick={openTrialWhatsAppModal}
+                            className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
                           >
                             <MessageCircle className="w-4 h-4 text-[#1F2A44]" />
                             <span>إرسال طلب التجربة عبر واتساب</span>
@@ -1347,8 +1429,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                       </div>
                       <button
                         type="button"
-                        onClick={() => setIsWhatsAppModalOpen(true)}
-                        className="w-full py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                        onClick={openTrialWhatsAppModal}
+                        className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <MessageCircle className="w-4 h-4" />
                         <span>طلب تنسيق تجربة مجانية عبر الإدارة</span>
@@ -1813,10 +1895,11 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                         type="button"
                         onClick={() =>
                           handleRequestAdminCoordination(
-                            `طلب التسجيل في مجموعة تعليمية مع ${tutor.honorific} ${tutor.name}`
+                            `طلب التسجيل في مجموعة تعليمية مع ${tutor.honorific} ${tutor.name}`,
+                            'group'
                           )
                         }
-                        className="w-full py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                        className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <MessageCircle className="w-4 h-4" />
                         <span>طلب تنسيق مجموعة عبر الإدارة</span>
@@ -1863,7 +1946,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
             <button
               type="button"
-              onClick={() => setIsWhatsAppModalOpen(true)}
+              onClick={openTrialWhatsAppModal}
               className="shrink-0 min-h-[44px] py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <MessageCircle className="w-3.5 h-3.5 text-[#1F2A44]" />
@@ -1878,11 +1961,25 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
         tutor={tutor}
         isOpen={isVideoModalOpen}
         onClose={() => setIsVideoModalOpen(false)}
-        onBookTrial={() => setIsWhatsAppModalOpen(true)}
+        onBookTrial={openTrialWhatsAppModal}
       />
 
       <WhatsAppNoticeModal
         payload={bookingPayload}
+        customWhatsAppUrl={modalContext?.customWhatsAppUrl}
+        requestType={modalContext?.requestType || 'trial'}
+        track={modalContext?.track ?? (detectedTrack as 'school' | 'quran')}
+        tutorId={tutor.id}
+        courseOptionId={
+          modalContext ? modalContext.courseOptionId : isSchool ? criteria?.courseOptionId || null : null
+        }
+        quranAgeGroupId={
+          modalContext ? modalContext.quranAgeGroupId : !isSchool ? criteria?.ageGroupId || null : null
+        }
+        quranLevelId={
+          modalContext ? modalContext.quranLevelId : !isSchool ? criteria?.levelId || null : null
+        }
+        whatsappAnalyticsSource={modalContext?.whatsappAnalyticsSource || 'trial_booking_modal'}
         isOpen={isWhatsAppModalOpen}
         onClose={() => setIsWhatsAppModalOpen(false)}
       />

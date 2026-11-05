@@ -14,6 +14,7 @@ import {
 import { DataService } from '../services/dataService';
 import { DatabaseSchoolCourseOption } from '../services/supabaseDataService';
 import { buildInterestRegistrationWhatsAppUrl } from '../config/shatirConfig';
+import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
 import {
   formatQuranAgeGroupDisplay,
   normalizeQuranAgeGroup,
@@ -93,6 +94,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
   // Loading & error states
   const [isLoadingTaxonomy, setIsLoadingTaxonomy] = useState(true);
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+  const [isRecommendationModalOpen, setIsRecommendationModalOpen] = useState(false);
 
   // Deduplicate auto-search per completed selection key
   const lastAutoSearchedKeyRef = useRef<string | null>(null);
@@ -302,6 +304,17 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
     }
 
     lastAutoSearchedKeyRef.current = currentKey;
+    const matchedCourseOption =
+      track === 'school'
+        ? schoolCourseOptions.find(
+            (opt) =>
+              opt.grade_id === gradeId &&
+              opt.curriculum_id === curriculumType &&
+              opt.subject_id === subjectId &&
+              opt.is_active !== false
+          )
+        : undefined;
+
     const criteria: SearchCriteria =
       track === 'school'
         ? {
@@ -310,6 +323,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
             gradeId,
             curriculumType,
             subjectId,
+            courseOptionId: matchedCourseOption?.id || null,
           }
         : {
             track: 'quran',
@@ -330,6 +344,7 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
     subjectId,
     ageGroupId,
     levelId,
+    schoolCourseOptions,
     onSearch,
   ]);
 
@@ -739,16 +754,14 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
                               لطفلك في أسرع وقت.
                             </p>
                           </div>
-                          <a
-                            href={noCourseWhatsAppUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={() => trackWhatsAppClicked('no_course_options_interest')}
-                            className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#1F2A44] hover:bg-[#0D4E8B] text-white font-['Cairo'] font-bold text-xs transition-colors shadow-xs"
+                          <button
+                            type="button"
+                            onClick={() => setIsRecommendationModalOpen(true)}
+                            className="shrink-0 min-h-[44px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#1F2A44] hover:bg-[#0D4E8B] text-white font-['Cairo'] font-bold text-xs transition-colors shadow-xs cursor-pointer"
                           >
                             <MessageCircle className="w-4 h-4 text-[#FFC629]" />
                             <span>اطلب ترشيح معلم عبر واتساب</span>
-                          </a>
+                          </button>
                         </div>
                       )}
                     </div>
@@ -961,6 +974,17 @@ export const TutorSelector: React.FC<TutorSelectorProps> = ({
           )}
         </div>
       </div>
+
+      <WhatsAppNoticeModal
+        isOpen={isRecommendationModalOpen}
+        onClose={() => setIsRecommendationModalOpen(false)}
+        requestType="recommendation"
+        track="school"
+        tutorId={null}
+        courseOptionId={null}
+        customWhatsAppUrl={noCourseWhatsAppUrl}
+        whatsappAnalyticsSource="no_course_options_interest"
+      />
     </div>
   );
 };
