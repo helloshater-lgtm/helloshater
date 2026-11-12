@@ -738,8 +738,28 @@ export function isSlotInFuture(
   return cleanTime > nowParts.timeStr;
 }
 
+export const SUPPORTED_TUTOR_TIMEZONES: ReadonlyArray<{
+  value: 'Africa/Cairo' | 'Asia/Riyadh' | 'Asia/Dubai';
+  label: string;
+  shortLabel: string;
+}> = [
+  { value: 'Africa/Cairo', label: 'توقيت القاهرة (Africa/Cairo)', shortLabel: 'بتوقيت القاهرة' },
+  { value: 'Asia/Riyadh', label: 'توقيت الرياض (Asia/Riyadh)', shortLabel: 'بتوقيت الرياض' },
+  { value: 'Asia/Dubai', label: 'توقيت دبي (Asia/Dubai)', shortLabel: 'بتوقيت دبي' },
+];
+
+export const SUPPORTED_TUTOR_CURRENCIES: ReadonlyArray<{
+  value: string;
+  label: string;
+}> = [
+  { value: 'ج.م', label: 'جنيه مصري (ج.م)' },
+  { value: 'ر.س', label: 'ريال سعودي (ر.س)' },
+  { value: 'د.إ', label: 'درهم إماراتي (د.إ)' },
+  { value: '$', label: 'دولار أمريكي ($)' },
+];
+
 /**
- * Get a clear, accurate Arabic timezone label with dynamic offset (e.g. "بتوقيت القاهرة — GMT+2" or "بتوقيت القاهرة — GMT+3")
+ * Get a clear, accurate Arabic timezone label with dynamic offset (e.g. "بتوقيت القاهرة (GMT+2)" or "بتوقيت دبي (GMT+4)")
  */
 export function getTimezoneArabicLabel(timezone = 'Africa/Cairo'): string {
   const tz = (timezone || 'Africa/Cairo').trim();
@@ -761,9 +781,252 @@ export function getTimezoneArabicLabel(timezone = 'Africa/Cairo'): string {
     return `بتوقيت القاهرة${offsetPart}`;
   }
   if (tz === 'Asia/Riyadh') {
-    return `بتوقيت مكة المكرمة${offsetPart}`;
+    return `بتوقيت الرياض / مكة المكرمة${offsetPart}`;
+  }
+  if (tz === 'Asia/Dubai') {
+    return `بتوقيت دبي${offsetPart}`;
   }
   return `بتوقيت ${tz}${offsetPart}`;
+}
+
+/**
+ * Pure calendar helpers that operate strictly on YYYY-MM-DD in UTC
+ * so browser/device local timezone offsets never shift dates or day-of-week.
+ */
+export function parseCalendarDateParts(dateStr: string): { year: number; month: number; day: number } | null {
+  const clean = String(dateStr || '').trim().slice(0, 10);
+  const match = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+export function addDaysToCalendarDate(dateStr: string, daysToAdd: number): string {
+  const parts = parseCalendarDateParts(dateStr);
+  if (!parts) return dateStr;
+  const utcMs = Date.UTC(parts.year, parts.month - 1, parts.day + daysToAdd, 12, 0, 0);
+  const dt = new Date(utcMs);
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function getCalendarDayOfWeek(dateStr: string): number {
+  const parts = parseCalendarDateParts(dateStr);
+  if (!parts) return -1;
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12, 0, 0)).getUTCDay();
+}
+
+export function getTodayCalendarDateInTimezone(timezone = 'Africa/Cairo'): string {
+  return getCurrentPartsInTimezone(timezone).dateStr;
+}
+
+export function getTomorrowCalendarDateInTimezone(timezone = 'Africa/Cairo'): string {
+  const todayStr = getTodayCalendarDateInTimezone(timezone);
+  return addDaysToCalendarDate(todayStr, 1);
+}
+
+/**
+ * Add minutes to an HH:mm time string and return HH:mm
+ */
+export function addMinutesToTimeStr(timeStr: string, minutes: number): string {
+  if (!timeStr || !timeStr.includes(':')) return '17:50';
+  const [h, m] = timeStr.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return '17:50';
+  const total = h * 60 + m + Number(minutes || 0);
+  const endH = ((Math.floor(total / 60) % 24) + 24) % 24;
+  const endM = ((total % 60) + 60) % 60;
+  return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+}
+
+/**
+ * Generate weekly recurring slots between startDateStr (inclusive) and untilDateStr (inclusive)
+ * strictly from calendar dates without device timezone drift.
+ */
+export function generateWeeklyRecurringSlots(params: {
+  startDateStr: string;
+  untilDateStr: string;
+  repeatDays: number[];
+  startTime: string;
+  durationMinutes: number;
+  maxSlots?: number;
+}): Array<{ date: string; startTime: string; endTime: string }> {
+  const { startDateStr, untilDateStr, repeatDays, startTime, durationMinutes, maxSlots = 50 } = params;
+  if (!parseCalendarDateParts(startDateStr) || !parseCalendarDateParts(untilDateStr)) {
+    return [];
+  }
+  if (!Array.isArray(repeatDays) || repeatDays.length === 0) {
+    return [];
+  }
+  const cleanStart = startDateStr.trim().slice(0, 10);
+  const cleanUntil = untilDateStr.trim().slice(0, 10);
+  if (cleanStart > cleanUntil) {
+    return [];
+  }
+
+  const endTime = addMinutesToTimeStr(startTime, durationMinutes);
+  const daySet = new Set(repeatDays);
+  const result: Array<{ date: string; startTime: string; endTime: string }> = [];
+
+  let currDate = cleanStart;
+  for (let i = 0; i < 366 && currDate <= cleanUntil && result.length < maxSlots; i++) {
+    const dow = getCalendarDayOfWeek(currDate);
+    if (daySet.has(dow)) {
+      result.push({
+        date: currDate,
+        startTime: startTime.slice(0, 5),
+        endTime,
+      });
+    }
+    currDate = addDaysToCalendarDate(currDate, 1);
+  }
+
+  return result;
+}
+
+/**
+ * Generate educational group sessions strictly from calendar dates (independent of device timezone).
+ */
+export function generateGroupSessionsSchedule(params: {
+  startDateStr: string;
+  sessionsCount: number;
+  weeklyDays: number[];
+  startTime: string;
+  durationMinutes: number;
+  timezone?: string;
+}): Array<{
+  sessionNumber: number;
+  sessionDate: string;
+  startTime: string;
+  endTime: string;
+  timezone: string;
+  title: string;
+}> {
+  const {
+    startDateStr,
+    sessionsCount,
+    weeklyDays,
+    startTime,
+    durationMinutes,
+    timezone = 'Africa/Cairo',
+  } = params;
+
+  if (!parseCalendarDateParts(startDateStr) || sessionsCount < 1 || !Array.isArray(weeklyDays) || weeklyDays.length === 0) {
+    return [];
+  }
+
+  const cleanStart = startDateStr.trim().slice(0, 10);
+  const cleanStartTime = startTime.slice(0, 5);
+  const endTime = addMinutesToTimeStr(cleanStartTime, durationMinutes);
+  const daySet = new Set(weeklyDays);
+  const sessions: Array<{
+    sessionNumber: number;
+    sessionDate: string;
+    startTime: string;
+    endTime: string;
+    timezone: string;
+    title: string;
+  }> = [];
+
+  let currDate = cleanStart;
+  for (let offset = 0; offset < 366 && sessions.length < sessionsCount; offset++) {
+    const dow = getCalendarDayOfWeek(currDate);
+    if (daySet.has(dow)) {
+      const sessionNum = sessions.length + 1;
+      sessions.push({
+        sessionNumber: sessionNum,
+        sessionDate: currDate,
+        startTime: cleanStartTime,
+        endTime,
+        timezone,
+        title: `اللقاء ${sessionNum}`,
+      });
+    }
+    currDate = addDaysToCalendarDate(currDate, 1);
+  }
+
+  return sessions;
+}
+
+const ARABIC_WEEKDAY_NAMES: Record<number, string> = {
+  6: 'السبت',
+  0: 'الأحد',
+  1: 'الاثنين',
+  2: 'الثلاثاء',
+  3: 'الأربعاء',
+  4: 'الخميس',
+  5: 'الجمعة',
+};
+
+const ARABIC_WEEKDAY_ORDER = [6, 0, 1, 2, 3, 4, 5];
+
+/**
+ * Auto-build a clear Arabic weekly schedule summary for a group (e.g. "السبت والثلاثاء — ٦:٠٠ م إلى ٧:٠٠ م (بتوقيت القاهرة)")
+ */
+export function buildArabicWeeklyScheduleSummary(params: {
+  weeklyDays: number[];
+  startTime: string;
+  durationMinutes: number;
+  timezone?: string;
+}): string {
+  const { weeklyDays, startTime, durationMinutes, timezone = 'Africa/Cairo' } = params;
+  if (!Array.isArray(weeklyDays) || weeklyDays.length === 0 || !startTime) {
+    return '';
+  }
+  const orderedDays = ARABIC_WEEKDAY_ORDER.filter((d) => weeklyDays.includes(d)).map(
+    (d) => ARABIC_WEEKDAY_NAMES[d]
+  );
+  if (orderedDays.length === 0) return '';
+
+  const daysText = orderedDays.join(' و');
+  const endTime = addMinutesToTimeStr(startTime, durationMinutes);
+  const start12 = formatTimeArabic12h(startTime, true);
+  const end12 = formatTimeArabic12h(endTime, true);
+  const tzEntry = SUPPORTED_TUTOR_TIMEZONES.find((t) => t.value === timezone);
+  const tzShort = tzEntry ? tzEntry.shortLabel : 'بتوقيت القاهرة';
+
+  return `كل ${daysText} من ${start12} إلى ${end12} (${tzShort})`;
+}
+
+/**
+ * Compute clear financial summary metrics for an educational group:
+ * - totalStudentSubscription: total amount 1 student pays for the whole group
+ * - costPerSessionForStudent: effective cost per single session for 1 student
+ * - totalRevenueWhenFull: total subscription revenue when maxStudents seats are filled
+ */
+export function calculateGroupFinancialSummary(params: {
+  maxStudents: number;
+  pricePerStudent: number;
+  priceType: 'per_session' | 'full_package';
+  sessionsCount: number;
+}): {
+  totalStudentSubscription: number;
+  costPerSessionForStudent: number;
+  totalRevenueWhenFull: number;
+} {
+  const maxStudents = Math.max(1, Number(params.maxStudents || 1));
+  const price = Math.max(0, Number(params.pricePerStudent || 0));
+  const sessions = Math.max(1, Number(params.sessionsCount || 1));
+
+  const totalStudentSubscription =
+    params.priceType === 'per_session' ? Math.round(price * sessions) : Math.round(price);
+
+  const costPerSessionForStudent =
+    params.priceType === 'per_session'
+      ? Math.round(price)
+      : Math.round((price / sessions) * 100) / 100;
+
+  const totalRevenueWhenFull = Math.round(totalStudentSubscription * maxStudents);
+
+  return {
+    totalStudentSubscription,
+    costPerSessionForStudent,
+    totalRevenueWhenFull,
+  };
 }
 
 /**
@@ -908,6 +1171,7 @@ export interface TutorApplicationStatusDisplayInfo {
   tutorLabel: string;
   descriptionText: string;
   badgeStyle: string;
+  badgeClassName: string;
   isReviewableByAdmin: boolean;
   isEditableByTutor: boolean;
   isSubmittedOrReviewed: boolean;
@@ -930,6 +1194,7 @@ export function resolveTutorApplicationStatus(
         descriptionText:
           'بياناتك محفوظة، لكن الإدارة لن تراجع طلبك إلا بعد الضغط على إرسال الطلب.',
         badgeStyle: 'bg-amber-50 text-amber-800 border border-amber-300',
+        badgeClassName: 'bg-amber-50 text-amber-800 border border-amber-300',
         isReviewableByAdmin: false,
         isEditableByTutor: true,
         isSubmittedOrReviewed: false,
@@ -948,6 +1213,7 @@ export function resolveTutorApplicationStatus(
         descriptionText:
           'تم إرسال هذا الطلب رسميًا من المعلم وهو جاهز للمراجعة الإدارية واتخاذ قرار (القبول، أو طلب استكمال بيانات، أو الرفض).',
         badgeStyle: 'bg-blue-50 text-[#0D4E8B] border border-blue-200',
+        badgeClassName: 'bg-blue-50 text-[#0D4E8B] border border-blue-200',
         isReviewableByAdmin: true,
         isEditableByTutor: false,
         isSubmittedOrReviewed: true,
@@ -964,6 +1230,7 @@ export function resolveTutorApplicationStatus(
         descriptionText:
           'طلبت الإدارة استكمال أو توضيح بعض البيانات من المعلم. يستطيع المعلم تعديل طلبه وإعادة إرساله، كما يمكن للإدارة تحديث قرارها.',
         badgeStyle: 'bg-amber-50 text-amber-800 border border-amber-200',
+        badgeClassName: 'bg-amber-50 text-amber-800 border border-amber-200',
         isReviewableByAdmin: true,
         isEditableByTutor: true,
         isSubmittedOrReviewed: true,
@@ -979,6 +1246,7 @@ export function resolveTutorApplicationStatus(
         tutorLabel: 'تم اعتماد وقبول طلبك',
         descriptionText: 'تم قبول الطلب واعتماد المعلم وإنشاء ملفه التدريسي في المنصة.',
         badgeStyle: 'bg-emerald-50 text-emerald-800 border border-emerald-200',
+        badgeClassName: 'bg-emerald-50 text-emerald-800 border border-emerald-200',
         isReviewableByAdmin: false,
         isEditableByTutor: false,
         isSubmittedOrReviewed: true,
@@ -994,6 +1262,7 @@ export function resolveTutorApplicationStatus(
         tutorLabel: 'مرفوض',
         descriptionText: 'تم رفض طلب الانضمام بعد المراجعة الإدارية.',
         badgeStyle: 'bg-rose-50 text-rose-800 border border-rose-200',
+        badgeClassName: 'bg-rose-50 text-rose-800 border border-rose-200',
         isReviewableByAdmin: false,
         isEditableByTutor: false,
         isSubmittedOrReviewed: true,
@@ -1010,6 +1279,7 @@ export function resolveTutorApplicationStatus(
         descriptionText:
           'حالة هذا الطلب غير معروفة في النظام ولا يمكن معاملته كطلب مُرسل للمراجعة قبل التحقق منه.',
         badgeStyle: 'bg-slate-100 text-slate-600 border border-slate-300',
+        badgeClassName: 'bg-slate-100 text-slate-600 border border-slate-300',
         isReviewableByAdmin: false,
         isEditableByTutor: false,
         isSubmittedOrReviewed: false,
@@ -2073,7 +2343,7 @@ export function evaluateTutorApplicationCompleteness(input: {
   quranAgeGroups?: string[] | null;
   academicDegree?: string | null;
   experienceYears?: string | null;
-  hasOnlineExperience?: 'yes' | 'no' | boolean | null;
+  hasOnlineExperience?: 'yes' | 'no' | '' | boolean | null;
   onlineExperienceDetails?: string | null;
   bioAndMethodology?: string | null;
   suggestedHourlyRate?: string | number | null;

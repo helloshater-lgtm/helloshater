@@ -8,6 +8,7 @@ import { TutorPortalService } from './tutorPortalService';
 import {
   resolveExplicitSubjectId,
   ENGLISH_TAUGHT_SUBJECT_IDS,
+  ARABIC_TAUGHT_SUBJECT_IDS,
 } from '../utils/formatters';
 
 export const TUTOR_POLICY_VERSION = 'v1.0';

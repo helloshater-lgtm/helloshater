@@ -374,7 +374,7 @@ export const AdminApplicationDetailView: React.FC<AdminApplicationDetailViewProp
             </div>
             <p className="text-xs text-[#64748B] mt-0.5">
               تاريخ الإنشاء: {new Date(application.createdAt).toLocaleString('ar-EG')} · آخر تحديث:{' '}
-              {new Date(application.updatedAt).toLocaleString('ar-EG')}
+              {new Date(application.updatedAt || application.createdAt).toLocaleString('ar-EG')}
             </p>
           </div>
         </div>

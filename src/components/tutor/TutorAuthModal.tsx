@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TutorApplicationService } from '../../services/tutorApplicationService';
 import {
@@ -34,6 +34,11 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  const modalDialogRef = useRef<HTMLDivElement | null>(null);
+  const fullNameInputRef = useRef<HTMLInputElement | null>(null);
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (isOpen) {
       setMode(initialMode);
@@ -44,12 +49,84 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
 
   useEffect(() => {
     if (!isOpen || typeof document === 'undefined') return;
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+
+    const focusTimer = window.setTimeout(() => {
+      if (mode === 'signup' && fullNameInputRef.current) {
+        fullNameInputRef.current.focus();
+      } else if (emailInputRef.current) {
+        emailInputRef.current.focus();
+      }
+    }, 30);
+
     return () => {
+      window.clearTimeout(focusTimer);
       document.body.style.overflow = prevOverflow || '';
+      if (previouslyFocusedRef.current && typeof previouslyFocusedRef.current.focus === 'function') {
+        try {
+          previouslyFocusedRef.current.focus();
+        } catch {
+          // ignore if element was unmounted
+        }
+      }
     };
   }, [isOpen]);
+
+  // Focus first relevant input when switching tabs inside open modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = window.setTimeout(() => {
+      if (mode === 'signup' && fullNameInputRef.current) {
+        fullNameInputRef.current.focus();
+      } else if (emailInputRef.current) {
+        emailInputRef.current.focus();
+      }
+    }, 20);
+    return () => window.clearTimeout(timer);
+  }, [mode, isOpen]);
+
+  // Keyboard trap (Tab / Shift+Tab) and Escape handler
+  useEffect(() => {
+    if (!isOpen || typeof document === 'undefined') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (!isLoading) {
+          e.preventDefault();
+          onClose();
+        }
+        return;
+      }
+
+      if (e.key === 'Tab' && modalDialogRef.current) {
+        const focusableElements = modalDialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusableElements.length === 0) return;
+
+        const firstEl = focusableElements[0];
+        const lastEl = focusableElements[focusableElements.length - 1];
+        const activeEl = document.activeElement as HTMLElement | null;
+
+        if (e.shiftKey) {
+          if (!activeEl || activeEl === firstEl || !modalDialogRef.current.contains(activeEl)) {
+            e.preventDefault();
+            lastEl.focus();
+          }
+        } else {
+          if (!activeEl || activeEl === lastEl || !modalDialogRef.current.contains(activeEl)) {
+            e.preventDefault();
+            firstEl.focus();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isLoading, onClose]);
 
   if (!isOpen) return null;
 
@@ -126,12 +203,19 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
         }
       }}
     >
-      <div className="bg-white w-full max-w-md my-auto max-h-[90dvh] flex flex-col rounded-3xl border border-[#E2E8F0] shadow-xl overflow-hidden relative">
+      <div
+        ref={modalDialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tutor-auth-modal-title"
+        className="bg-white w-full max-w-md my-auto max-h-[90dvh] flex flex-col rounded-3xl border border-[#E2E8F0] shadow-xl overflow-hidden relative"
+      >
         {/* Close Button */}
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 left-4 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer z-10"
+          disabled={isLoading}
+          className="absolute top-4 left-4 p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer z-10 min-w-[44px] min-h-[44px] flex items-center justify-center"
           aria-label="إغلاق"
         >
           <X className="w-5 h-5" />
@@ -142,7 +226,10 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
           <div className="w-12 h-12 rounded-2xl bg-[#0D4E8B]/10 text-[#0D4E8B] mx-auto flex items-center justify-center mb-3">
             <GraduationCap className="w-6 h-6" />
           </div>
-          <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
+          <h2
+            id="tutor-auth-modal-title"
+            className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]"
+          >
             {mode === 'signup'
               ? 'إنشاء حساب معلم جديد'
               : mode === 'signin'
@@ -167,7 +254,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
                   setErrorMessage(null);
                   setSuccessMessage(null);
                 }}
-                className={`flex-1 py-1.5 rounded-lg text-xs font-bold font-['Cairo'] transition-all cursor-pointer ${
+                className={`flex-1 py-2 rounded-lg text-xs font-bold font-['Cairo'] transition-all cursor-pointer ${
                   mode === 'signup'
                     ? 'bg-white text-[#0D4E8B] shadow-xs'
                     : 'text-[#64748B] hover:text-[#1F2A44]'
@@ -182,7 +269,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
                   setErrorMessage(null);
                   setSuccessMessage(null);
                 }}
-                className={`flex-1 py-1.5 rounded-lg text-xs font-bold font-['Cairo'] transition-all cursor-pointer ${
+                className={`flex-1 py-2 rounded-lg text-xs font-bold font-['Cairo'] transition-all cursor-pointer ${
                   mode === 'signin'
                     ? 'bg-white text-[#0D4E8B] shadow-xs'
                     : 'text-[#64748B] hover:text-[#1F2A44]'
@@ -198,7 +285,10 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
         <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           {/* Error Message */}
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+            <div
+              role="alert"
+              className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2"
+            >
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <span>{errorMessage}</span>
             </div>
@@ -206,7 +296,10 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
 
           {/* Success Message */}
           {successMessage && (
-            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2">
+            <div
+              role="status"
+              className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2"
+            >
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <span>{successMessage}</span>
             </div>
@@ -215,15 +308,22 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
           {/* Full Name (Sign Up only) */}
           {mode === 'signup' && (
             <div className="space-y-1">
-              <label className="text-xs font-bold text-[#1F2A44] block">الاسم الكامل</label>
+              <label
+                htmlFor="tutor-auth-fullname"
+                className="text-xs font-bold text-[#1F2A44] block"
+              >
+                الاسم الكامل
+              </label>
               <div className="relative">
                 <input
+                  id="tutor-auth-fullname"
+                  ref={fullNameInputRef}
                   type="text"
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="محمد أحمد إبراهيم"
-                  className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                  className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] focus:ring-2 focus:ring-[#0D4E8B]/20 outline-none"
                 />
                 <User className="w-4 h-4 text-[#94A3B8] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -232,16 +332,23 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
 
           {/* Email */}
           <div className="space-y-1">
-            <label className="text-xs font-bold text-[#1F2A44] block">البريد الإلكتروني</label>
+            <label
+              htmlFor="tutor-auth-email"
+              className="text-xs font-bold text-[#1F2A44] block"
+            >
+              البريد الإلكتروني
+            </label>
             <div className="relative">
               <input
+                id="tutor-auth-email"
+                ref={emailInputRef}
                 type="email"
                 required
                 dir="ltr"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="teacher@example.com"
-                className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none text-left"
+                className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] focus:ring-2 focus:ring-[#0D4E8B]/20 outline-none text-left"
               />
               <Mail className="w-4 h-4 text-[#94A3B8] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
@@ -251,7 +358,12 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
           {mode !== 'forgot' && (
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-[#1F2A44]">كلمة المرور</label>
+                <label
+                  htmlFor="tutor-auth-password"
+                  className="text-xs font-bold text-[#1F2A44]"
+                >
+                  كلمة المرور
+                </label>
                 {mode === 'signin' && (
                   <button
                     type="button"
@@ -260,7 +372,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
                       setErrorMessage(null);
                       setSuccessMessage(null);
                     }}
-                    className="text-[11px] text-[#0D4E8B] hover:underline"
+                    className="text-[11px] text-[#0D4E8B] hover:underline cursor-pointer"
                   >
                     نسيت كلمة المرور؟
                   </button>
@@ -268,13 +380,14 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
               </div>
               <div className="relative">
                 <input
+                  id="tutor-auth-password"
                   type="password"
                   required
                   dir="ltr"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none text-left"
+                  className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] focus:ring-2 focus:ring-[#0D4E8B]/20 outline-none text-left"
                 />
                 <Lock className="w-4 h-4 text-[#94A3B8] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -284,16 +397,22 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
           {/* Confirm Password (Sign Up only) */}
           {mode === 'signup' && (
             <div className="space-y-1">
-              <label className="text-xs font-bold text-[#1F2A44] block">تأكيد كلمة المرور</label>
+              <label
+                htmlFor="tutor-auth-confirm-password"
+                className="text-xs font-bold text-[#1F2A44] block"
+              >
+                تأكيد كلمة المرور
+              </label>
               <div className="relative">
                 <input
+                  id="tutor-auth-confirm-password"
                   type="password"
                   required
                   dir="ltr"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none text-left"
+                  className="w-full pl-3 pr-9 py-2.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] focus:ring-2 focus:ring-[#0D4E8B]/20 outline-none text-left"
                 />
                 <Lock className="w-4 h-4 text-[#94A3B8] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -304,7 +423,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2 shadow-xs"
+            className="w-full py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2 shadow-xs"
           >
             {isLoading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -327,7 +446,7 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
                   setErrorMessage(null);
                   setSuccessMessage(null);
                 }}
-                className="text-xs font-bold text-[#0D4E8B] hover:underline"
+                className="text-xs font-bold text-[#0D4E8B] hover:underline cursor-pointer"
               >
                 العودة لتسجيل الدخول
               </button>
@@ -340,4 +459,3 @@ export const TutorAuthModal: React.FC<TutorAuthModalProps> = ({
 
   return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };
-

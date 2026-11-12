@@ -433,9 +433,118 @@ export const TutorPortalService = {
   },
 
   /**
-   * 5. Upload proposed avatar to private pending storage bucket
-   * Path: pending/<auth.uid()>/<unique-filename>
-   * Returns storagePath (for persistent DB draft) and previewSignedUrl (for immediate UI preview)
+   * 4.1 Update an unbooked, non-suspended trial slot (strictly 20 minutes) via RPC tutor_update_trial_slot
+   */
+  async updateTrialSlot(params: {
+    slotId: string;
+    slotDate: string;
+    startTime: string;
+    endTime: string;
+    timezone?: string;
+  }): Promise<void> {
+    const { slotId, slotDate, startTime, endTime, timezone = 'Africa/Cairo' } = params;
+
+    if (!slotId || !slotDate || !startTime || !endTime) {
+      throw new Error('يرجى تحديد تاريخ ووقت البداية والنهاية للموعد التجريبي.');
+    }
+
+    const [startH, startM] = startTime.split(':').map(Number);
+    const [endH, endM] = endTime.split(':').map(Number);
+    const durationMinutes = endH * 60 + endM - (startH * 60 + startM);
+    if (durationMinutes !== 20) {
+      throw new Error('مدة الحصة التجريبية المعتمدة هي 20 دقيقة بالضبط.');
+    }
+
+    const { data, error: rpcError } = await supabase.rpc('tutor_update_trial_slot', {
+      p_slot_id: slotId,
+      p_slot_date: slotDate,
+      p_start_time: startTime,
+      p_end_time: endTime,
+      p_timezone: timezone,
+    });
+
+    if (rpcError) {
+      throw new Error(rpcError.message || 'تعذر تعديل الموعد التجريبي.');
+    }
+
+    if (data && typeof data === 'object' && data.success === false && data.message) {
+      throw new Error(String(data.message));
+    }
+  },
+
+  /**
+   * 5. Self-service direct avatar upload & immediate publication
+   * Uploads to published bucket `tutor-avatars` at `self-service/<auth.uid()>/<unique-filename>`,
+   * retrieves permanent public URL, and commits via `tutor_update_profile_avatar`.
+   */
+  async uploadAndPublishSelfServiceAvatar(
+    file: File
+  ): Promise<{ storagePath: string; avatarUrl: string }> {
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData.user) {
+      throw new Error('يرجى تسجيل الدخول لتحديث صورتك الشخصية.');
+    }
+
+    const allowedTypes: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+    };
+    const ext = allowedTypes[file.type];
+    if (!ext) {
+      throw new Error('نوع الملف غير مدعوم. يرجى اختيار صورة بصيغة JPG أو PNG أو WebP.');
+    }
+
+    const maxSize = 2 * 1024 * 1024; // 2MB
+    if (file.size > maxSize) {
+      throw new Error('حجم الصورة يجب ألا يتجاوز 2 ميجابايت.');
+    }
+
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const storagePath = `self-service/${authData.user.id}/${uniqueSuffix}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('tutor-avatars')
+      .upload(storagePath, file, {
+        cacheControl: '31536000',
+        contentType: file.type,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`تعذر رفع الصورة الشخصية: ${uploadError.message}`);
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from('tutor-avatars')
+      .getPublicUrl(storagePath);
+
+    const permanentPublicUrl = publicUrlData?.publicUrl || '';
+    if (!permanentPublicUrl) {
+      throw new Error('تعذر استخراج الرابط العام الدائم للصورة.');
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_update_profile_avatar', {
+      p_storage_path: storagePath,
+      p_public_url: permanentPublicUrl,
+    });
+
+    if (rpcError) {
+      throw new Error(rpcError.message || 'تعذر حفظ ونشر الصورة الشخصية في ملفك.');
+    }
+
+    if (rpcData && typeof rpcData === 'object' && rpcData.success === false && rpcData.message) {
+      throw new Error(String(rpcData.message));
+    }
+
+    return {
+      storagePath,
+      avatarUrl: rpcData?.avatarUrl || permanentPublicUrl,
+    };
+  },
+
+  /**
+   * 5.1 Legacy upload proposed avatar to private pending storage bucket (kept for backward compatibility)
    */
   async uploadDraftAvatar(file: File): Promise<{ storagePath: string; previewSignedUrl: string }> {
     const { data: authData } = await supabase.auth.getUser();
@@ -498,7 +607,57 @@ export const TutorPortalService = {
   },
 
   /**
-   * 6. Submit profile draft for administrative review
+   * 6.0 Immediate update of tutor session price, currency, and duration via RPC tutor_update_profile_pricing
+   */
+  async updateProfilePricing(payload: {
+    sessionPrice: number;
+    currency: string;
+    sessionDurationMinutes: number;
+  }): Promise<{
+    hourlyRateMin: number;
+    hourlyRateMax: number;
+    currency: string;
+    sessionDurationMinutes: number;
+  }> {
+    const price = Math.round(Number(payload.sessionPrice));
+    const duration = Math.round(Number(payload.sessionDurationMinutes));
+    const currency = String(payload.currency || 'ج.م').trim();
+
+    if (!Number.isFinite(price) || price <= 0 || price > 100000) {
+      throw new Error('يرجى إدخال سعر حصة صحيح أكبر من صفر.');
+    }
+
+    if (!Number.isFinite(duration) || duration < 30 || duration > 120) {
+      throw new Error('مدة الحصة يجب أن تكون بين 30 و 120 دقيقة.');
+    }
+
+    if (!['ج.م', 'ر.س', 'د.إ', '$'].includes(currency)) {
+      throw new Error('يرجى اختيار عملة مدعومة.');
+    }
+
+    const { data, error: rpcError } = await supabase.rpc('tutor_update_profile_pricing', {
+      p_session_price: price,
+      p_currency: currency,
+      p_session_duration_minutes: duration,
+    });
+
+    if (rpcError) {
+      throw new Error(rpcError.message || 'تعذر حفظ السعر ومدة الحصة.');
+    }
+
+    if (data && typeof data === 'object' && data.success === false && data.message) {
+      throw new Error(String(data.message));
+    }
+
+    const returnedTutor = data?.tutor;
+    return {
+      hourlyRateMin: Number(returnedTutor?.hourlyRateMin ?? price),
+      hourlyRateMax: Number(returnedTutor?.hourlyRateMax ?? price),
+      currency: String(returnedTutor?.currency ?? currency),
+      sessionDurationMinutes: Number(returnedTutor?.sessionDurationMinutes ?? duration),
+    };
+  },
+
   /**
    * 6.1 Immediate update of tutor profile text fields via RPC tutor_update_profile_text
    */

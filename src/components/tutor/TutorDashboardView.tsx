@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { TutorPortalService } from '../../services/tutorPortalService';
 import {
   Tutor,
@@ -12,7 +11,26 @@ import {
 import { TutorApplicationService } from '../../services/tutorApplicationService';
 import { TutorAuthModal } from './TutorAuthModal';
 import { TutorProfileView } from '../TutorProfileView';
-import { formatTutorExperience, formatSessionPriceSummary } from '../../utils/formatters';
+import {
+  formatTutorExperience,
+  formatSessionPriceSummary,
+  filterValidAvailableTrialSlots,
+  filterValidAvailablePrivateSlots,
+  isSlotInFuture,
+  formatSlotDateArabic,
+  formatTimeArabic12h,
+  getTimezoneArabicLabel,
+  SUPPORTED_TUTOR_TIMEZONES,
+  SUPPORTED_TUTOR_CURRENCIES,
+  addMinutesToTimeStr,
+  getTodayCalendarDateInTimezone,
+  getTomorrowCalendarDateInTimezone,
+  generateWeeklyRecurringSlots,
+  generateGroupSessionsSchedule,
+  buildArabicWeeklyScheduleSummary,
+  calculateGroupFinancialSummary,
+  getCalendarDayOfWeek,
+} from '../../utils/formatters';
 import {
   GraduationCap,
   Calendar,
@@ -24,20 +42,18 @@ import {
   Loader2,
   Trash2,
   Plus,
-  Send,
   Camera,
-  ExternalLink,
   ShieldCheck,
   User,
   Sparkles,
   ArrowRight,
+  ArrowLeft,
   Info,
   Lock,
   Users,
   BookOpen,
   DollarSign,
   CalendarCheck2,
-  Layers,
   Check,
   AlertTriangle,
   Edit3,
@@ -52,25 +68,11 @@ interface TutorDashboardViewProps {
   onNavigateToPublicProfile?: (tutorId: string) => void;
 }
 
-// Helper to retain tutor's preferred slot price independently of profile rate
-const getStoredPrivatePrice = (tutorId: string, defaultPrice: number): number => {
-  try {
-    const val = localStorage.getItem(`shatir_tutor_private_price_${tutorId}`);
-    if (val && !isNaN(Number(val)) && Number(val) > 0) return Number(val);
-  } catch {}
-  return defaultPrice;
-};
-
-const storePrivatePrice = (tutorId: string, price: number) => {
-  try {
-    if (price > 0) localStorage.setItem(`shatir_tutor_private_price_${tutorId}`, String(price));
-  } catch {}
-};
+type DashboardTab = 'overview' | 'pricing' | 'profile-draft' | 'trials' | 'private' | 'groups';
 
 export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   onNavigateHome,
   onNavigateToJoin,
-  onNavigateToPublicProfile,
 }) => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -80,36 +82,46 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Active Tab: 5 clear sections
-  const [activeTab, setActiveTab] = useState<'overview' | 'trials' | 'private' | 'groups' | 'profile-draft'>('trials');
+  // Active Tab: First page is 'overview' showing setup steps and quick actions
+  const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
 
   // Approved specializations
   const [specializations, setSpecializations] = useState<ApprovedSpecializationItem[]>([]);
-  const [isLoadingSpecs, setIsLoadingSpecs] = useState(false);
+  const [, setIsLoadingSpecs] = useState(false);
+
+  // Direct Self-Service Pricing State ("سعري ومدة الحصة")
+  const [pricingSessionPrice, setPricingSessionPrice] = useState<number>(150);
+  const [pricingCurrency, setPricingCurrency] = useState<string>('ج.م');
+  const [pricingDurationMinutes, setPricingDurationMinutes] = useState<number>(50);
+  const [isSavingPricing, setIsSavingPricing] = useState(false);
+  const [pricingSaveSuccess, setPricingSaveSuccess] = useState<string | null>(null);
+  const [pricingSaveError, setPricingSaveError] = useState<string | null>(null);
 
   // 1. Trial Slots State (Strictly 20 minutes)
   const [trialSlots, setTrialSlots] = useState<TutorAvailableSlot[]>([]);
   const [newTrialDate, setNewTrialDate] = useState('');
   const [newTrialStart, setNewTrialStart] = useState('16:00');
   const [newTrialEnd, setNewTrialEnd] = useState('16:20');
-  const [newTrialTimezone, setNewTrialTimezone] = useState('Africa/Cairo');
+  const [newTrialTimezone, setNewTrialTimezone] = useState<string>('Africa/Cairo');
   const [isAddingTrial, setIsAddingTrial] = useState(false);
   const [deletingTrialId, setDeletingTrialId] = useState<string | null>(null);
 
-  // Helper to add 20 minutes to HH:mm
-  const add20Minutes = (timeStr: string): string => {
-    if (!timeStr || !timeStr.includes(':')) return '16:20';
-    const [h, m] = timeStr.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return '16:20';
-    const totalMinutes = h * 60 + m + 20;
-    const endH = Math.floor((totalMinutes / 60) % 24);
-    const endM = totalMinutes % 60;
-    return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-  };
+  // Editing Trial Slot Modal State (Strictly 20 minutes)
+  const [editingTrialSlot, setEditingTrialSlot] = useState<TutorAvailableSlot | null>(null);
+  const [editTrialDate, setEditTrialDate] = useState('');
+  const [editTrialStart, setEditTrialStart] = useState('16:00');
+  const [editTrialEnd, setEditTrialEnd] = useState('16:20');
+  const [editTrialTimezone, setEditTrialTimezone] = useState<string>('Africa/Cairo');
+  const [isUpdatingTrialSlot, setIsUpdatingTrialSlot] = useState(false);
 
   const handleTrialStartChange = (val: string) => {
     setNewTrialStart(val);
-    setNewTrialEnd(add20Minutes(val));
+    setNewTrialEnd(addMinutesToTimeStr(val, 20));
+  };
+
+  const handleEditTrialStartChange = (val: string) => {
+    setEditTrialStart(val);
+    setEditTrialEnd(addMinutesToTimeStr(val, 20));
   };
 
   // 2. Private Slots State (1:1 paid sessions with multi-specialization support)
@@ -125,28 +137,32 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [privateStartTime, setPrivateStartTime] = useState<string>('17:00');
   const [privateRepeatDays, setPrivateRepeatDays] = useState<number[]>([1, 3]); // Mon, Wed (0=Sun, 6=Sat)
   const [privateRepeatUntilDate, setPrivateRepeatUntilDate] = useState<string>('');
-  const [previewPrivateSlots, setPreviewPrivateSlots] = useState<Array<{ date: string; startTime: string; endTime: string }>>([]);
+  const [previewPrivateSlots, setPreviewPrivateSlots] = useState<
+    Array<{ date: string; startTime: string; endTime: string }>
+  >([]);
   const [isSavingPrivateSlots, setIsSavingPrivateSlots] = useState(false);
   const [deletingPrivateSlotId, setDeletingPrivateSlotId] = useState<string | null>(null);
 
-  // Helper to add duration to HH:mm
-  const addMinutesToTime = (timeStr: string, minutes: number): string => {
-    if (!timeStr || !timeStr.includes(':')) return '17:50';
-    const [h, m] = timeStr.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return '17:50';
-    const total = h * 60 + m + minutes;
-    const endH = Math.floor((total / 60) % 24);
-    const endM = total % 60;
-    return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-  };
+  // Editing private slot modal state
+  const [editingPrivateSlot, setEditingPrivateSlot] = useState<TutorPrivateSlot | null>(null);
+  const [editSlotDate, setEditSlotDate] = useState('');
+  const [editSlotStart, setEditSlotStart] = useState('');
+  const [editSlotEnd, setEditSlotEnd] = useState('');
+  const [editSlotDuration, setEditSlotDuration] = useState(50);
+  const [editSlotPrice, setEditSlotPrice] = useState(150);
+  const [editSlotTimezone, setEditSlotTimezone] = useState<string>('Africa/Cairo');
+  const [editSlotSpecIds, setEditSlotSpecIds] = useState<string[]>([]);
+  const [isUpdatingSlot, setIsUpdatingSlot] = useState(false);
 
-  // Generate Preview for Private Slots
+  // Generate Preview for Private Slots using timezone-independent calendar math
   useEffect(() => {
-    const endTime = addMinutesToTime(privateStartTime, privateDurationMinutes);
+    const endTime = addMinutesToTimeStr(privateStartTime, privateDurationMinutes);
 
     if (privateSchedulingMode === 'single') {
       if (privateSingleDate) {
-        setPreviewPrivateSlots([{ date: privateSingleDate, startTime: privateStartTime, endTime }]);
+        setPreviewPrivateSlots([
+          { date: privateSingleDate.trim().slice(0, 10), startTime: privateStartTime.slice(0, 5), endTime },
+        ]);
       } else {
         setPreviewPrivateSlots([]);
       }
@@ -155,21 +171,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         setPreviewPrivateSlots([]);
         return;
       }
-      const list: Array<{ date: string; startTime: string; endTime: string }> = [];
-      const startD = new Date();
-      startD.setDate(startD.getDate() + 1); // start tomorrow
-      const endD = new Date(privateRepeatUntilDate);
-
-      const curr = new Date(startD);
-      while (curr <= endD && list.length < 50) {
-        if (privateRepeatDays.includes(curr.getDay())) {
-          const y = curr.getFullYear();
-          const m = String(curr.getMonth() + 1).padStart(2, '0');
-          const d = String(curr.getDate()).padStart(2, '0');
-          list.push({ date: `${y}-${m}-${d}`, startTime: privateStartTime, endTime });
-        }
-        curr.setDate(curr.getDate() + 1);
-      }
+      const startTomorrowStr = getTomorrowCalendarDateInTimezone(privateTimezone);
+      const list = generateWeeklyRecurringSlots({
+        startDateStr: startTomorrowStr,
+        untilDateStr: privateRepeatUntilDate,
+        repeatDays: privateRepeatDays,
+        startTime: privateStartTime,
+        durationMinutes: privateDurationMinutes,
+        maxSlots: 50,
+      });
       setPreviewPrivateSlots(list);
     }
   }, [
@@ -179,13 +189,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     privateDurationMinutes,
     privateRepeatDays,
     privateRepeatUntilDate,
+    privateTimezone,
   ]);
 
-  // 3. Educational Groups State
+  // 3. Educational Groups State (3-Step Wizard)
   const [groups, setGroups] = useState<TutorGroup[]>([]);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [showAddGroupForm, setShowAddGroupForm] = useState(false);
+  const [groupWizardStep, setGroupWizardStep] = useState<1 | 2 | 3>(1);
 
   // Group Form fields
   const [groupTitle, setGroupTitle] = useState('');
@@ -197,28 +209,29 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [groupCurrency, setGroupCurrency] = useState('ج.م');
   const [groupSessionsCount, setGroupSessionsCount] = useState(4);
   const [groupSessionDuration, setGroupSessionDuration] = useState(60);
+  const [groupTimezone, setGroupTimezone] = useState<string>('Africa/Cairo');
   const [groupStartDate, setGroupStartDate] = useState('');
   const [groupEndDate, setGroupEndDate] = useState('');
   const [groupScheduleSummary, setGroupScheduleSummary] = useState('');
   const [groupSessionStartTime, setGroupSessionStartTime] = useState('18:00');
   const [groupWeeklyDays, setGroupWeeklyDays] = useState<number[]>([1, 3]); // Mon, Wed
   const [generatedGroupSessions, setGeneratedGroupSessions] = useState<
-    Array<{ sessionNumber: number; sessionDate: string; startTime: string; endTime: string; timezone: string; title: string }>
+    Array<{
+      sessionNumber: number;
+      sessionDate: string;
+      startTime: string;
+      endTime: string;
+      timezone: string;
+      title: string;
+    }>
   >([]);
   const [updatingGroupId, setUpdatingGroupId] = useState<string | null>(null);
   const [editingGroup, setEditingGroup] = useState<TutorGroup | null>(null);
+  const [isLoadingGroupSessionsForEdit, setIsLoadingGroupSessionsForEdit] = useState(false);
+  // Tracks whether tutor explicitly changed any schedule field while editing an existing group
+  const [groupScheduleModifiedByTutor, setGroupScheduleModifiedByTutor] = useState<boolean>(true);
 
-  // Editing private slot modal state
-  const [editingPrivateSlot, setEditingPrivateSlot] = useState<TutorPrivateSlot | null>(null);
-  const [editSlotDate, setEditSlotDate] = useState('');
-  const [editSlotStart, setEditSlotStart] = useState('');
-  const [editSlotEnd, setEditSlotEnd] = useState('');
-  const [editSlotDuration, setEditSlotDuration] = useState(60);
-  const [editSlotPrice, setEditSlotPrice] = useState(150);
-  const [editSlotSpecIds, setEditSlotSpecIds] = useState<string[]>([]);
-  const [isUpdatingSlot, setIsUpdatingSlot] = useState(false);
-
-  // 4. Profile Text & Avatar State (Separated: immediate text update vs avatar review)
+  // 4. Profile Text & Self-Service Avatar State
   const [draftHeadline, setDraftHeadline] = useState('');
   const [draftQuote, setDraftQuote] = useState('');
   const [draftSummary, setDraftSummary] = useState('');
@@ -226,12 +239,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [textSaveSuccess, setTextSaveSuccess] = useState<string | null>(null);
   const [textSaveError, setTextSaveError] = useState<string | null>(null);
 
-  const [draftAvatarPath, setDraftAvatarPath] = useState<string | null>(null);
-  const [draftAvatarPreview, setDraftAvatarPreview] = useState<string | null>(null);
-  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
-  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
-  const [avatarUploadSuccess, setAvatarUploadSuccess] = useState<string | null>(null);
-  const [isSubmittingDraft, setIsSubmittingDraft] = useState(false);
+  const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
+  const [selectedAvatarPreviewUrl, setSelectedAvatarPreviewUrl] = useState<string | null>(null);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
+  const [avatarSaveError, setAvatarSaveError] = useState<string | null>(null);
+  const [avatarSaveSuccess, setAvatarSaveSuccess] = useState<string | null>(null);
 
   // 5. Preview Mode State ("شوف ملفك زي ولي الأمر")
   const [isPreviewMode, setIsPreviewMode] = useState(false);
@@ -257,32 +269,27 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       const portalContext = await TutorPortalService.getMyContext();
       setContext(portalContext);
 
-      // Populate text form initial values from current tutor record (not pendingDraft, since texts update immediately)
       const tutor = portalContext.tutor;
-      const existingDraft = portalContext.pendingDraft;
       if (!preserveTextInputs) {
         setDraftHeadline(tutor.headline || '');
         setDraftQuote(tutor.helpChildQuote || '');
         setDraftSummary(tutor.helpChildSummary || '');
       }
 
-      if (existingDraft?.avatarUrl) {
-        setDraftAvatarPath(existingDraft.avatarUrl);
-        TutorPortalService.getSignedAvatarUrl(existingDraft.avatarUrl).then((url) => {
-          if (url) setDraftAvatarPreview(url);
-        });
-      } else {
-        setDraftAvatarPath(null);
-        setDraftAvatarPreview(null);
-      }
+      // Sync pricing editor & default new private slot settings from saved database profile
+      const dbPrice = Number(tutor.hourlyRateMin) > 0 ? Number(tutor.hourlyRateMin) : 150;
+      const dbCurrency = tutor.currency || 'ج.م';
+      const dbDuration = Number(tutor.sessionDurationMinutes) >= 30 ? Number(tutor.sessionDurationMinutes) : 50;
 
-      // Retain tutor's preferred slot price from storage/session if previously set, else profile default
-      const preferredPrice = getStoredPrivatePrice(tutor.id, tutor.hourlyRateMin || 150);
-      setPrivatePriceAmount(preferredPrice);
-      setPrivateCurrency(tutor.currency || 'ج.م');
-      setPrivateDurationMinutes(tutor.sessionDurationMinutes || 50);
+      setPricingSessionPrice(dbPrice);
+      setPricingCurrency(dbCurrency);
+      setPricingDurationMinutes(dbDuration);
 
-      // Load sub-data
+      setPrivatePriceAmount(dbPrice);
+      setPrivateCurrency(dbCurrency);
+      setPrivateDurationMinutes(dbDuration);
+      setGroupCurrency(dbCurrency);
+
       await Promise.allSettled([
         loadSpecializations(),
         loadTrialSlots(),
@@ -310,7 +317,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       setSpecializations(specs);
       if (specs.length > 0) {
         setSelectedSpecIds((prev) => (prev.length > 0 ? prev : specs.map((s) => s.id)));
-        setGroupSpecId(specs[0].id);
+        setGroupSpecId((prev) => (prev ? prev : specs[0].id));
       }
     } catch (err) {
       console.warn('Failed to load specializations:', err);
@@ -387,6 +394,64 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     setHasExistingApplication(false);
   };
 
+  // Direct Pricing Update Handler ("سعري ومدة الحصة")
+  const handleSaveProfilePricing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPricingSaveError(null);
+    setPricingSaveSuccess(null);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const priceNum = Math.round(Number(pricingSessionPrice));
+    const durationNum = Math.round(Number(pricingDurationMinutes));
+
+    if (!Number.isFinite(priceNum) || priceNum <= 0 || priceNum > 100000) {
+      setPricingSaveError('يرجى إدخال سعر حصة صحيح أكبر من صفر.');
+      return;
+    }
+
+    if (!Number.isFinite(durationNum) || durationNum < 30 || durationNum > 120) {
+      setPricingSaveError('مدة الحصة يجب أن تكون بين 30 و 120 دقيقة.');
+      return;
+    }
+
+    setIsSavingPricing(true);
+    try {
+      const updatedPricing = await TutorPortalService.updateProfilePricing({
+        sessionPrice: priceNum,
+        currency: pricingCurrency,
+        sessionDurationMinutes: durationNum,
+      });
+
+      // Immediately update context tutor and defaults for new private slots
+      setContext((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          tutor: {
+            ...prev.tutor,
+            hourlyRateMin: updatedPricing.hourlyRateMin,
+            hourlyRateMax: updatedPricing.hourlyRateMax,
+            currency: updatedPricing.currency,
+            sessionDurationMinutes: updatedPricing.sessionDurationMinutes,
+          },
+        };
+      });
+
+      setPrivatePriceAmount(updatedPricing.hourlyRateMin);
+      setPrivateCurrency(updatedPricing.currency);
+      setPrivateDurationMinutes(updatedPricing.sessionDurationMinutes);
+
+      setPricingSaveSuccess(
+        `تم حفظ سعرك (${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة — ${updatedPricing.sessionDurationMinutes} دقيقة) وتحديث ملفك المنشور مباشرةً وأصبح هو السعر الافتراضي لمواعيدك الخاصة الجديدة.`
+      );
+    } catch (err: any) {
+      setPricingSaveError(err?.message || 'تعذر حفظ السعر ومدة الحصة.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
   // 1. Handlers for Trial Slots (20 mins)
   const handleCreateTrialSlot = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -395,21 +460,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       return;
     }
 
-    const [startH, startM] = newTrialStart.split(':').map(Number);
-    const [endH, endM] = newTrialEnd.split(':').map(Number);
-    const durationMinutes = endH * 60 + endM - (startH * 60 + startM);
-    if (durationMinutes !== 20) {
-      setErrorMessage('مدة الموعد التجريبي المعتمدة هي 20 دقيقة بالضبط.');
-      return;
-    }
-
+    const computedEnd = addMinutesToTimeStr(newTrialStart, 20);
     setIsAddingTrial(true);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
-      await TutorPortalService.createSlot(newTrialDate, newTrialStart, newTrialEnd, newTrialTimezone);
-      setSuccessMessage('تمت إضافة الموعد التجريبي بنجاح!');
+      await TutorPortalService.createSlot(newTrialDate, newTrialStart, computedEnd, newTrialTimezone);
+      setSuccessMessage('تمت إضافة الموعد التجريبي ونشره في ملفك بنجاح!');
       setTimeout(() => setSuccessMessage(null), 4000);
       await loadTrialSlots();
       setNewTrialDate('');
@@ -417,6 +475,35 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       setErrorMessage(err?.message || 'فشل إضافة الموعد التجريبي.');
     } finally {
       setIsAddingTrial(false);
+    }
+  };
+
+  const handleUpdateTrialSlot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTrialSlot) return;
+
+    const computedEnd = addMinutesToTimeStr(editTrialStart, 20);
+    setIsUpdatingTrialSlot(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      await TutorPortalService.updateTrialSlot({
+        slotId: editingTrialSlot.id,
+        slotDate: editTrialDate,
+        startTime: editTrialStart,
+        endTime: computedEnd,
+        timezone: editTrialTimezone,
+      });
+
+      setSuccessMessage('تم تعديل الموعد التجريبي (٢٠ دقيقة) بنجاح.');
+      setTimeout(() => setSuccessMessage(null), 4000);
+      setEditingTrialSlot(null);
+      await loadTrialSlots();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'تعذر تعديل الموعد التجريبي.');
+    } finally {
+      setIsUpdatingTrialSlot(false);
     }
   };
 
@@ -470,20 +557,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         slots: previewPrivateSlots,
       });
 
-      // Retain the tutor's chosen price in storage so form does not revert to 150
-      if (context?.tutor?.id) {
-        storePrivatePrice(context.tutor.id, privatePriceAmount);
-      }
-
       const specsNotice =
         chosenSpecs.length > 1
           ? `مع ${chosenSpecs.length} تخصصات بديلة لنفس الموعد`
           : `لتخصص ${chosenSpecs[0].label}`;
 
       setSuccessMessage(
-        `تم حفظ ${res.insertedCount} موعداً خاصاً بنجاح بسعر ${privatePriceAmount} ${privateCurrency} (${specsNotice})! تم تفريغ التاريخ والوقت ليكون النموذج جاهزاً لإضافة موعد آخر جديد.`
+        `تم حفظ ونشر ${res.insertedCount} موعداً خاصاً بنجاح بسعر ${privatePriceAmount} ${privateCurrency} (${specsNotice})!`
       );
-      setTimeout(() => setSuccessMessage(null), 7000);
+      setTimeout(() => setSuccessMessage(null), 6000);
       await loadPrivateSlots();
       setPrivateSingleDate('');
       setPrivateRepeatUntilDate('');
@@ -520,6 +602,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       return;
     }
 
+    const computedEnd = addMinutesToTimeStr(editSlotStart, editSlotDuration);
     setIsUpdatingSlot(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -529,11 +612,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         slotId: editingPrivateSlot.id,
         slotDate: editSlotDate,
         startTime: editSlotStart,
-        endTime: editSlotEnd,
+        endTime: computedEnd,
         durationMinutes: editSlotDuration,
         priceAmount: editSlotPrice,
         specializations: chosenSpecs,
-        timezone: editingPrivateSlot.timezone || 'Africa/Cairo',
+        timezone: editSlotTimezone || editingPrivateSlot.timezone || 'Africa/Cairo',
       });
 
       setSuccessMessage('تم تعديل الموعد الخاص وتحديث التخصصات المعتمدة بنجاح.');
@@ -547,52 +630,139 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     }
   };
 
-  // Helper to auto-calculate sessions array
+  // Auto-generate group sessions & weekly schedule summary ONLY when creating a new group
+  // OR when the tutor explicitly modifies schedule settings while editing a group.
   useEffect(() => {
+    if (editingGroup && !groupScheduleModifiedByTutor) {
+      return;
+    }
+
     if (!groupStartDate || groupSessionsCount < 1 || groupWeeklyDays.length === 0) {
       setGeneratedGroupSessions([]);
       return;
     }
 
-    const sessions: Array<{
-      sessionNumber: number;
-      sessionDate: string;
-      startTime: string;
-      endTime: string;
-      timezone: string;
-      title: string;
-    }> = [];
-
-    const startD = new Date(groupStartDate);
-    const curr = new Date(startD);
-    const endTime = addMinutesToTime(groupSessionStartTime, groupSessionDuration);
-
-    let sessionNum = 1;
-    // Walk forward day by day until session count is reached
-    for (let dayOffset = 0; dayOffset < 365 && sessions.length < groupSessionsCount; dayOffset++) {
-      if (groupWeeklyDays.includes(curr.getDay())) {
-        const y = curr.getFullYear();
-        const m = String(curr.getMonth() + 1).padStart(2, '0');
-        const d = String(curr.getDate()).padStart(2, '0');
-        const dateStr = `${y}-${m}-${d}`;
-        sessions.push({
-          sessionNumber: sessionNum,
-          sessionDate: dateStr,
-          startTime: groupSessionStartTime,
-          endTime,
-          timezone: 'Africa/Cairo',
-          title: `اللقاء ${sessionNum}`,
-        });
-        sessionNum++;
-      }
-      curr.setDate(curr.getDate() + 1);
-    }
+    const sessions = generateGroupSessionsSchedule({
+      startDateStr: groupStartDate,
+      sessionsCount: groupSessionsCount,
+      weeklyDays: groupWeeklyDays,
+      startTime: groupSessionStartTime,
+      durationMinutes: groupSessionDuration,
+      timezone: groupTimezone,
+    });
 
     setGeneratedGroupSessions(sessions);
     if (sessions.length > 0) {
       setGroupEndDate(sessions[sessions.length - 1].sessionDate);
     }
-  }, [groupStartDate, groupSessionsCount, groupWeeklyDays, groupSessionStartTime, groupSessionDuration]);
+
+    const autoSummary = buildArabicWeeklyScheduleSummary({
+      weeklyDays: groupWeeklyDays,
+      startTime: groupSessionStartTime,
+      durationMinutes: groupSessionDuration,
+      timezone: groupTimezone,
+    });
+    if (autoSummary) {
+      setGroupScheduleSummary(autoSummary);
+    }
+  }, [
+    editingGroup,
+    groupScheduleModifiedByTutor,
+    groupStartDate,
+    groupSessionsCount,
+    groupWeeklyDays,
+    groupSessionStartTime,
+    groupSessionDuration,
+    groupTimezone,
+  ]);
+
+  const handleOpenNewGroupWizard = () => {
+    setEditingGroup(null);
+    setGroupScheduleModifiedByTutor(true);
+    setGroupWizardStep(1);
+    setGroupTitle('');
+    setGroupDescription('');
+    if (specializations.length > 0 && !groupSpecId) {
+      setGroupSpecId(specializations[0].id);
+    }
+    setGroupMaxStudents(5);
+    setGroupPricePerStudent(250);
+    setGroupPriceType('full_package');
+    setGroupCurrency(context?.tutor.currency || 'ج.م');
+    setGroupSessionsCount(4);
+    setGroupSessionDuration(60);
+    setGroupTimezone('Africa/Cairo');
+    const tomorrowStr = getTomorrowCalendarDateInTimezone('Africa/Cairo');
+    setGroupStartDate(tomorrowStr);
+    setGroupSessionStartTime('18:00');
+    setGroupWeeklyDays([1, 3]);
+    setShowAddGroupForm(true);
+  };
+
+  const handleStartEditGroup = async (group: TutorGroup) => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setEditingGroup(group);
+    setGroupScheduleModifiedByTutor(false);
+    setGroupWizardStep(1);
+    setGroupTitle(group.title);
+    setGroupDescription(group.description || '');
+    setGroupMaxStudents(group.maxStudents);
+    setGroupPricePerStudent(group.pricePerStudent);
+    setGroupPriceType((group.priceType as 'per_session' | 'full_package') || 'full_package');
+    setGroupCurrency(group.currency || context?.tutor.currency || 'ج.م');
+    setGroupSessionsCount(group.sessionsCount);
+    setGroupSessionDuration(group.sessionDurationMinutes);
+    setGroupStartDate(group.startDate);
+    setGroupEndDate(group.endDate || '');
+    setGroupScheduleSummary(group.weeklyScheduleSummary || '');
+
+    const matchSpec = specializations.find((s) => s.label === group.specializationLabel);
+    if (matchSpec) {
+      setGroupSpecId(matchSpec.id);
+    }
+
+    setShowAddGroupForm(true);
+    setIsLoadingGroupSessionsForEdit(true);
+
+    try {
+      const actualSessions = await TutorPortalService.getGroupSessions(group.id);
+      if (Array.isArray(actualSessions) && actualSessions.length > 0) {
+        const normalizedSessions = actualSessions.map((s: any, idx: number) => ({
+          sessionNumber: Number(s.sessionNumber || idx + 1),
+          sessionDate: String(s.sessionDate || '').slice(0, 10),
+          startTime: String(s.startTime || '18:00').slice(0, 5),
+          endTime: String(s.endTime || '19:00').slice(0, 5),
+          timezone: String(s.timezone || 'Africa/Cairo'),
+          title: String(s.title || `اللقاء ${idx + 1}`),
+        }));
+
+        setGeneratedGroupSessions(normalizedSessions);
+        const firstSession = normalizedSessions[0];
+        if (firstSession) {
+          setGroupSessionStartTime(firstSession.startTime);
+          setGroupTimezone(firstSession.timezone || 'Africa/Cairo');
+        }
+        const distinctDays = Array.from(
+          new Set(
+            normalizedSessions
+              .map((s) => getCalendarDayOfWeek(s.sessionDate))
+              .filter((d) => d >= 0 && d <= 6)
+          )
+        );
+        if (distinctDays.length > 0) {
+          setGroupWeeklyDays(distinctDays);
+        }
+      } else {
+        // Fallback if sessions could not be fetched
+        setGroupScheduleModifiedByTutor(true);
+      }
+    } catch {
+      setGroupScheduleModifiedByTutor(true);
+    } finally {
+      setIsLoadingGroupSessionsForEdit(false);
+    }
+  };
 
   // 3. Handlers for Educational Groups
   const handleCreateGroup = async (e: React.FormEvent) => {
@@ -600,26 +770,42 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     const chosenSpec = specializations.find((s) => s.id === groupSpecId);
     if (!chosenSpec) {
       setErrorMessage('يرجى اختيار تخصص معتمد للمجموعة.');
+      setGroupWizardStep(1);
       return;
     }
 
     if (!groupTitle.trim()) {
       setErrorMessage('يرجى إدخال اسم مميز للمجموعة التعليمية.');
+      setGroupWizardStep(1);
       return;
     }
 
     if (!groupStartDate) {
       setErrorMessage('يرجى تحديد تاريخ بدء المجموعة.');
+      setGroupWizardStep(3);
       return;
     }
 
     if (generatedGroupSessions.length !== groupSessionsCount) {
-      setErrorMessage(`جدول اللقاءات (${generatedGroupSessions.length}) يجب أن يطابق تماماً عدد الحصص المحدد (${groupSessionsCount}).`);
+      setErrorMessage(
+        `جدول اللقاءات (${generatedGroupSessions.length}) يجب أن يطابق تماماً عدد الحصص المحدد (${groupSessionsCount}).`
+      );
+      setGroupWizardStep(3);
       return;
     }
 
-    if (!groupScheduleSummary.trim()) {
-      setErrorMessage('يرجى كتابة ملخص مواعيد الحصص الأسبوعية (مثال: كل اثنين وأربعاء الساعة ٦ مساءً).');
+    const finalSummary =
+      groupScheduleSummary.trim() ||
+      buildArabicWeeklyScheduleSummary({
+        weeklyDays: groupWeeklyDays,
+        startTime: groupSessionStartTime,
+        durationMinutes: groupSessionDuration,
+        timezone: groupTimezone,
+      });
+
+    if (!finalSummary) {
+      setErrorMessage('يرجى التحقق من ملخص مواعيد الحصص الأسبوعية.');
+      setGroupWizardStep(3);
       return;
     }
 
@@ -640,9 +826,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           currency: groupCurrency,
           sessionsCount: groupSessionsCount,
           sessionDurationMinutes: groupSessionDuration,
-          startDate: groupStartDate,
-          endDate: groupEndDate || undefined,
-          weeklyScheduleSummary: groupScheduleSummary.trim(),
+          startDate: generatedGroupSessions[0]?.sessionDate || groupStartDate,
+          endDate:
+            generatedGroupSessions[generatedGroupSessions.length - 1]?.sessionDate ||
+            groupEndDate ||
+            undefined,
+          weeklyScheduleSummary: finalSummary,
           sessions: generatedGroupSessions,
         });
 
@@ -659,13 +848,18 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           currency: groupCurrency,
           sessionsCount: groupSessionsCount,
           sessionDurationMinutes: groupSessionDuration,
-          startDate: groupStartDate,
-          endDate: groupEndDate || undefined,
-          weeklyScheduleSummary: groupScheduleSummary.trim(),
+          startDate: generatedGroupSessions[0]?.sessionDate || groupStartDate,
+          endDate:
+            generatedGroupSessions[generatedGroupSessions.length - 1]?.sessionDate ||
+            groupEndDate ||
+            undefined,
+          weeklyScheduleSummary: finalSummary,
           sessions: generatedGroupSessions,
         });
 
-        setSuccessMessage('تم إنشاء المجموعة التعليمية ونشرها مباشرة بنجاح؛ أصبحت متاحة الآن للتسجيل في ملفك العام.');
+        setSuccessMessage(
+          'تم إنشاء المجموعة التعليمية ونشرها مباشرة بنجاح؛ أصبحت متاحة الآن للتسجيل في ملفك العام.'
+        );
       }
 
       setTimeout(() => setSuccessMessage(null), 5000);
@@ -701,45 +895,84 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     }
   };
 
-  // 4. Draft avatar and submit handlers
-  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 4. Self-service Avatar selection & immediate publish handlers
+  const handleAvatarFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setAvatarUploadError(null);
-    setAvatarUploadSuccess(null);
+    setAvatarSaveError(null);
+    setAvatarSaveSuccess(null);
     setErrorMessage(null);
 
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
-      setAvatarUploadError('نوع الملف غير مدعوم. يرجى اختيار صورة بصيغة JPG أو PNG أو WebP.');
+      setAvatarSaveError('نوع الملف غير مدعوم. يرجى اختيار صورة بصيغة JPG أو PNG أو WebP.');
+      e.target.value = '';
       return;
     }
 
     const maxSize = 2 * 1024 * 1024; // 2MB
     if (file.size > maxSize) {
-      setAvatarUploadError('حجم الصورة كبير جداً (أكثر من 2 ميجابايت). يرجى اختيار صورة أصغر حجماً.');
+      setAvatarSaveError('حجم الصورة يتجاوز الحد المسموح (2 ميجابايت). يرجى اختيار صورة أصغر حجماً.');
+      e.target.value = '';
       return;
     }
 
-    // Instant local preview for immediate visual feedback
-    const localUrl = URL.createObjectURL(file);
-    setDraftAvatarPreview(localUrl);
-    setIsUploadingAvatar(true);
+    if (selectedAvatarPreviewUrl) {
+      try {
+        URL.revokeObjectURL(selectedAvatarPreviewUrl);
+      } catch {
+        // ignore
+      }
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    setSelectedAvatarFile(file);
+    setSelectedAvatarPreviewUrl(previewUrl);
+  };
+
+  const handleSaveAndPublishAvatar = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedAvatarFile) {
+      setAvatarSaveError('يرجى اختيار صورة جديدة أولاً ثم الضغط على «حفظ الصورة ونشرها».');
+      return;
+    }
+
+    setIsSavingAvatar(true);
+    setAvatarSaveError(null);
+    setAvatarSaveSuccess(null);
+    setErrorMessage(null);
 
     try {
-      const uploaded = await TutorPortalService.uploadDraftAvatar(file);
-      setDraftAvatarPath(uploaded.storagePath);
-      setDraftAvatarPreview(uploaded.previewSignedUrl);
-      setAvatarUploadSuccess('تم رفع الصورة بنجاح! اضغط على (إرسال الصورة للمراجعة) لاعتمادها من الإدارة.');
+      const result = await TutorPortalService.uploadAndPublishSelfServiceAvatar(selectedAvatarFile);
+
+      // Update current tutor avatarUrl with the permanent public URL and clear any old pendingDraft
+      setContext((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          tutor: {
+            ...prev.tutor,
+            avatarUrl: result.avatarUrl,
+          },
+          pendingDraft: null,
+        };
+      });
+
+      setSelectedAvatarFile(null);
+      setSelectedAvatarPreviewUrl(null);
+      setAvatarSaveSuccess('تم حفظ صورتك الشخصية ونشرها في ملفك مباشرة بنجاح!');
     } catch (err: any) {
-      setAvatarUploadError(err?.message || 'فشل رفع الصورة.');
+      // Keep the current published avatar intact and display a clear Arabic error message
+      setAvatarSaveError(
+        err?.message || 'تعذر حفظ الصورة ونشرها. تم الاحتفاظ بصورتك الحالية دون تغيير.'
+      );
     } finally {
-      setIsUploadingAvatar(false);
+      setIsSavingAvatar(false);
     }
   };
 
-  // Immediate text update handler (does not require review)
+  // Immediate text update handler (preserves typed text on failure)
   const handleSaveProfileText = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
@@ -775,7 +1008,6 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         helpChildSummary: trimmedSummary.length > 0 ? trimmedSummary : null,
       });
 
-      // Immediately update displayed tutor data in state
       setContext((prev) => {
         if (!prev) return prev;
         return {
@@ -792,38 +1024,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       if (res.changed === false) {
         setTextSaveSuccess('لا توجد تعديلات جديدة.');
       } else {
-        setTextSaveSuccess('تم الحفظ وتحديث ملفك للزوار.');
+        setTextSaveSuccess('تم حفظ النبذة وتحديث ملفك المنشور مباشرةً.');
       }
     } catch (err: any) {
-      // Display Arabic error as-is and preserve the user's typed text
-      setTextSaveError(err?.message || 'حدث خطأ أثناء حفظ التعديلات.');
+      // Preserve typed text in state and display error clearly
+      setTextSaveError(err?.message || 'حدث خطأ أثناء حفظ التعديلات. نصوصك المكتوبة محفوظة في النموذج.');
     } finally {
       setIsSavingProfileText(false);
-    }
-  };
-
-  // Separate avatar submission handler (does NOT depend on any text field)
-  const handleSubmitAvatarDraft = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-
-    if (!draftAvatarPath) {
-      setAvatarUploadError('يرجى اختيار ورفع صورة جديدة أولاً قبل الإرسال للمراجعة.');
-      return;
-    }
-
-    setIsSubmittingDraft(true);
-    setAvatarUploadError(null);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      await TutorPortalService.submitAvatarDraft(draftAvatarPath);
-      setAvatarUploadSuccess('تم إرسال الصورة الجديدة للمراجعة بنجاح.');
-      await loadPortalData(true);
-    } catch (err: any) {
-      setAvatarUploadError(err?.message || 'فشل إرسال الصورة للمراجعة.');
-    } finally {
-      setIsSubmittingDraft(false);
     }
   };
 
@@ -847,14 +1054,19 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     return (
       <div className="max-w-4xl mx-auto py-16 px-4 text-center space-y-4" dir="rtl">
         <Loader2 className="w-10 h-10 text-[#0D4E8B] animate-spin mx-auto" />
-        <p className="text-sm font-bold text-[#64748B]">جاري التحقق من أهلية الحساب وتحميل لوحة المعلم...</p>
+        <p className="text-sm font-bold text-[#64748B]">
+          جاري التحقق من أهلية الحساب وتحميل لوحة المعلم...
+        </p>
       </div>
     );
   }
 
   if (!currentUser) {
     return (
-      <div className="max-w-xl mx-auto my-12 sm:my-16 p-6 sm:p-8 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center space-y-4" dir="rtl">
+      <div
+        className="max-w-xl mx-auto my-12 sm:my-16 p-6 sm:p-8 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center space-y-4"
+        dir="rtl"
+      >
         <div className="w-14 h-14 rounded-2xl bg-[#EBF3FC] text-[#0D4E8B] flex items-center justify-center mx-auto">
           <GraduationCap className="w-7 h-7" />
         </div>
@@ -868,7 +1080,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => setIsAuthModalOpen(true)}
-            className="px-5 py-2.5 rounded-xl bg-[#0D4E8B] text-white text-xs sm:text-sm font-bold hover:bg-[#003767] transition-all flex items-center gap-2 cursor-pointer"
+            className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] text-white text-xs sm:text-sm font-bold hover:bg-[#003767] transition-all flex items-center gap-2 cursor-pointer"
           >
             <LogIn className="w-4 h-4" />
             <span>دخول المعلمين</span>
@@ -876,7 +1088,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <button
             type="button"
             onClick={onNavigateHome}
-            className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all cursor-pointer"
+            className="px-4 py-2.5 min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all cursor-pointer"
           >
             العودة للرئيسية
           </button>
@@ -897,10 +1109,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
   if (!context) {
     return (
-      <div className="max-w-xl mx-auto my-12 sm:my-16 p-6 sm:p-8 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center space-y-4" dir="rtl">
+      <div
+        className="max-w-xl mx-auto my-12 sm:my-16 p-6 sm:p-8 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center space-y-4"
+        dir="rtl"
+      >
         <AlertCircle className="w-12 h-12 text-amber-500 mx-auto" />
         <h2 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
-          {hasExistingApplication ? 'طلب انضمامك قيد المتابعة' : 'لوحة المعلم مخصصة للمعلمين المعتمدين فقط'}
+          {hasExistingApplication
+            ? 'طلب انضمامك قيد المتابعة'
+            : 'لوحة المعلم مخصصة للمعلمين المعتمدين فقط'}
         </h2>
         <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed">
           {hasExistingApplication
@@ -917,14 +1134,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 window.location.hash = '#join-as-tutor';
               }
             }}
-            className="px-5 py-2.5 rounded-xl bg-[#0D4E8B] text-white text-xs sm:text-sm font-bold hover:bg-[#003767] transition-all cursor-pointer"
+            className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] text-white text-xs sm:text-sm font-bold hover:bg-[#003767] transition-all cursor-pointer"
           >
             {hasExistingApplication ? 'متابعة طلبي' : 'استكمال التقديم'}
           </button>
           <button
             type="button"
             onClick={() => loadPortalData(false)}
-            className="px-4 py-2.5 rounded-xl border border-[#CBD5E1] hover:bg-slate-50 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2.5 min-h-[44px] rounded-xl border border-[#CBD5E1] hover:bg-slate-50 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className="w-4 h-4" />
             <span>إعادة المحاولة</span>
@@ -932,7 +1149,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <button
             type="button"
             onClick={handleSignOut}
-            className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2.5 min-h-[44px] rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs sm:text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
             <span>تسجيل الخروج</span>
@@ -940,7 +1157,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <button
             type="button"
             onClick={onNavigateHome}
-            className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all cursor-pointer"
+            className="px-4 py-2.5 min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs sm:text-sm font-bold transition-all cursor-pointer"
           >
             العودة للرئيسية
           </button>
@@ -949,62 +1166,102 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     );
   }
 
-  const { tutor, pendingDraft } = context;
+  const { tutor } = context;
 
-  // Calculate Profile Strength ("قوة ملفك ٪") in frontend from the 6 items:
-  // 1. صورة, 2. جملة قصيرة, 3. نبذة, 4. جملة "إزاي بتساعد الطفل", 5. تخصص واحد على الأقل, 6. موعد واحد على الأقل
-  const hasAvatar = Boolean(tutor.avatarUrl && tutor.avatarUrl.trim().length > 0);
-  const hasShortHeadline = Boolean(tutor.headline && tutor.headline.trim().length >= 10);
-  const hasSummary = Boolean(tutor.helpChildSummary && tutor.helpChildSummary.trim().length >= 20);
-  const hasHelpChildQuote = Boolean(tutor.helpChildQuote && tutor.helpChildQuote.trim().length >= 5);
-  const hasAtLeastOneSpec = specializations.length >= 1;
-  const hasAtLeastOneSlot =
-    trialSlots.length > 0 || privateSlots.length > 0 || groups.length > 0;
-
-  const strengthItems = [
-    hasAvatar,
-    hasShortHeadline,
-    hasSummary,
-    hasHelpChildQuote,
-    hasAtLeastOneSpec,
-    hasAtLeastOneSlot,
-  ];
-  const completedStrengthCount = strengthItems.filter(Boolean).length;
-  const profileStrengthPercent = Math.round((completedStrengthCount / 6) * 100);
-
-  let topNextStepTip = 'ملفك مكتمل وجاهز لاستقبال أولياء الأمور والطلاب.';
-  let topNextStepActionTab: 'profile-draft' | 'trials' | 'overview' | null = null;
-  if (!hasAvatar) {
-    if (pendingDraft?.status === 'pending_review' && pendingDraft?.avatarUrl) {
-      topNextStepTip = 'صورتك الشخصية الجديدة قيد المراجعة حاليًا لدى الإدارة.';
-    } else {
-      topNextStepTip = 'استخدم صورة واضحة لوجهك بإضاءة جيدة وخلفية بسيطة.';
-      topNextStepActionTab = 'profile-draft';
-    }
-  } else if (!hasShortHeadline) {
-    topNextStepTip = 'اكتب جملة قصيرة عنك توضح بتساعد مين وفي إيه.';
-    topNextStepActionTab = 'profile-draft';
-  } else if (!hasHelpChildQuote) {
-    topNextStepTip = 'أضف جملة توضح إزاي بتساعد الطفل يفهم بطريقة مبسطة.';
-    topNextStepActionTab = 'profile-draft';
-  } else if (!hasSummary) {
-    topNextStepTip = 'اكتب نبذة عنك لولي الأمر تذكر فيها خبرتك وطريقتك وإزاي بتتابع معاه.';
-    topNextStepActionTab = 'profile-draft';
-  } else if (!hasAtLeastOneSpec) {
-    topNextStepTip = 'تأكد من وجود تخصص دراسي واحد على الأقل معتمد في ملفك.';
-    topNextStepActionTab = 'overview';
-  } else if (!hasAtLeastOneSlot) {
-    topNextStepTip = 'أضف موعدًا واحدًا على الأقل (تجريبي أو حصة خاصة أو مجموعة) ليتمكن أولياء الأمور من الحجز.';
-    topNextStepActionTab = 'trials';
-  }
-
-  // Counters for future private slots
-  const nowTime = Date.now();
-  const futurePrivateSlots = privateSlots.filter(
-    (s) => new Date(`${s.slotDate}T${s.startTime}`).getTime() > nowTime
+  // Compute future available slots strictly (excluding past, booked, and admin-suspended slots/groups)
+  const validFutureTrialSlots = filterValidAvailableTrialSlots(trialSlots);
+  const validFuturePrivateSlots = filterValidAvailablePrivateSlots(privateSlots);
+  const validFutureGroups = groups.filter(
+    (g) =>
+      g &&
+      !g.adminSuspended &&
+      g.isPublished &&
+      (g.status === 'open' || g.status === 'in_progress') &&
+      (g.remainingSeats === undefined ? g.maxStudents - g.enrolledStudents > 0 : g.remainingSeats > 0) &&
+      isSlotInFuture(g.endDate || g.startDate, '23:59', 'Africa/Cairo')
   );
-  const futurePrivateAvailableCount = futurePrivateSlots.filter((s) => s.isAvailable && !s.isBooked).length;
-  const futurePrivateBookedCount = futurePrivateSlots.filter((s) => s.isBooked).length;
+
+  // 5 Profile Readiness Steps (الصورة، النبذة، السعر، التخصصات، والمواعيد المتاحة المستقبلية)
+  const hasAvatar = Boolean(tutor.avatarUrl && tutor.avatarUrl.trim().length > 0);
+  const hasBioComplete = Boolean(
+    tutor.headline &&
+      tutor.headline.trim().length >= 10 &&
+      ((tutor.helpChildSummary && tutor.helpChildSummary.trim().length >= 20) ||
+        (tutor.helpChildQuote && tutor.helpChildQuote.trim().length >= 5))
+  );
+  const hasValidPrice = Boolean(
+    Number(tutor.hourlyRateMin) > 0 &&
+      Number(tutor.sessionDurationMinutes) >= 30 &&
+      Boolean(tutor.currency)
+  );
+  const hasAtLeastOneSpec = specializations.length >= 1;
+  const hasFutureAvailableSlot =
+    validFutureTrialSlots.length > 0 ||
+    validFuturePrivateSlots.length > 0 ||
+    validFutureGroups.length > 0;
+
+  const readinessSteps = [
+    {
+      key: 'avatar',
+      title: 'الصورة الشخصية',
+      completed: hasAvatar,
+      statusText: hasAvatar ? 'منشورة في ملفك' : 'أضف صورتك الشخصية',
+      actionLabel: 'صورتي ونبذتي',
+      targetTab: 'profile-draft' as DashboardTab,
+    },
+    {
+      key: 'bio',
+      title: 'النبذة التعريفية',
+      completed: hasBioComplete,
+      statusText: hasBioComplete ? 'الجملة القصيرة والنبذة مكتملة' : 'أكمل نبذتك لولي الأمر',
+      actionLabel: 'صورتي ونبذتي',
+      targetTab: 'profile-draft' as DashboardTab,
+    },
+    {
+      key: 'pricing',
+      title: 'السعر ومدة الحصة',
+      completed: hasValidPrice,
+      statusText: hasValidPrice
+        ? `${tutor.hourlyRateMin} ${tutor.currency} / ${tutor.sessionDurationMinutes} دقيقة`
+        : 'حدد سعر الحصة ومدتها',
+      actionLabel: 'سعري ومدة الحصة',
+      targetTab: 'pricing' as DashboardTab,
+    },
+    {
+      key: 'specializations',
+      title: 'التخصصات المعتمدة',
+      completed: hasAtLeastOneSpec,
+      statusText: hasAtLeastOneSpec
+        ? `${specializations.length} تخصص معتمد`
+        : 'بانتظار ربط التخصصات',
+      actionLabel: 'عرض التخصصات',
+      targetTab: 'overview' as DashboardTab,
+    },
+    {
+      key: 'slots',
+      title: 'المواعيد المتاحة',
+      completed: hasFutureAvailableSlot,
+      statusText: hasFutureAvailableSlot
+        ? `${validFutureTrialSlots.length} تجريبي • ${validFuturePrivateSlots.length} خاص • ${validFutureGroups.length} مجموعة`
+        : 'لا توجد مواعيد مستقبلية متاحة حالياً',
+      actionLabel: 'إضافة موعد',
+      targetTab: 'private' as DashboardTab,
+    },
+  ];
+
+  const completedStepsCount = readinessSteps.filter((s) => s.completed).length;
+  const profileStrengthPercent = Math.round((completedStepsCount / readinessSteps.length) * 100);
+
+  const futurePrivateBookedCount = privateSlots.filter(
+    (s) => s.isBooked && isSlotInFuture(s.slotDate, s.startTime, s.timezone || 'Africa/Cairo')
+  ).length;
+
+  const groupFinancials = calculateGroupFinancialSummary({
+    maxStudents: groupMaxStudents,
+    pricePerStudent: groupPricePerStudent,
+    priceType: groupPriceType,
+    sessionsCount: groupSessionsCount,
+  });
 
   // Parent Preview Mode ("شوف ملفك زي ولي الأمر")
   if (isPreviewMode && previewTutorData) {
@@ -1016,14 +1273,16 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <span>معاينة ملفك كما يراه ولي الأمر</span>
             <span className="text-slate-400">·</span>
             <span className={tutor.isPublished ? 'text-emerald-400' : 'text-amber-400'}>
-              {tutor.isPublished ? 'ملفك منشور للزوار' : 'ملفك غير منشور حالياً (معاينة خاصة بك بدون نشر)'}
+              {tutor.isPublished
+                ? 'ملفك منشور للزوار'
+                : 'ملفك غير منشور حالياً (معاينة خاصة بك بدون نشر)'}
             </span>
           </div>
 
           <button
             type="button"
             onClick={() => setIsPreviewMode(false)}
-            className="px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="px-3.5 py-2 min-h-[40px] rounded-lg bg-white/15 hover:bg-white/25 text-white transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             <span>العودة للوحة المعلم</span>
             <ArrowRight className="w-3.5 h-3.5 rotate-180" />
@@ -1042,10 +1301,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   }
 
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6" dir="rtl">
+    <div className="max-w-5xl mx-auto py-6 sm:py-8 px-3 sm:px-6 lg:px-8 space-y-6" dir="rtl">
       {/* 1. Header Bar */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+      <div className="bg-white rounded-3xl p-4 sm:p-6 border border-[#E2E8F0] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
           <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-slate-100 border border-[#CBD5E1] shrink-0 flex items-center justify-center">
             {tutor.avatarUrl ? (
               <img src={tutor.avatarUrl} alt={tutor.name} className="w-full h-full object-cover" />
@@ -1053,22 +1312,27 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               <User className="w-7 h-7 text-slate-400" />
             )}
             {tutor.verifiedCredentials && (
-              <span className="absolute -bottom-1 -left-1 w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] shadow-xs" title="معتمد">
+              <span
+                className="absolute -bottom-1 -left-1 w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] shadow-xs"
+                title="معتمد"
+              >
                 <ShieldCheck className="w-3.5 h-3.5" />
               </span>
             )}
           </div>
 
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="font-['Cairo'] text-lg sm:text-xl font-bold text-[#1F2A44]">
+              <h1 className="font-['Cairo'] text-base sm:text-xl font-bold text-[#1F2A44]">
                 مرحباً {tutor.honorific} {tutor.name}
               </h1>
-              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                tutor.isPublished
-                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  : 'bg-amber-50 text-amber-800 border border-amber-200'
-              }`}>
+              <span
+                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                  tutor.isPublished
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                }`}
+              >
                 {tutor.isPublished ? 'ملفك منشور ومتاح للحجز' : 'ملف غير منشور للجمهور'}
               </span>
             </div>
@@ -1078,13 +1342,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Quick Nav Actions */}
-        <div className="flex flex-wrap items-center gap-2 self-end md:self-center shrink-0">
+        {/* Preview & Account Actions */}
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end shrink-0">
           <button
             type="button"
             onClick={handleOpenParentPreview}
             disabled={isLoadingPreview}
-            className="px-3.5 py-2 rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
           >
             {isLoadingPreview ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -1095,8 +1359,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={onNavigateHome}
-            className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1F2A44] transition-all cursor-pointer"
+            className="px-3 py-2 min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1F2A44] transition-all cursor-pointer"
           >
             الرئيسية
           </button>
@@ -1104,7 +1369,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <button
             type="button"
             onClick={handleSignOut}
-            className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-2 min-h-[44px] rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>خروج</span>
@@ -1112,38 +1377,21 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 1.1 Profile Strength Indicator ("قوة ملفك ٪" & "أهم خطوة دلوقتي") */}
-      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-[#E2E8F0] shadow-xs space-y-3">
+      {/* 1.1 Quick Action Buttons Bar («صورتي ونبذتي» — «سعري ومدة الحصة» — «إضافة موعد» — «إنشاء مجموعة») */}
+      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-[#E2E8F0] shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Sparkles className="w-4 h-4 text-[#0D4E8B]" />
             <span className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              قوة ملفك {profileStrengthPercent}٪
+              إدارة ملفك بالخدمة الذاتية ({profileStrengthPercent}٪ مكتمل)
             </span>
             <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#F0F6FD] text-[#0D4E8B]">
-              {completedStrengthCount} من 6 عناصر مكتملة
+              {completedStepsCount} من {readinessSteps.length} خطوات جاهزة
             </span>
           </div>
-
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-            <span className={`px-2 py-0.5 rounded-md font-bold ${hasAvatar ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-              {hasAvatar ? '✓ صورة' : '○ صورة'}
-            </span>
-            <span className={`px-2 py-0.5 rounded-md font-bold ${hasShortHeadline ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-              {hasShortHeadline ? '✓ جملة قصيرة' : '○ جملة قصيرة'}
-            </span>
-            <span className={`px-2 py-0.5 rounded-md font-bold ${hasHelpChildQuote ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-              {hasHelpChildQuote ? '✓ إزاي بتساعد الطفل' : '○ إزاي بتساعد الطفل'}
-            </span>
-            <span className={`px-2 py-0.5 rounded-md font-bold ${hasSummary ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-              {hasSummary ? '✓ نبذة' : '○ نبذة'}
-            </span>
-            <span className={`px-2 py-0.5 rounded-md font-bold ${hasAtLeastOneSpec ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-              {hasAtLeastOneSpec ? '✓ تخصص' : '○ تخصص'}
-            </span>
-            <span className={`px-2 py-0.5 rounded-md font-bold ${hasAtLeastOneSlot ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-              {hasAtLeastOneSlot ? '✓ موعد متاح' : '○ موعد متاح'}
-            </span>
-          </div>
+          <span className="text-[11px] text-[#64748B]">
+            تعديلاتك تظهر مباشرة في ملفك المنشور فور الحفظ دون انتظار مراجعة إدارية
+          </span>
         </div>
 
         {/* Progress Bar */}
@@ -1156,300 +1404,967 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           />
         </div>
 
-        {/* Single Clear Tip: "أهم خطوة دلوقتي" */}
-        <div className="p-3 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div className="flex items-start sm:items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#0D4E8B] shrink-0 mt-0.5 sm:mt-0" />
-            <div>
-              <span className="font-bold text-[#1F2A44] ml-1.5">أهم خطوة دلوقتي:</span>
-              <span className="text-[#64748B]">{topNextStepTip}</span>
-            </div>
-          </div>
-          {topNextStepActionTab && activeTab !== topNextStepActionTab && (
-            <button
-              type="button"
-              onClick={() => setActiveTab(topNextStepActionTab!)}
-              className="px-3 py-1 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-[11px] font-bold transition-colors self-end sm:self-auto cursor-pointer shrink-0"
-            >
-              انتقل الآن
-            </button>
-          )}
+        {/* 4 Primary Action Buttons required by spec */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('profile-draft')}
+            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeTab === 'profile-draft'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
+                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
+            }`}
+          >
+            <Camera className="w-4 h-4 shrink-0" />
+            <span>صورتي ونبذتي</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('pricing')}
+            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeTab === 'pricing'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
+                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
+            }`}
+          >
+            <DollarSign className="w-4 h-4 shrink-0" />
+            <span>سعري ومدة الحصة</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('private')}
+            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeTab === 'private'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
+                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
+            }`}
+          >
+            <CalendarCheck2 className="w-4 h-4 shrink-0" />
+            <span>إضافة موعد</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('groups');
+              handleOpenNewGroupWizard();
+            }}
+            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeTab === 'groups'
+                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
+                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
+            }`}
+          >
+            <Users className="w-4 h-4 shrink-0" />
+            <span>إنشاء مجموعة</span>
+          </button>
         </div>
       </div>
 
-      {/* Messages */}
+      {/* Global Feedback Alerts */}
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5">
+        <div
+          role="alert"
+          className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5"
+        >
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <span className="font-bold">{errorMessage}</span>
         </div>
       )}
 
       {successMessage && (
-        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5">
+        <div
+          role="status"
+          className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5"
+        >
           <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
           <span className="font-bold">{successMessage}</span>
         </div>
       )}
 
-      {/* 2. Responsive Navigation Bar: Full visibility on mobile & desktop */}
-      {/* Mobile-First Schedule Grid (Visible on mobile, no hidden scroll) */}
-      <div className="sm:hidden space-y-2">
-        <div className="flex items-center justify-between text-xs font-bold text-[#64748B] px-1">
-          <span className="flex items-center gap-1.5 text-[#1F2A44]">
-            <Calendar className="w-3.5 h-3.5 text-[#0D4E8B]" />
-            <span>أقسام المواعيد والجدول:</span>
-          </span>
-          <span className="text-[10px] text-[#0D4E8B]">اضغط لاختيار القسم</span>
-        </div>
-
-        {/* 3 Main Schedule Sections */}
-        <div className="grid grid-cols-3 gap-2">
-          {/* 1. Free Trials */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('trials')}
-            className={`p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between min-h-[72px] ${
-              activeTab === 'trials'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
-                : 'bg-white text-[#1F2A44] border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <Clock3 className={`w-4 h-4 mb-1 ${activeTab === 'trials' ? 'text-white' : 'text-[#0D4E8B]'}`} />
-            <span className="text-[11px] font-bold font-['Cairo'] leading-tight">التجارب المجانية</span>
-            <span className={`text-[10px] mt-0.5 px-2 py-0.2 rounded-full font-bold ${
-              activeTab === 'trials' ? 'bg-white/20 text-white' : 'bg-blue-50 text-[#0D4E8B]'
-            }`}>
-              {trialSlots.length} موعد
-            </span>
-          </button>
-
-          {/* 2. Paid Private Slots (1:1) */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('private')}
-            className={`p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between min-h-[72px] ${
-              activeTab === 'private'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
-                : 'bg-white text-[#1F2A44] border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <DollarSign className={`w-4 h-4 mb-1 ${activeTab === 'private' ? 'text-white' : 'text-emerald-600]'}`} />
-            <span className="text-[11px] font-bold font-['Cairo'] leading-tight">الحصص الخاصة</span>
-            <span className={`text-[10px] mt-0.5 px-2 py-0.2 rounded-full font-bold ${
-              activeTab === 'private' ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-700'
-            }`}>
-              {privateSlots.length} موعد
-            </span>
-          </button>
-
-          {/* 3. Small Groups */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('groups')}
-            className={`p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between min-h-[72px] ${
-              activeTab === 'groups'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-sm ring-2 ring-[#0D4E8B]/20'
-                : 'bg-white text-[#1F2A44] border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <Users className={`w-4 h-4 mb-1 ${activeTab === 'groups' ? 'text-white' : 'text-purple-600'}`} />
-            <span className="text-[11px] font-bold font-['Cairo'] leading-tight">المجموعات</span>
-            <span className={`text-[10px] mt-0.5 px-2 py-0.2 rounded-full font-bold ${
-              activeTab === 'groups' ? 'bg-white/20 text-white' : 'bg-purple-50 text-purple-700'
-            }`}>
-              {groups.length} مجموعة
-            </span>
-          </button>
-        </div>
-
-        {/* 2 Profile & Overview Buttons */}
-        <div className="grid grid-cols-2 gap-2 pt-0.5">
-          <button
-            type="button"
-            onClick={() => setActiveTab('profile-draft')}
-            className={`py-2 px-3 rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeTab === 'profile-draft'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs font-bold'
-                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            <span className="text-xs font-bold font-['Cairo']">تعديل ملفي وصورتي</span>
-            {pendingDraft && (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="توجد صورة جديدة" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('overview')}
-            className={`py-2 px-3 rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeTab === 'overview'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs font-bold'
-                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <GraduationCap className="w-3.5 h-3.5" />
-            <span className="text-xs font-bold font-['Cairo']">تخصصاتي وملفي</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Desktop Navigation Tabs */}
-      <div className="hidden sm:flex items-center gap-2 border-b border-[#CBD5E1] pb-2 overflow-x-auto">
-        {/* Tab 1: Trials */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('trials')}
-          className={`px-4 py-2.5 rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'trials'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <Clock3 className="w-4 h-4" />
-          <span>الحصص التجريبية (20 دقيقة)</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-            activeTab === 'trials' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-          }`}>
-            {trialSlots.length}
-          </span>
-        </button>
-
-        {/* Tab 2: Private (1:1) */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('private')}
-          className={`px-4 py-2.5 rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'private'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <DollarSign className="w-4 h-4" />
-          <span>الحصص الخاصة المدفوعة (1:1)</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-            activeTab === 'private' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-          }`}>
-            {privateSlots.length}
-          </span>
-        </button>
-
-        {/* Tab 3: Groups */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('groups')}
-          className={`px-4 py-2.5 rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'groups'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>المجموعات التعليمية</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-            activeTab === 'groups' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-          }`}>
-            {groups.length}
-          </span>
-        </button>
-
-        {/* Tab 4: Overview */}
+      {/* 2. Navigation Tabs (Responsive on 320px/390px mobile & desktop) */}
+      <div className="flex items-center gap-1.5 sm:gap-2 border-b border-[#CBD5E1] pb-2 overflow-x-auto">
         <button
           type="button"
           onClick={() => setActiveTab('overview')}
-          className={`px-4 py-2.5 rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'overview'
               ? 'bg-[#0D4E8B] text-white shadow-xs'
               : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
           }`}
         >
-          <GraduationCap className="w-4 h-4" />
-          <span>ملخص ملفي وتخصصاتي</span>
+          <GraduationCap className="w-4 h-4 shrink-0" />
+          <span>خطوات تجهيز الملف</span>
         </button>
 
-        {/* Tab 5: Profile Edit */}
         <button
           type="button"
           onClick={() => setActiveTab('profile-draft')}
-          className={`px-4 py-2.5 rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === 'profile-draft'
               ? 'bg-[#0D4E8B] text-white shadow-xs'
               : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
           }`}
         >
-          <Edit3 className="w-4 h-4" />
-          <span>تعديل ملفي وصورتي</span>
-          {pendingDraft && (
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title="توجد صورة جديدة" />
-          )}
+          <Edit3 className="w-4 h-4 shrink-0" />
+          <span>صورتي ونبذتي</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('pricing')}
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === 'pricing'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
+          }`}
+        >
+          <DollarSign className="w-4 h-4 shrink-0" />
+          <span>سعري ومدة الحصة</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('private')}
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === 'private'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
+          }`}
+        >
+          <CalendarCheck2 className="w-4 h-4 shrink-0" />
+          <span>الحصص الخاصة (1:1)</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+              activeTab === 'private' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            {validFuturePrivateSlots.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('trials')}
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === 'trials'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
+          }`}
+        >
+          <Clock3 className="w-4 h-4 shrink-0" />
+          <span>التجارب المجانية (20 د)</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+              activeTab === 'trials' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            {validFutureTrialSlots.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('groups')}
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === 'groups'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
+          }`}
+        >
+          <Users className="w-4 h-4 shrink-0" />
+          <span>المجموعات</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+              activeTab === 'groups' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            {validFutureGroups.length}
+          </span>
         </button>
       </div>
 
       {/* ========================================================================= */}
-      {/* SECTION 1: TRIAL SLOTS (مدة 20 دقيقة بالضبط) */}
+      {/* SECTION 0: FIRST PAGE — PROFILE READINESS STEPS & OVERVIEW */}
+      {/* ========================================================================= */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* 5 Setup Steps Checklist */}
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#F1F5F9] pb-3">
+              <div>
+                <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44]">
+                  خطوات تجهيز ملفك التدريسي
+                </h2>
+                <p className="text-xs text-[#64748B] mt-0.5">
+                  تأكد من اكتمال العناصر الخمسة التالية ليظهر ملفك بأفضل صورة لأولياء الأمور
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenParentPreview}
+                disabled={isLoadingPreview}
+                className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-[#0D4E8B] text-xs font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                <span>شوف ملفك زي ولي الأمر</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              {readinessSteps.map((step, index) => (
+                <div
+                  key={step.key}
+                  className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 ${
+                    step.completed
+                      ? 'bg-emerald-50/40 border-emerald-200'
+                      : 'bg-amber-50/40 border-amber-200'
+                  }`}
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold text-[#64748B]">
+                        الخطوة {index + 1}
+                      </span>
+                      {step.completed ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>مكتمل</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>يحتاج استكمال</span>
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44]">
+                      {step.title}
+                    </h3>
+                    <p className="text-xs text-[#64748B] leading-relaxed">{step.statusText}</p>
+                  </div>
+
+                  {step.key !== 'specializations' && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab(step.targetTab)}
+                      className="w-full py-2 min-h-[40px] rounded-xl bg-white hover:bg-slate-50 border border-[#CBD5E1] text-xs font-bold text-[#0D4E8B] transition-colors cursor-pointer"
+                    >
+                      {step.actionLabel}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs flex flex-col justify-between gap-3">
+              <div className="space-y-1">
+                <span className="text-xs text-[#64748B] font-bold block">سعري ومدة الحصة الفردية</span>
+                <div className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#0D4E8B]">
+                  {
+                    formatSessionPriceSummary({
+                      minPrice: tutor.hourlyRateMin,
+                      maxPrice: tutor.hourlyRateMax,
+                      currency: tutor.currency,
+                      durationMinutes: tutor.sessionDurationMinutes,
+                    }).combinedText
+                  }
+                </div>
+                <span className="text-[11px] text-[#64748B] block">
+                  للحصة الواحدة • يُحفظ ويُنشر مباشرةً في ملفك
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('pricing')}
+                className="px-3 py-2 min-h-[40px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-xs font-bold text-[#0D4E8B] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>تعديل السعر ومدة الحصة</span>
+              </button>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs flex flex-col justify-between gap-3">
+              <div className="space-y-1">
+                <span className="text-xs text-[#64748B] font-bold block">الخبرة التعليمية</span>
+                <div className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
+                  {formatTutorExperience(tutor.yearsOfExperience, tutor.experienceBadgeText) ||
+                    'معلم معتمد'}
+                </div>
+                <span className="text-[11px] text-[#64748B] block">
+                  تظهر موحّدة في بطاقة البحث والملف العام
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('profile-draft')}
+                className="px-3 py-2 min-h-[40px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-xs font-bold text-[#0D4E8B] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>تعديل صورتي ونبذتي</span>
+              </button>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs flex flex-col justify-between gap-3">
+              <div className="space-y-1">
+                <span className="text-xs text-[#64748B] font-bold block">
+                  المواعيد المستقبلية المتاحة
+                </span>
+                <div className="font-['Cairo'] text-lg font-extrabold text-[#0D4E8B]">
+                  {validFuturePrivateSlots.length} حصة خاصة • {validFutureTrialSlots.length} تجريبية
+                </div>
+                <span className="text-[11px] text-emerald-800 font-bold block">
+                  {validFutureGroups.length} مجموعة نشطة • {futurePrivateBookedCount} حصة خاصة محجوزة
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('private')}
+                  className="px-2.5 py-2 min-h-[40px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-xs font-bold text-[#0D4E8B] transition-colors cursor-pointer"
+                >
+                  إضافة موعد
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('groups');
+                    handleOpenNewGroupWizard();
+                  }}
+                  className="px-2.5 py-2 min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1F2A44] transition-colors cursor-pointer"
+                >
+                  إنشاء مجموعة
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Approved Specializations Card */}
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+              <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-[#0D4E8B]" />
+                <span>تخصصاتي المعتمدة في منصة شاطر ({specializations.length})</span>
+              </h3>
+              <span className="text-xs text-[#64748B]">
+                التخصصات المعتمدة في ملفك التي يمكنك فتح مواعيد ومجموعات لها
+              </span>
+            </div>
+
+            {specializations.length === 0 ? (
+              <p className="text-xs text-[#64748B]">لم يتم ربط تخصصات معتمدة بعد.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {specializations.map((spec) => (
+                  <div
+                    key={spec.id}
+                    className="p-3.5 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] flex items-center gap-3"
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-blue-50 text-[#0D4E8B] flex items-center justify-center shrink-0">
+                      <CheckCircle2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-xs sm:text-sm text-[#1F2A44]">{spec.label}</h4>
+                      <span className="text-[10px] text-[#64748B]">
+                        {spec.track === 'school' ? 'المسار المدرسي' : 'مسار القرآن والتأسيس'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 1: DIRECT PRICING & DURATION EDITOR («سعري ومدة الحصة») */}
+      {/* ========================================================================= */}
+      {activeTab === 'pricing' && (
+        <div className="space-y-6 animate-fade-in">
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-8 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F1F5F9] pb-4">
+              <div className="space-y-1">
+                <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44] flex items-center gap-2">
+                  <DollarSign className="w-5 h-5 text-[#0D4E8B]" />
+                  <span>سعري ومدة الحصة الفردية</span>
+                </h2>
+                <p className="text-xs text-[#64748B] leading-relaxed">
+                  عدّل سعر الحصة الواحدة وعملتك ومدة الحصة بالدقائق. يظهر السعر الجديد مباشرةً في ملفك المنشور، ويصبح هو السعر الافتراضي للمواعيد الخاصة الجديدة.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleOpenParentPreview}
+                disabled={isLoadingPreview}
+                className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer shrink-0"
+              >
+                <Eye className="w-4 h-4" />
+                <span>شوف ملفك زي ولي الأمر</span>
+              </button>
+            </div>
+
+            {/* Clarification Banner */}
+            <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs sm:text-sm flex items-start gap-3">
+              <Info className="w-5 h-5 text-[#0D4E8B] shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold block">
+                  توضيح تسعير الحصة الفردية (1:1):
+                </span>
+                <p className="leading-relaxed text-blue-800">
+                  السعر المحدد هنا هو <strong>سعر الحصة الواحدة بالمدة المختارة ({pricingDurationMinutes} دقيقة)</strong> وليس سعر باقة. تعديل السعر هنا لا يغيّر أسعار أو مدد المواعيد المضافة مسبقاً أو الحجوزات المؤكدة، كما يمكنك تخصيص سعر أي موعد خاص عند إضافته.
+                </p>
+              </div>
+            </div>
+
+            {pricingSaveError && (
+              <div
+                role="alert"
+                className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5"
+              >
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <span className="font-bold">{pricingSaveError}</span>
+              </div>
+            )}
+
+            {pricingSaveSuccess && (
+              <div
+                role="status"
+                className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5"
+              >
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <span className="font-bold">{pricingSaveSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProfilePricing} className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Single Session Price */}
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="tutor-pricing-session-price"
+                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
+                  >
+                    سعر الحصة الواحدة <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    id="tutor-pricing-session-price"
+                    type="number"
+                    min={20}
+                    max={100000}
+                    step={5}
+                    value={pricingSessionPrice}
+                    onChange={(e) => setPricingSessionPrice(Number(e.target.value))}
+                    required
+                    className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-sm font-bold focus:border-[#0D4E8B] outline-none"
+                  />
+                  <span className="text-[11px] text-[#64748B] block">
+                    المبلغ المطلوب للحصة الفردية الواحدة
+                  </span>
+                </div>
+
+                {/* Currency */}
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="tutor-pricing-currency"
+                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
+                  >
+                    العملة <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    id="tutor-pricing-currency"
+                    value={pricingCurrency}
+                    onChange={(e) => setPricingCurrency(e.target.value)}
+                    className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm font-bold focus:border-[#0D4E8B] outline-none bg-white"
+                  >
+                    {SUPPORTED_TUTOR_CURRENCIES.map((curr) => (
+                      <option key={curr.value} value={curr.value}>
+                        {curr.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[11px] text-[#64748B] block">
+                    تظهر بجانب السعر في ملفك العام
+                  </span>
+                </div>
+
+                {/* Session Duration Minutes */}
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="tutor-pricing-duration"
+                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
+                  >
+                    مدة الحصة بالدقائق <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    id="tutor-pricing-duration"
+                    value={pricingDurationMinutes}
+                    onChange={(e) => setPricingDurationMinutes(Number(e.target.value))}
+                    className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm font-bold focus:border-[#0D4E8B] outline-none bg-white"
+                  >
+                    <option value={30}>30 دقيقة</option>
+                    <option value={45}>45 دقيقة</option>
+                    <option value={50}>50 دقيقة (المعتادة)</option>
+                    <option value={60}>60 دقيقة (ساعة كاملة)</option>
+                    <option value={75}>75 دقيقة</option>
+                    <option value={90}>90 دقيقة (ساعة ونصف)</option>
+                    <option value={120}>120 دقيقة (ساعتان)</option>
+                  </select>
+                  <span className="text-[11px] text-[#64748B] block">
+                    مدة الحصة الواحدة المقابلة للسعر أعلاه
+                  </span>
+                </div>
+              </div>
+
+              {/* Live Display Preview */}
+              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[#64748B]">
+                  كيف سيظهر السعر لولي الأمر في ملفك:
+                </span>
+                <span className="font-['Cairo'] text-sm sm:text-base font-extrabold text-[#0D4E8B]">
+                  {
+                    formatSessionPriceSummary({
+                      minPrice: pricingSessionPrice,
+                      maxPrice: pricingSessionPrice,
+                      currency: pricingCurrency,
+                      durationMinutes: pricingDurationMinutes,
+                    }).combinedText
+                  }
+                </span>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSavingPricing}
+                  className="px-6 py-3 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  {isSavingPricing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>حفظ السعر ومدة الحصة ونشره</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 2: SELF-SERVICE AVATAR & PROFILE TEXTS («صورتي ونبذتي») */}
+      {/* ========================================================================= */}
+      {activeTab === 'profile-draft' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* PART A: SELF-SERVICE AVATAR — DIRECT UPLOAD & PUBLISH */}
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-8 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F1F5F9] pb-4">
+              <div>
+                <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44] flex items-center gap-2">
+                  <Camera className="w-5 h-5 text-[#0D4E8B]" />
+                  <span>الصورة الشخصية لملفك</span>
+                </h2>
+                <p className="text-xs text-[#64748B] mt-0.5">
+                  اختر صورة واضحة لوجهك بإضاءة جيدة، عاينها، ثم اضغط «حفظ الصورة ونشرها» لتظهر فوراً في ملفك العام.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleOpenParentPreview}
+                disabled={isLoadingPreview}
+                className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer shrink-0"
+              >
+                <Eye className="w-4 h-4" />
+                <span>شوف ملفك زي ولي الأمر</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* 1. Current Published Avatar */}
+              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3.5">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
+                  {tutor.avatarUrl ? (
+                    <img
+                      src={tutor.avatarUrl}
+                      alt={tutor.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <User className="w-8 h-8 text-slate-400" />
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] font-bold text-slate-500 block">
+                    الصورة الحالية المنشورة:
+                  </span>
+                  <span className="text-xs font-bold text-[#1F2A44] block">
+                    {tutor.avatarUrl
+                      ? 'تظهر حالياً لأولياء الأمور في ملفك'
+                      : 'لم تقم بنشر صورة شخصية بعد'}
+                  </span>
+                </div>
+              </div>
+
+              {/* 2. Select & Preview New Avatar */}
+              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3.5 relative">
+                <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
+                  {selectedAvatarPreviewUrl ? (
+                    <img
+                      src={selectedAvatarPreviewUrl}
+                      alt="معاينة الصورة المختارة"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <Camera className="w-7 h-7 text-slate-400" />
+                  )}
+
+                  {isSavingAvatar && (
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center text-white">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2 flex-1 min-w-0">
+                  <label
+                    htmlFor="tutor-self-avatar-input"
+                    className="px-3.5 py-2 min-h-[40px] rounded-xl border border-[#0D4E8B] bg-blue-50/70 hover:bg-blue-100/70 text-xs font-bold text-[#0D4E8B] transition-all cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <Camera className="w-4 h-4 shrink-0" />
+                    <span>{selectedAvatarFile ? 'تغيير الصورة المختارة' : 'اختيار صورة جديدة'}</span>
+                  </label>
+                  <input
+                    id="tutor-self-avatar-input"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleAvatarFileSelect}
+                    disabled={isSavingAvatar}
+                    className="sr-only"
+                  />
+                  <p className="text-[11px] text-[#64748B]">
+                    صيغ مدعومة: JPG أو PNG أو WebP بحد أقصى 2 ميجابايت.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {avatarSaveError && (
+              <div
+                role="alert"
+                className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2"
+              >
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span className="font-bold">{avatarSaveError}</span>
+              </div>
+            )}
+
+            {avatarSaveSuccess && (
+              <div
+                role="status"
+                className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-bold">{avatarSaveSuccess}</span>
+              </div>
+            )}
+
+            <div className="pt-1 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={handleSaveAndPublishAvatar}
+                disabled={isSavingAvatar || !selectedAvatarFile}
+                className="px-6 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+              >
+                {isSavingAvatar ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>جاري حفظ الصورة ونشرها...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>حفظ الصورة ونشرها</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* PART B: TEXTS FORM — IMMEDIATE UPDATE */}
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-8 shadow-xs space-y-6">
+            <div className="space-y-1 border-b border-[#F1F5F9] pb-4">
+              <h3 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44] flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-[#0D4E8B]" />
+                <span>النبذة ونصوص ملفك التعريفي</span>
+              </h3>
+              <p className="text-xs text-[#64748B] leading-relaxed">
+                عدّل الجملة القصيرة ونبذتك وكيف تساعد الطفل، وستُحفظ وتظهر في ملفك المنشور مباشرةً.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>ممنوع كتابة أرقام هاتف أو روابط أو حسابات تواصل داخل النصوص.</span>
+            </div>
+
+            {textSaveError && (
+              <div
+                role="alert"
+                className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5"
+              >
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <span className="font-bold">{textSaveError}</span>
+              </div>
+            )}
+
+            {textSaveSuccess && (
+              <div
+                role="status"
+                className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5"
+              >
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <span className="font-bold">{textSaveSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProfileText} className="space-y-5">
+              {/* 1. Short Headline ("جملة قصيرة عنك") */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <label
+                    htmlFor="tutor-profile-headline"
+                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
+                  >
+                    جملة قصيرة عنك <span className="text-rose-500">*</span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-mono font-bold ${
+                      draftHeadline.trim().length < 10 || draftHeadline.trim().length > 250
+                        ? 'text-amber-600'
+                        : 'text-emerald-700'
+                    }`}
+                  >
+                    {draftHeadline.trim().length} / 250 (من 10 إلى 250 حرفًا)
+                  </span>
+                </div>
+                <input
+                  id="tutor-profile-headline"
+                  type="text"
+                  value={draftHeadline}
+                  onChange={(e) => setDraftHeadline(e.target.value)}
+                  maxLength={250}
+                  placeholder="أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة"
+                  required
+                  className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                />
+                <p className="text-[11px] text-[#64748B]">
+                  اكتب بتساعد مين وفي إيه. مثال: أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة.
+                </p>
+              </div>
+
+              {/* 2. Help Child Quote ("إزاي بتساعد الطفل يفهم؟") */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <label
+                    htmlFor="tutor-profile-quote"
+                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
+                  >
+                    إزاي بتساعد الطفل يفهم؟{' '}
+                    <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-mono font-bold ${
+                      draftQuote.trim().length > 0 &&
+                      (draftQuote.trim().length < 5 || draftQuote.trim().length > 350)
+                        ? 'text-amber-600'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    {draftQuote.trim().length} / 350{' '}
+                    {draftQuote.trim().length > 0 ? '(من 5 إلى 350 حرفًا)' : ''}
+                  </span>
+                </div>
+                <textarea
+                  id="tutor-profile-quote"
+                  rows={2}
+                  value={draftQuote}
+                  onChange={(e) => setDraftQuote(e.target.value)}
+                  maxLength={350}
+                  placeholder="مثال: أبسّط الدرس بأمثلة عملية قريبة من الطفل وأتأكد إنه حل بنفسه قبل نهاية الحصة."
+                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                />
+              </div>
+
+              {/* 3. Summary ("اكتب نبذة عنك لولي الأمر") */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <label
+                    htmlFor="tutor-profile-summary"
+                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
+                  >
+                    اكتب نبذة عنك لولي الأمر{' '}
+                    <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-mono font-bold ${
+                      draftSummary.trim().length > 0 &&
+                      (draftSummary.trim().length < 20 || draftSummary.trim().length > 2500)
+                        ? 'text-amber-600'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    {draftSummary.trim().length} / 2500{' '}
+                    {draftSummary.trim().length > 0 ? '(من 20 إلى 2500 حرفًا)' : ''}
+                  </span>
+                </div>
+                <textarea
+                  id="tutor-profile-summary"
+                  rows={5}
+                  value={draftSummary}
+                  onChange={(e) => setDraftSummary(e.target.value)}
+                  maxLength={2500}
+                  placeholder="اكتب نبذة واضحة لولي الأمر تذكر فيها خبرتك وطريقتك..."
+                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                />
+                <p className="text-[11px] text-[#64748B]">
+                  اذكر خبرتك وطريقتك وإزاي بتتابع مع ولي الأمر.
+                </p>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end">
+                <button
+                  type="submit"
+                  disabled={isSavingProfileText}
+                  className="px-6 py-3 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+                >
+                  {isSavingProfileText ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>حفظ النبذة ونشرها</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 3: TRIAL SLOTS (مدة 20 دقيقة بالضبط + إضافة وتعديل وحذف) */}
       {/* ========================================================================= */}
       {activeTab === 'trials' && (
         <div className="space-y-6 animate-fade-in">
-          {/* Info Banner */}
           <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs sm:text-sm flex items-start gap-3">
             <Info className="w-5 h-5 text-[#0D4E8B] shrink-0 mt-0.5" />
             <div className="space-y-1">
               <span className="font-bold block">نظام الحصص التجريبية المجانية (20 دقيقة):</span>
               <p className="leading-relaxed text-blue-800">
-                الحصة التجريبية تمنح ولي الأمر والطالب انطباعاً واقعياً عن أسلوبك. مدتها محددة بالنظام بـ 20 دقيقة بالضبط، وتُحسب نهاية الحصة تلقائياً لمنع أي تعارض.
+                مدتها محددة بالنظام بـ 20 دقيقة بالضبط، ويُحسب وقت النهاية تلقائياً. يمكنك اختيار التوقيت (القاهرة أو الرياض أو دبي) وتعديل أو حذف أي موعد غير محجوز.
               </p>
             </div>
           </div>
 
           {/* Add Trial Slot Form */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-4">
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
             <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex items-center gap-2">
               <Plus className="w-5 h-5 text-[#0D4E8B]" />
               <span>إضافة موعد تجريبي متاح (مجاني - 20 دقيقة بالضبط)</span>
             </h3>
 
-            <form onSubmit={handleCreateTrialSlot} className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2">
+            <form
+              onSubmit={handleCreateTrialSlot}
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2"
+            >
               <div className="space-y-1">
-                <label className="text-xs font-bold text-[#1F2A44] block">التاريخ</label>
+                <label
+                  htmlFor="new-trial-date"
+                  className="text-xs font-bold text-[#1F2A44] block"
+                >
+                  التاريخ
+                </label>
                 <input
+                  id="new-trial-date"
                   type="date"
-                  min={new Date().toISOString().split('T')[0]}
+                  min={getTodayCalendarDateInTimezone(newTrialTimezone)}
                   value={newTrialDate}
                   onChange={(e) => setNewTrialDate(e.target.value)}
                   required
-                  className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                  className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-[#1F2A44] block">وقت البداية</label>
+                <label
+                  htmlFor="new-trial-start"
+                  className="text-xs font-bold text-[#1F2A44] block"
+                >
+                  وقت البداية
+                </label>
                 <input
+                  id="new-trial-start"
                   type="time"
                   value={newTrialStart}
                   onChange={(e) => handleTrialStartChange(e.target.value)}
                   required
-                  className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                  className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-[#1F2A44] block">وقت النهاية (20 دقيقة تلقائياً)</label>
+                <label
+                  htmlFor="new-trial-end"
+                  className="text-xs font-bold text-[#1F2A44] block"
+                >
+                  وقت النهاية (20 دقيقة تلقائياً)
+                </label>
                 <input
+                  id="new-trial-end"
                   type="time"
                   value={newTrialEnd}
-                  onChange={(e) => setNewTrialEnd(e.target.value)}
-                  required
-                  className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-slate-50 cursor-not-allowed"
+                  readOnly
+                  className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs bg-slate-50 text-slate-600 cursor-not-allowed outline-none"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="new-trial-timezone"
+                  className="text-xs font-bold text-[#1F2A44] block"
+                >
+                  المنطقة الزمنية
+                </label>
+                <select
+                  id="new-trial-timezone"
+                  value={newTrialTimezone}
+                  onChange={(e) => setNewTrialTimezone(e.target.value)}
+                  className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                >
+                  {SUPPORTED_TUTOR_TIMEZONES.map((tz) => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="space-y-1 flex flex-col justify-end">
                 <button
                   type="submit"
                   disabled={isAddingTrial}
-                  className="w-full h-10 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full h-11 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   {isAddingTrial ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1465,29 +2380,38 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           </div>
 
           {/* Trial Slots List */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-4">
-            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex items-center justify-between">
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
+            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex flex-wrap items-center justify-between gap-2">
               <span className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-[#0D4E8B]" />
-                <span>قائمة المواعيد التجريبية المسجلة ({trialSlots.length})</span>
+                <span>قائمة المواعيد التجريبية ({trialSlots.length})</span>
               </span>
               <span className="text-xs text-[#64748B] font-normal">
-                {trialSlots.filter((s) => s.isAvailable).length} متاح • {trialSlots.filter((s) => s.isBooked).length} محجوز
+                {validFutureTrialSlots.length} متاح مستقبلي •{' '}
+                {trialSlots.filter((s) => s.isBooked).length} محجوز
               </span>
             </h3>
 
             {trialSlots.length === 0 ? (
               <div className="p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-2xl space-y-2">
                 <Clock3 className="w-8 h-8 text-[#CBD5E1] mx-auto" />
-                <p className="text-xs font-bold text-[#64748B]">لم تقم بإضافة أي مواعيد تجريبية بعد.</p>
-                <p className="text-[11px] text-[#94A3B8]">
-                  أضف أوقات فراغك بالأعلى لتمكين أولياء الأمور من حجز حصص تجريبية معك.
+                <p className="text-xs font-bold text-[#64748B]">
+                  لم تقم بإضافة أي مواعيد تجريبية بعد.
                 </p>
               </div>
             ) : (
               <div className="divide-y divide-[#F1F5F9]">
                 {trialSlots.map((slot) => {
-                  const isPast = new Date(`${slot.slotDate}T${slot.startTime}`).getTime() < Date.now();
+                  const isFuture = isSlotInFuture(
+                    slot.slotDate,
+                    slot.startTime,
+                    slot.timezone || 'Africa/Cairo'
+                  );
+                  const isPast = !isFuture;
+                  const dateFormatted = formatSlotDateArabic(
+                    slot.slotDate,
+                    slot.timezone || 'Africa/Cairo'
+                  );
                   return (
                     <div
                       key={slot.id}
@@ -1498,7 +2422,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
                             slot.isBooked
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : slot.isAvailable && !isPast
+                              : slot.isAvailable && !isPast && !slot.adminSuspended
                               ? 'bg-blue-50 text-[#0D4E8B] border border-blue-200'
                               : 'bg-slate-100 text-slate-500'
                           }`}
@@ -1506,19 +2430,16 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           <Clock className="w-4 h-4" />
                         </div>
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-bold text-xs sm:text-sm text-[#1F2A44]">
-                              {new Date(slot.slotDate).toLocaleDateString('ar-EG', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                              })}
+                              {dateFormatted.fullLabel}
                             </span>
                             <span className="font-mono text-xs text-[#64748B]" dir="ltr">
                               {slot.startTime.substring(0, 5)} - {slot.endTime.substring(0, 5)}
                             </span>
-                            <span className="text-[10px] text-[#64748B]">({slot.timezone})</span>
+                            <span className="text-[10px] text-[#64748B]">
+                              ({getTimezoneArabicLabel(slot.timezone || 'Africa/Cairo')})
+                            </span>
                           </div>
 
                           <div className="flex items-center gap-2 mt-0.5">
@@ -1527,48 +2448,70 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                                 <Lock className="w-3 h-3 text-emerald-600" />
                                 <span>محجوز لطالب</span>
                               </span>
+                            ) : slot.adminSuspended ? (
+                              <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+                                موقوف إدارياً
+                              </span>
                             ) : slot.isAvailable && !isPast ? (
                               <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                                متاح للاختيار
+                                متاح للحجز (20 دقيقة)
                               </span>
                             ) : isPast ? (
                               <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
                                 انقضى وقته
                               </span>
-                            ) : slot.adminSuspended ? (
-                              <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
-                                موقوف إدارياً
-                              </span>
                             ) : (
                               <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
-                                مغلق إدارياً
+                                غير متاح
                               </span>
                             )}
                           </div>
                         </div>
                       </div>
 
-                      {/* Delete Action */}
+                      {/* Edit & Delete Actions (Protected if booked or adminSuspended) */}
                       {!slot.isBooked && slot.isAvailable && !isPast && !slot.adminSuspended ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTrialSlot(slot.id)}
-                          disabled={deletingTrialId === slot.id}
-                          className="px-3 py-1.5 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        >
-                          {deletingTrialId === slot.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <>
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>حذف الموعد</span>
-                            </>
-                          )}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingTrialSlot(slot);
+                              setEditTrialDate(slot.slotDate);
+                              const st = slot.startTime.substring(0, 5);
+                              setEditTrialStart(st);
+                              setEditTrialEnd(addMinutesToTimeStr(st, 20));
+                              setEditTrialTimezone(slot.timezone || 'Africa/Cairo');
+                            }}
+                            className="px-3 py-1.5 min-h-[38px] rounded-xl border border-blue-200 text-[#0D4E8B] hover:bg-blue-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>تعديل</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTrialSlot(slot.id)}
+                            disabled={deletingTrialId === slot.id}
+                            className="px-3 py-1.5 min-h-[38px] rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                          >
+                            {deletingTrialId === slot.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <>
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>حذف</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       ) : slot.isBooked ? (
                         <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>حصة مؤكدة مع طالب</span>
+                          <span>محمي (محجوز لطالب)</span>
+                        </span>
+                      ) : slot.adminSuspended ? (
+                        <span className="text-[11px] text-rose-700 font-bold bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-lg">
+                          محمي (موقوف إدارياً)
                         </span>
                       ) : null}
                     </div>
@@ -1581,52 +2524,65 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* SECTION 2: PAID PRIVATE SESSIONS (الحصص الخاصة المدفوعة 1:1) */}
+      {/* SECTION 4: PAID PRIVATE SESSIONS (الحصص الخاصة المدفوعة 1:1) */}
       {/* ========================================================================= */}
       {activeTab === 'private' && (
         <div className="space-y-6 animate-fade-in">
-          {/* Counters Banner (محسوبة من قاعدة البيانات) */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">المواعيد الخاصة المستقبلية المتاحة</span>
+              <span className="text-xs text-[#64748B] font-bold block">
+                المواعيد الخاصة المستقبلية المتاحة
+              </span>
               <div className="font-['Cairo'] text-2xl font-extrabold text-[#0D4E8B]">
-                {futurePrivateAvailableCount}
+                {validFuturePrivateSlots.length}
               </div>
-              <span className="text-[11px] text-[#64748B] block">متاح للحجز الفوري من أولياء الأمور</span>
+              <span className="text-[11px] text-[#64748B] block">
+                متاح للحجز الفوري من أولياء الأمور
+              </span>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">المواعيد المحجوزة المؤكدة</span>
+              <span className="text-xs text-[#64748B] font-bold block">
+                المواعيد المحجوزة المؤكدة
+              </span>
               <div className="font-['Cairo'] text-2xl font-extrabold text-emerald-600">
                 {futurePrivateBookedCount}
               </div>
-              <span className="text-[11px] text-[#64748B] block">محمية ولا يمكن حذفها</span>
+              <span className="text-[11px] text-[#64748B] block">محمية ولا يمكن تعديلها أو حذفها</span>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">التخصصات المعتمدة الجاهزة للتدريس</span>
-              <div className="font-['Cairo'] text-2xl font-extrabold text-[#1F2A44]">
-                {specializations.length}
+              <span className="text-xs text-[#64748B] font-bold block">
+                السعر الافتراضي للحصة الخاصة
+              </span>
+              <div className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
+                {tutor.hourlyRateMin} {tutor.currency} / {tutor.sessionDurationMinutes} دقيقة
               </div>
-              <span className="text-[11px] text-[#64748B] block">معتمدة رسمياً في ملفك التدريسي</span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('pricing')}
+                className="text-[11px] font-bold text-[#0D4E8B] hover:underline cursor-pointer"
+              >
+                تعديل السعر الافتراضي للملف ←
+              </button>
             </div>
           </div>
 
           {/* Add Private Slots Form */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-5">
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-5">
             <div className="border-b border-[#F1F5F9] pb-3">
               <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
                 <CalendarCheck2 className="w-5 h-5 text-[#0D4E8B]" />
                 <span>إضافة مواعيد الحصص الخاصة (فردية 1:1)</span>
               </h3>
               <p className="text-xs text-[#64748B] mt-0.5">
-                حدد التخصص من تخصصاتك المعتمدة، وسعر الحصة ومدتها، ثم أضف موعداً منفرداً أو تكراراً أسبوعياً مع معاينة المواعيد قبل الحفظ.
+                يُستخدم سعرك ومدة حصتك المحفوظان في ملفك كقيمة افتراضية، مع إمكانية تخصيص سعر أو مدة هذا الموعد، ويُحسب وقت النهاية تلقائياً.
               </p>
             </div>
 
             {specializations.length === 0 ? (
               <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
-                لا توجد تخصصات معتمدة مسجلة لملفك حالياً. يرجى مراجعة الإدارة لاعتماد تخصصات التدريس الخاصة بك.
+                لا توجد تخصصات معتمدة مسجلة لملفك حالياً.
               </div>
             ) : (
               <form onSubmit={handleSavePrivateSlots} className="space-y-4">
@@ -1634,10 +2590,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 <div className="space-y-2 p-4 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0]">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
-                      <label className="text-xs font-bold text-[#1F2A44] flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-[#1F2A44] flex items-center gap-1.5">
                         <BookOpen className="w-4 h-4 text-[#0D4E8B]" />
-                        <span>التخصصات المعتمدة المتاحة لهذا الموعد <span className="text-rose-500">*</span></span>
-                      </label>
+                        <span>
+                          التخصصات المعتمدة المتاحة لهذا الموعد{' '}
+                          <span className="text-rose-500">*</span>
+                        </span>
+                      </span>
                       <p className="text-[11px] text-[#64748B] mt-0.5">
                         يمكنك اختيار أكثر من تخصص بديل لنفس الحصة، وعند حجز أي مادة منها يُقفل الموعد كاملاً لمنع التعارض.
                       </p>
@@ -1666,18 +2625,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                     {specializations.map((spec) => {
                       const isChecked = selectedSpecIds.includes(spec.id);
+                      const checkboxId = `private-spec-checkbox-${spec.id}`;
                       return (
-                        <div
+                        <label
                           key={spec.id}
-                          onClick={() => {
-                            if (isChecked) {
-                              if (selectedSpecIds.length > 1) {
-                                setSelectedSpecIds(selectedSpecIds.filter((id) => id !== spec.id));
-                              }
-                            } else {
-                              setSelectedSpecIds([...selectedSpecIds, spec.id]);
-                            }
-                          }}
+                          htmlFor={checkboxId}
                           className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex items-start gap-2.5 ${
                             isChecked
                               ? 'bg-blue-50/70 border-[#0D4E8B] text-[#0D4E8B] shadow-xs'
@@ -1685,96 +2637,113 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           }`}
                         >
                           <input
+                            id={checkboxId}
                             type="checkbox"
                             checked={isChecked}
-                            onChange={() => {}} // handled by tile click
-                            className="w-4 h-4 rounded text-[#0D4E8B] focus:ring-[#0D4E8B] mt-0.5 shrink-0 pointer-events-none"
+                            onChange={() => {
+                              if (isChecked) {
+                                if (selectedSpecIds.length > 1) {
+                                  setSelectedSpecIds(selectedSpecIds.filter((id) => id !== spec.id));
+                                }
+                              } else {
+                                setSelectedSpecIds([...selectedSpecIds, spec.id]);
+                              }
+                            }}
+                            className="w-4 h-4 rounded text-[#0D4E8B] focus:ring-[#0D4E8B] mt-0.5 shrink-0"
                           />
                           <div className="space-y-0.5">
                             <span className="font-bold block leading-tight">{spec.label}</span>
-                            <span className={`text-[10px] inline-block px-1.5 py-0.2 rounded font-medium ${
-                              spec.track === 'school' ? 'bg-blue-100/70 text-[#0D4E8B]' : 'bg-emerald-100/70 text-emerald-800'
-                            }`}>
+                            <span
+                              className={`text-[10px] inline-block px-1.5 py-0.2 rounded font-medium ${
+                                spec.track === 'school'
+                                  ? 'bg-blue-100/70 text-[#0D4E8B]'
+                                  : 'bg-emerald-100/70 text-emerald-800'
+                              }`}
+                            >
                               {spec.track === 'school' ? 'المسار المدرسي' : 'قرآن وتأسيس'}
                             </span>
                           </div>
-                        </div>
+                        </label>
                       );
                     })}
                   </div>
-
-                  {selectedSpecIds.length > 1 && (
-                    <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-[11px] flex items-start gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-[#0D4E8B] shrink-0 mt-0.5" />
-                      <span className="leading-relaxed">
-                        تم تحديد {selectedSpecIds.length} تخصصات بديلة لنفس وقت الحصة (سعة الموعد طالب واحد فقط 1:1). السعر والمدة المحددان أدناه ينطبقان على جميع بدائل هذا الموعد؛ وإذا كان أحد التخصصات يتطلب سعراً أو مدة مختلفة، يُرجى إضافته كموعد مستقل بإعداداته الخاصة.
-                      </span>
-                    </div>
-                  )}
                 </div>
 
-                {/* 2. Duration & Price */}
+                {/* 2. Duration, Price & IANA Timezone */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">
+                    <label
+                      htmlFor="private-slot-duration"
+                      className="text-xs font-bold text-[#1F2A44] block"
+                    >
                       مدة الحصة (بالدقائق)
                     </label>
                     <select
+                      id="private-slot-duration"
                       value={privateDurationMinutes}
                       onChange={(e) => setPrivateDurationMinutes(Number(e.target.value))}
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                      className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
                     >
+                      <option value={30}>30 دقيقة</option>
                       <option value={45}>45 دقيقة</option>
                       <option value={50}>50 دقيقة (المعتادة)</option>
                       <option value={60}>60 دقيقة (ساعة كاملة)</option>
+                      <option value={75}>75 دقيقة</option>
                       <option value={90}>90 دقيقة (ساعة ونصف)</option>
+                      <option value={120}>120 دقيقة (ساعتان)</option>
                     </select>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">
-                      سعر الحصة الخاصة
+                    <label
+                      htmlFor="private-slot-price"
+                      className="text-xs font-bold text-[#1F2A44] block"
+                    >
+                      سعر الحصة الواحدة ({privateCurrency})
                     </label>
                     <div className="flex items-center gap-2">
                       <input
+                        id="private-slot-price"
                         type="number"
                         min={0}
-                        step={10}
+                        step={5}
                         value={privatePriceAmount}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setPrivatePriceAmount(val);
-                          if (context?.tutor?.id) storePrivatePrice(context.tutor.id, val);
-                        }}
+                        onChange={(e) => setPrivatePriceAmount(Number(e.target.value))}
                         required
-                        className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
+                        className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
                       />
-                      <span className="text-xs font-bold text-[#64748B] shrink-0">{privateCurrency}</span>
+                      <span className="text-xs font-bold text-[#64748B] shrink-0">
+                        {privateCurrency}
+                      </span>
                     </div>
-                    <p className="text-[10px] text-[#64748B]">
-                      سعر الحصة هنا مستقل عن الملف التعريفي ويُحفظ تلقائياً في جلستك لمواعيدك القادمة.
-                    </p>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">التوقيت المعتمد</label>
+                    <label
+                      htmlFor="private-slot-timezone"
+                      className="text-xs font-bold text-[#1F2A44] block"
+                    >
+                      المنطقة الزمنية
+                    </label>
                     <select
+                      id="private-slot-timezone"
                       value={privateTimezone}
                       onChange={(e) => setPrivateTimezone(e.target.value)}
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                      className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
                     >
-                      <option value="Africa/Cairo">بتوقيت القاهرة (مصر)</option>
-                      <option value="Asia/Riyadh">بتوقيت مكة المكرمة (السعودية)</option>
+                      {SUPPORTED_TUTOR_TIMEZONES.map((tz) => (
+                        <option key={tz.value} value={tz.value}>
+                          {tz.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
 
                 {/* Scheduling Mode Switcher */}
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#1F2A44] block">
-                    نمط الإضافة
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 h-10 max-w-sm">
+                  <span className="text-xs font-bold text-[#1F2A44] block">نمط الإضافة</span>
+                  <div className="grid grid-cols-2 gap-2 h-11 max-w-sm">
                     <button
                       type="button"
                       onClick={() => setPrivateSchedulingMode('single')}
@@ -1802,66 +2771,122 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
                 {/* 3. Scheduling Mode Specific Inputs */}
                 {privateSchedulingMode === 'single' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200">
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-[#1F2A44] block">تاريخ الموعد</label>
+                      <label
+                        htmlFor="private-single-date"
+                        className="text-xs font-bold text-[#1F2A44] block"
+                      >
+                        تاريخ الموعد
+                      </label>
                       <input
+                        id="private-single-date"
                         type="date"
-                        min={new Date().toISOString().split('T')[0]}
+                        min={getTodayCalendarDateInTimezone(privateTimezone)}
                         value={privateSingleDate}
                         onChange={(e) => setPrivateSingleDate(e.target.value)}
                         required
-                        className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                        className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-[#1F2A44] block">وقت البداية</label>
+                      <label
+                        htmlFor="private-single-start"
+                        className="text-xs font-bold text-[#1F2A44] block"
+                      >
+                        وقت البداية
+                      </label>
                       <input
+                        id="private-single-start"
                         type="time"
                         value={privateStartTime}
                         onChange={(e) => setPrivateStartTime(e.target.value)}
                         required
-                        className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                        className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="private-single-end"
+                        className="text-xs font-bold text-[#1F2A44] block"
+                      >
+                        وقت النهاية (تلقائياً)
+                      </label>
+                      <input
+                        id="private-single-end"
+                        type="time"
+                        value={addMinutesToTimeStr(privateStartTime, privateDurationMinutes)}
+                        readOnly
+                        className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs bg-slate-100 text-slate-600 cursor-not-allowed outline-none"
                       />
                     </div>
                   </div>
                 ) : (
                   <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-[#1F2A44] block">وقت البداية الموحد</label>
+                        <label
+                          htmlFor="private-repeat-start"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          وقت البداية الموحد
+                        </label>
                         <input
+                          id="private-repeat-start"
                           type="time"
                           value={privateStartTime}
                           onChange={(e) => setPrivateStartTime(e.target.value)}
                           required
-                          className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-[#1F2A44] block">تكرار أسبوعياً حتى تاريخ نهاية</label>
+                        <label
+                          htmlFor="private-repeat-end"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          وقت النهاية (تلقائياً)
+                        </label>
                         <input
+                          id="private-repeat-end"
+                          type="time"
+                          value={addMinutesToTimeStr(privateStartTime, privateDurationMinutes)}
+                          readOnly
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs bg-slate-100 text-slate-600 cursor-not-allowed outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="private-repeat-until"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          تكرار أسبوعياً حتى تاريخ نهاية
+                        </label>
+                        <input
+                          id="private-repeat-until"
                           type="date"
-                          min={new Date().toISOString().split('T')[0]}
+                          min={getTomorrowCalendarDateInTimezone(privateTimezone)}
                           value={privateRepeatUntilDate}
                           onChange={(e) => setPrivateRepeatUntilDate(e.target.value)}
                           required
-                          className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
                         />
                       </div>
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-[#1F2A44] block">أيام التكرار بالأسبوع:</label>
+                      <span className="text-xs font-bold text-[#1F2A44] block">
+                        أيام التكرار بالأسبوع:
+                      </span>
                       <div className="flex items-center gap-2 flex-wrap">
                         {[
+                          { day: 6, label: 'السبت' },
                           { day: 0, label: 'الأحد' },
                           { day: 1, label: 'الاثنين' },
                           { day: 2, label: 'الثلاثاء' },
                           { day: 3, label: 'الأربعاء' },
                           { day: 4, label: 'الخميس' },
                           { day: 5, label: 'الجمعة' },
-                          { day: 6, label: 'السبت' },
                         ].map((d) => {
                           const active = privateRepeatDays.includes(d.day);
                           return (
@@ -1877,7 +2902,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                                   setPrivateRepeatDays([...privateRepeatDays, d.day]);
                                 }
                               }}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                              className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-bold border transition-all cursor-pointer ${
                                 active
                                   ? 'bg-[#0D4E8B] text-white border-[#0D4E8B]'
                                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -1895,45 +2920,41 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 {/* 4. Preview Section before saving */}
                 {previewPrivateSlots.length > 0 && (
                   <div className="p-4 rounded-2xl bg-[#F0F6FD] border border-[#CBD5E1] space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-1">
                       <span className="font-bold text-xs text-[#0D4E8B] flex items-center gap-1.5">
                         <Eye className="w-4 h-4" />
                         <span>معاينة المواعيد قبل الحفظ ({previewPrivateSlots.length} موعد):</span>
                       </span>
                       <span className="text-[11px] text-[#64748B]">
-                        المدة: {privateDurationMinutes} دقيقة • السعر: {privatePriceAmount} {privateCurrency}
+                        المدة: {privateDurationMinutes} دقيقة • السعر: {privatePriceAmount}{' '}
+                        {privateCurrency}
                       </span>
                     </div>
 
                     <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-                      {previewPrivateSlots.map((p, idx) => (
-                        <div
-                          key={idx}
-                          className="p-2 rounded-xl bg-white border border-[#E2E8F0] flex items-center justify-between text-xs"
-                        >
-                          <span className="font-bold text-[#1F2A44]">
-                            {new Date(p.date).toLocaleDateString('ar-EG', {
-                              weekday: 'long',
-                              year: 'numeric',
-                              month: 'short',
-                              day: 'numeric',
-                            })}
-                          </span>
-                          <span className="font-mono text-slate-600" dir="ltr">
-                            {p.startTime} - {p.endTime}
-                          </span>
-                        </div>
-                      ))}
+                      {previewPrivateSlots.map((p, idx) => {
+                        const dateInfo = formatSlotDateArabic(p.date, privateTimezone);
+                        return (
+                          <div
+                            key={`${p.date}-${idx}`}
+                            className="p-2 rounded-xl bg-white border border-[#E2E8F0] flex items-center justify-between text-xs"
+                          >
+                            <span className="font-bold text-[#1F2A44]">{dateInfo.fullLabel}</span>
+                            <span className="font-mono text-slate-600" dir="ltr">
+                              {p.startTime} - {p.endTime}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
 
-                {/* Submit button */}
                 <div className="pt-2 flex justify-end">
                   <button
                     type="submit"
                     disabled={isSavingPrivateSlots || previewPrivateSlots.length === 0}
-                    className="px-6 py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="px-6 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     {isSavingPrivateSlots ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -1950,14 +2971,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           </div>
 
           {/* Private Slots List */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-4">
-            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex items-center justify-between">
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
+            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex flex-wrap items-center justify-between gap-2">
               <span className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-[#0D4E8B]" />
                 <span>قائمة المواعيد الخاصة (1:1) المسجلة ({privateSlots.length})</span>
               </span>
               <span className="text-xs text-[#64748B] font-normal">
-                المواعيد المحجوزة محمية وتظهر حالة الحجز فوراً
+                المواعيد المحجوزة أو الموقوفة إدارياً محمية ولا يمكن تعديلها أو حذفها
               </span>
             </h3>
 
@@ -1969,15 +2990,23 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             ) : privateSlots.length === 0 ? (
               <div className="p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-2xl space-y-2">
                 <CalendarCheck2 className="w-8 h-8 text-[#CBD5E1] mx-auto" />
-                <p className="text-xs font-bold text-[#64748B]">لم تقم بإضافة أي مواعيد خاصة مدفوعة بعد.</p>
-                <p className="text-[11px] text-[#94A3B8]">
-                  أضف مواعيدك الفردية المتاحة بالأعلى لتمكين أولياء الأمور من حجز حصص مدفوعة مستمرة معك.
+                <p className="text-xs font-bold text-[#64748B]">
+                  لم تقم بإضافة أي مواعيد خاصة مدفوعة بعد.
                 </p>
               </div>
             ) : (
               <div className="divide-y divide-[#F1F5F9]">
                 {privateSlots.map((slot) => {
-                  const isPast = new Date(`${slot.slotDate}T${slot.startTime}`).getTime() < Date.now();
+                  const isFuture = isSlotInFuture(
+                    slot.slotDate,
+                    slot.startTime,
+                    slot.timezone || 'Africa/Cairo'
+                  );
+                  const isPast = !isFuture;
+                  const dateFormatted = formatSlotDateArabic(
+                    slot.slotDate,
+                    slot.timezone || 'Africa/Cairo'
+                  );
                   return (
                     <div
                       key={slot.id}
@@ -1988,7 +3017,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
                             slot.isBooked
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : slot.isAvailable && !isPast
+                              : slot.isAvailable && !isPast && !slot.adminSuspended
                               ? 'bg-blue-50 text-[#0D4E8B] border border-blue-200'
                               : 'bg-slate-100 text-slate-500'
                           }`}
@@ -1998,18 +3027,16 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-bold text-xs sm:text-sm text-[#1F2A44]">
-                              {new Date(slot.slotDate).toLocaleDateString('ar-EG', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                              })}
+                              {dateFormatted.fullLabel}
                             </span>
                             <span className="font-mono text-xs text-[#64748B]" dir="ltr">
                               {slot.startTime.substring(0, 5)} - {slot.endTime.substring(0, 5)}
                             </span>
+                            <span className="text-[10px] text-[#64748B]">
+                              ({getTimezoneArabicLabel(slot.timezone || 'Africa/Cairo')})
+                            </span>
                             <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-[11px] text-[#0D4E8B] font-bold border border-blue-200">
-                              السعر المحفوظ: {slot.priceAmount} {slot.currency} ({slot.durationMinutes} دقيقة)
+                              {slot.priceAmount} {slot.currency} ({slot.durationMinutes} دقيقة)
                             </span>
                           </div>
 
@@ -2019,9 +3046,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
                           {slot.allowedSpecializations && slot.allowedSpecializations.length > 1 && (
                             <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                              <span className="text-[10px] font-bold text-slate-500">التخصصات البديلة المتاحة:</span>
+                              <span className="text-[10px] font-bold text-slate-500">
+                                التخصصات البديلة المتاحة:
+                              </span>
                               {slot.allowedSpecializations.map((spec: any, sIdx: number) => (
-                                <span key={sIdx} className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-medium">
+                                <span
+                                  key={sIdx}
+                                  className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-medium"
+                                >
                                   {spec.label || spec.name}
                                 </span>
                               ))}
@@ -2034,6 +3066,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                                 <Lock className="w-3 h-3 text-emerald-600" />
                                 <span>محجوز مؤكد لطالب</span>
                               </span>
+                            ) : slot.adminSuspended ? (
+                              <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+                                موقوف إدارياً
+                              </span>
                             ) : slot.isAvailable && !isPast ? (
                               <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
                                 متاح للاختيار
@@ -2042,27 +3078,16 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                               <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
                                 انقضى وقته
                               </span>
-                            ) : slot.adminSuspended ? (
-                              <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
-                                موقوف إدارياً
-                              </span>
                             ) : (
                               <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
-                                مغلق إدارياً
+                                مغلق
                               </span>
                             )}
                           </div>
-
-                          {slot.adminSuspended && slot.adminSuspensionNotes && (
-                            <p className="text-[11px] text-rose-700 bg-rose-50/70 border border-rose-100 rounded-lg px-2.5 py-1 mt-1">
-                              <span className="font-bold">سبب الإيقاف الإداري: </span>
-                              {slot.adminSuspensionNotes}
-                            </p>
-                          )}
                         </div>
                       </div>
 
-                      {/* Actions */}
+                      {/* Actions (Protected if booked or adminSuspended) */}
                       {!slot.isBooked && slot.isAvailable && !isPast && !slot.adminSuspended ? (
                         <div className="flex items-center gap-1.5">
                           <button
@@ -2070,10 +3095,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                             onClick={() => {
                               setEditingPrivateSlot(slot);
                               setEditSlotDate(slot.slotDate);
-                              setEditSlotStart(slot.startTime.substring(0, 5));
-                              setEditSlotEnd(slot.endTime.substring(0, 5));
+                              const st = slot.startTime.substring(0, 5);
+                              setEditSlotStart(st);
                               setEditSlotDuration(slot.durationMinutes);
+                              setEditSlotEnd(addMinutesToTimeStr(st, slot.durationMinutes));
                               setEditSlotPrice(slot.priceAmount);
+                              setEditSlotTimezone(slot.timezone || 'Africa/Cairo');
 
                               const slotAllowed = Array.isArray(slot.allowedSpecializations)
                                 ? slot.allowedSpecializations
@@ -2110,10 +3137,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                                     s.label === slot.specializationLabel
                                 );
                                 if (matchSpec) setEditSlotSpecIds([matchSpec.id]);
-                                else if (specializations.length > 0) setEditSlotSpecIds([specializations[0].id]);
+                                else if (specializations.length > 0)
+                                  setEditSlotSpecIds([specializations[0].id]);
                               }
                             }}
-                            className="px-2.5 py-1.5 rounded-xl border border-blue-200 text-[#0D4E8B] hover:bg-blue-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                            className="px-3 py-1.5 min-h-[38px] rounded-xl border border-blue-200 text-[#0D4E8B] hover:bg-blue-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                             <span>تعديل</span>
@@ -2123,7 +3151,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                             type="button"
                             onClick={() => handleDeletePrivateSlot(slot.id)}
                             disabled={deletingPrivateSlotId === slot.id}
-                            className="px-2.5 py-1.5 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            className="px-3 py-1.5 min-h-[38px] rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
                           >
                             {deletingPrivateSlotId === slot.id ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -2140,6 +3168,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                           <span>حصة خاصة مؤكدة</span>
                         </span>
+                      ) : slot.adminSuspended ? (
+                        <span className="text-[11px] text-rose-700 font-bold bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-lg">
+                          محمي (موقوف إدارياً)
+                        </span>
                       ) : null}
                     </div>
                   );
@@ -2151,288 +3183,593 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* SECTION 3: EDUCATIONAL GROUPS (المجموعات التعليمية) */}
+      {/* SECTION 5: EDUCATIONAL GROUPS (3-STEP WIZARD + FINANCIAL SUMMARY) */}
       {/* ========================================================================= */}
       {activeTab === 'groups' && (
         <div className="space-y-6 animate-fade-in">
           {/* Header Action */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
               <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
                 <Users className="w-5 h-5 text-[#0D4E8B]" />
                 <span>إدارة المجموعات التعليمية (Small Groups)</span>
               </h3>
               <p className="text-xs text-[#64748B] mt-0.5">
-                مجموعات طلابية ذات عدد مقاعد محدد وسعر اشتراك للطالب الواحد مع جدول أسبوعي واضح.
+                أنشئ أو عدّل مجموعتك في ٣ خطوات واضحة مع حساب تلقائي للجدول والملخص المالي، وتُنشر مباشرة في ملفك.
               </p>
             </div>
 
             <button
               type="button"
-              onClick={() => setShowAddGroupForm(!showAddGroupForm)}
-              className="px-4 py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+              onClick={() => {
+                if (showAddGroupForm) {
+                  setShowAddGroupForm(false);
+                  setEditingGroup(null);
+                } else {
+                  handleOpenNewGroupWizard();
+                }
+              }}
+              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
             >
               <Plus className="w-4 h-4" />
-              <span>{showAddGroupForm ? 'إخفاء نموذج الإضافة' : 'إنشاء مجموعة جديدة'}</span>
+              <span>{showAddGroupForm ? 'إخفاء نموذج المجموعة' : 'إنشاء مجموعة جديدة'}</span>
             </button>
           </div>
 
-          {/* Add Group Form */}
+          {/* 3-Step Group Form */}
           {showAddGroupForm && (
-            <div className="bg-white rounded-3xl border border-[#CBD5E1] p-6 shadow-sm space-y-4 animate-fade-in">
-              <h4 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex items-center gap-2">
-                <Plus className="w-4 h-4 text-[#0D4E8B]" />
-                <span>بيانات المجموعة التعليمية الجديدة</span>
-              </h4>
+            <div className="bg-white rounded-3xl border border-[#CBD5E1] p-5 sm:p-6 shadow-sm space-y-5 animate-fade-in">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F1F5F9] pb-4">
+                <h4 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[#0D4E8B]" />
+                  <span>
+                    {editingGroup
+                      ? `تعديل المجموعة: ${editingGroup.title}`
+                      : 'إنشاء مجموعة تعليمية جديدة (٣ خطوات)'}
+                  </span>
+                </h4>
 
-              <form onSubmit={handleCreateGroup} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">
-                      اسم المجموعة <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={groupTitle}
-                      onChange={(e) => setGroupTitle(e.target.value)}
-                      placeholder="مثال: مراجعة وشرح تأسيس الرياضيات - الصف الرابع"
-                      required
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">
-                      التخصص المعتمد <span className="text-rose-500">*</span>
-                    </label>
-                    <select
-                      value={groupSpecId}
-                      onChange={(e) => setGroupSpecId(e.target.value)}
-                      required
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none bg-white"
-                    >
-                      {specializations.map((spec) => (
-                        <option key={spec.id} value={spec.id}>
-                          {spec.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                {/* Step Selector Pills */}
+                <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setGroupWizardStep(1)}
+                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                      groupWizardStep === 1
+                        ? 'bg-[#0D4E8B] text-white shadow-xs'
+                        : 'text-[#64748B] hover:text-[#1F2A44]'
+                    }`}
+                  >
+                    أ. الاسم والتخصص
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGroupWizardStep(2)}
+                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                      groupWizardStep === 2
+                        ? 'bg-[#0D4E8B] text-white shadow-xs'
+                        : 'text-[#64748B] hover:text-[#1F2A44]'
+                    }`}
+                  >
+                    ب. العدد والتسعير
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGroupWizardStep(3)}
+                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                      groupWizardStep === 3
+                        ? 'bg-[#0D4E8B] text-white shadow-xs'
+                        : 'text-[#64748B] hover:text-[#1F2A44]'
+                    }`}
+                  >
+                    ج. الجدول واللقاءات
+                  </button>
                 </div>
+              </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#1F2A44] block">
-                    وصف مختصر للمجموعة وأهدافها
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={groupDescription}
-                    onChange={(e) => setGroupDescription(e.target.value)}
-                    placeholder="اكتب نبذة عن خطة الحصص وما سيتعلمه الطالب خلال البرنامج..."
-                    className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">الحد الأقصى للطلاب</label>
-                    <input
-                      type="number"
-                      min={2}
-                      max={20}
-                      value={groupMaxStudents}
-                      onChange={(e) => setGroupMaxStudents(Number(e.target.value))}
-                      required
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">سعر الاشتراك للطالب</label>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        min={0}
-                        step={20}
-                        value={groupPricePerStudent}
-                        onChange={(e) => setGroupPricePerStudent(Number(e.target.value))}
-                        required
-                        className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
-                      />
-                      <span className="text-xs font-bold text-[#64748B] shrink-0">{groupCurrency}</span>
+              <form onSubmit={handleCreateGroup} className="space-y-5">
+                {/* STEP A (1): الاسم والتخصص والوصف */}
+                {groupWizardStep === 1 && (
+                  <div className="space-y-4">
+                    <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-xs font-bold text-[#0D4E8B]">
+                      الخطوة أ: الاسم والتخصص والوصف
                     </div>
-                  </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">نوع التسعير</label>
-                    <select
-                      value={groupPriceType}
-                      onChange={(e) => setGroupPriceType(e.target.value as any)}
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none bg-white"
-                    >
-                      <option value="full_package">للباقة كاملة ({groupSessionsCount} حصص)</option>
-                      <option value="per_session">لكل حصة منفردة</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">مدة الحصة (بالدقائق)</label>
-                    <select
-                      value={groupSessionDuration}
-                      onChange={(e) => setGroupSessionDuration(Number(e.target.value))}
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
-                    >
-                      <option value={45}>45 دقيقة</option>
-                      <option value={60}>60 دقيقة (ساعة كاملة)</option>
-                      <option value={75}>75 دقيقة</option>
-                      <option value={90}>90 دقيقة</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">عدد الحصص المقررة</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={40}
-                      value={groupSessionsCount}
-                      onChange={(e) => setGroupSessionsCount(Number(e.target.value))}
-                      required
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">تاريخ البدء</label>
-                    <input
-                      type="date"
-                      min={new Date().toISOString().split('T')[0]}
-                      value={groupStartDate}
-                      onChange={(e) => setGroupStartDate(e.target.value)}
-                      required
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-[#1F2A44] block">وقت بدء اللقاءات</label>
-                    <input
-                      type="time"
-                      value={groupSessionStartTime}
-                      onChange={(e) => setGroupSessionStartTime(e.target.value)}
-                      required
-                      className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs font-mono focus:border-[#0D4E8B] outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-[#1F2A44] block">
-                    أيام اللقاءات الأسبوعية:
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { day: 6, label: 'السبت' },
-                      { day: 0, label: 'الأحد' },
-                      { day: 1, label: 'الاثنين' },
-                      { day: 2, label: 'الثلاثاء' },
-                      { day: 3, label: 'الأربعاء' },
-                      { day: 4, label: 'الخميس' },
-                      { day: 5, label: 'الجمعة' },
-                    ].map((d) => {
-                      const isSelected = groupWeeklyDays.includes(d.day);
-                      return (
-                        <button
-                          key={d.day}
-                          type="button"
-                          onClick={() => {
-                            if (isSelected) {
-                              setGroupWeeklyDays(groupWeeklyDays.filter((x) => x !== d.day));
-                            } else {
-                              setGroupWeeklyDays([...groupWeeklyDays, d.day]);
-                            }
-                          }}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
-                            isSelected
-                              ? 'bg-[#0D4E8B] text-white shadow-xs'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                          }`}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="group-title-input"
+                          className="text-xs font-bold text-[#1F2A44] block"
                         >
-                          {d.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                          اسم المجموعة <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          id="group-title-input"
+                          type="text"
+                          value={groupTitle}
+                          onChange={(e) => setGroupTitle(e.target.value)}
+                          placeholder="مثال: مراجعة وشرح تأسيس الرياضيات - الصف الرابع"
+                          required
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                        />
+                      </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#1F2A44] block">
-                    ملخص الجدول الأسبوعي (نص وصفي للعرض) <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={groupScheduleSummary}
-                    onChange={(e) => setGroupScheduleSummary(e.target.value)}
-                    placeholder="مثال: كل اثنين وأربعاء من ٦:٠٠ إلى ٧:٠٠ م"
-                    required
-                    className="w-full h-10 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
-                  />
-                </div>
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="group-spec-select"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          التخصص المعتمد <span className="text-rose-500">*</span>
+                        </label>
+                        <select
+                          id="group-spec-select"
+                          value={groupSpecId}
+                          onChange={(e) => setGroupSpecId(e.target.value)}
+                          required
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none bg-white"
+                        >
+                          {specializations.map((spec) => (
+                            <option key={spec.id} value={spec.id}>
+                              {spec.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
 
-                {/* Sessions Table Preview */}
-                {generatedGroupSessions.length > 0 && (
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
-                    <span className="text-xs font-bold text-[#1F2A44] block">
-                      معاينة جدول اللقاءات ({generatedGroupSessions.length} لقاء):
-                    </span>
-                    <div className="max-h-36 overflow-y-auto space-y-1 text-xs">
-                      {generatedGroupSessions.map((s) => (
-                        <div key={s.sessionNumber} className="flex items-center justify-between bg-white px-2.5 py-1 rounded-lg border border-slate-100">
-                          <span className="font-bold text-[#0D4E8B]">{s.title}</span>
-                          <span className="font-mono text-slate-600">{s.sessionDate}</span>
-                          <span className="text-slate-500">{s.startTime} - {s.endTime}</span>
-                        </div>
-                      ))}
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="group-description-textarea"
+                        className="text-xs font-bold text-[#1F2A44] block"
+                      >
+                        وصف مختصر للمجموعة وأهدافها
+                      </label>
+                      <textarea
+                        id="group-description-textarea"
+                        rows={3}
+                        value={groupDescription}
+                        onChange={(e) => setGroupDescription(e.target.value)}
+                        placeholder="اكتب نبذة عن خطة الحصص وما سيتعلمه الطالب خلال البرنامج..."
+                        className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setGroupWizardStep(2)}
+                        className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>التالي: العدد والتسعير</span>
+                        <ArrowLeft className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 )}
 
-                {/* Review Note */}
-                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-center gap-2">
-                  <Info className="w-4 h-4 text-[#0D4E8B] shrink-0" />
-                  <span>
-                    ملاحظة: سيتم نشر المجموعة التعليمية فوراً ومباشرة في ملفك التدريسي المعتمد وتكون متاحة لاشتراك الطلاب بمجرد الحفظ دون الحاجة لمراجعة إدارية مسبقة.
-                  </span>
-                </div>
+                {/* STEP B (2): عدد الطلاب والسعر والعملة ونوع التسعير + الملخص المالي */}
+                {groupWizardStep === 2 && (
+                  <div className="space-y-4">
+                    <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-xs font-bold text-[#0D4E8B]">
+                      الخطوة ب: عدد الطلاب والسعر والعملة ونوع التسعير
+                    </div>
 
-                <div className="pt-2 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowAddGroupForm(false);
-                      setEditingGroup(null);
-                    }}
-                    className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
-                  >
-                    إلغاء
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isCreatingGroup}
-                    className="px-6 py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    {isCreatingGroup ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="group-max-students-input"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          الحد الأقصى للطلاب (2–20)
+                        </label>
+                        <input
+                          id="group-max-students-input"
+                          type="number"
+                          min={2}
+                          max={20}
+                          value={groupMaxStudents}
+                          onChange={(e) => setGroupMaxStudents(Number(e.target.value))}
+                          required
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="group-price-input"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          سعر الاشتراك للطالب
+                        </label>
+                        <input
+                          id="group-price-input"
+                          type="number"
+                          min={0}
+                          step={10}
+                          value={groupPricePerStudent}
+                          onChange={(e) => setGroupPricePerStudent(Number(e.target.value))}
+                          required
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="group-currency-select"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          العملة
+                        </label>
+                        <select
+                          id="group-currency-select"
+                          value={groupCurrency}
+                          onChange={(e) => setGroupCurrency(e.target.value)}
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none bg-white"
+                        >
+                          {SUPPORTED_TUTOR_CURRENCIES.map((curr) => (
+                            <option key={curr.value} value={curr.value}>
+                              {curr.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="group-price-type-select"
+                          className="text-xs font-bold text-[#1F2A44] block"
+                        >
+                          نوع التسعير
+                        </label>
+                        <select
+                          id="group-price-type-select"
+                          value={groupPriceType}
+                          onChange={(e) =>
+                            setGroupPriceType(e.target.value as 'per_session' | 'full_package')
+                          }
+                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none bg-white"
+                        >
+                          <option value="full_package">
+                            للباقة كاملة ({groupSessionsCount} حصص)
+                          </option>
+                          <option value="per_session">لكل حصة منفردة</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Financial Summary Cards for Tutor */}
+                    <div className="p-4 rounded-2xl bg-[#F0F6FD] border border-blue-200 space-y-3">
+                      <span className="text-xs font-bold text-[#0D4E8B] block">
+                        ملخص الحساب المالي للمجموعة (بناءً على {groupSessionsCount} حصص و{' '}
+                        {groupMaxStudents} طلاب كحد أقصى):
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="p-3 rounded-xl bg-white border border-blue-100">
+                          <span className="text-[11px] text-[#64748B] block">
+                            إجمالي اشتراك الطالب
+                          </span>
+                          <span className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">
+                            {groupFinancials.totalStudentSubscription} {groupCurrency}
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-xl bg-white border border-blue-100">
+                          <span className="text-[11px] text-[#64748B] block">
+                            تكلفة الحصة للطالب
+                          </span>
+                          <span className="font-['Cairo'] text-base font-extrabold text-[#0D4E8B]">
+                            {groupFinancials.costPerSessionForStudent} {groupCurrency} / حصة
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-xl bg-white border border-emerald-200">
+                          <span className="text-[11px] text-emerald-800 font-bold block">
+                            إجمالي الاشتراكات عند اكتمال العدد
+                          </span>
+                          <span className="font-['Cairo'] text-base font-extrabold text-emerald-700">
+                            {groupFinancials.totalRevenueWhenFull} {groupCurrency}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setGroupWizardStep(1)}
+                        className="px-4 py-2.5 min-h-[44px] rounded-xl border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                        <span>السابق</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setGroupWizardStep(3)}
+                        className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>التالي: أيام اللقاءات والجدول</span>
+                        <ArrowLeft className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* STEP C (3): أيام اللقاءات ووقتها ومدتها وتاريخ البدء وعدد الحصص */}
+                {groupWizardStep === 3 && (
+                  <div className="space-y-4">
+                    <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-[#0D4E8B]">
+                      <span>
+                        الخطوة ج: أيام اللقاءات ووقتها ومدتها وتاريخ البدء وعدد الحصص
+                      </span>
+                      {editingGroup && !groupScheduleModifiedByTutor && (
+                        <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                          الجدول الفعلي الأصلي محفوظ كما هو
+                        </span>
+                      )}
+                    </div>
+
+                    {isLoadingGroupSessionsForEdit ? (
+                      <div className="p-6 text-center text-xs text-[#64748B] flex items-center justify-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>جاري تحميل جدول اللقاءات الفعلي للمجموعة...</span>
+                      </div>
                     ) : (
                       <>
-                        <Check className="w-4 h-4" />
-                        <span>{editingGroup ? 'حفظ ونشر التعديلات' : 'نشر المجموعة التعليمية'}</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="group-sessions-count-input"
+                              className="text-xs font-bold text-[#1F2A44] block"
+                            >
+                              عدد الحصص المقررة
+                            </label>
+                            <input
+                              id="group-sessions-count-input"
+                              type="number"
+                              min={1}
+                              max={48}
+                              value={groupSessionsCount}
+                              onChange={(e) => {
+                                setGroupScheduleModifiedByTutor(true);
+                                setGroupSessionsCount(Number(e.target.value));
+                              }}
+                              required
+                              className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="group-duration-select"
+                              className="text-xs font-bold text-[#1F2A44] block"
+                            >
+                              مدة الحصة (بالدقائق)
+                            </label>
+                            <select
+                              id="group-duration-select"
+                              value={groupSessionDuration}
+                              onChange={(e) => {
+                                setGroupScheduleModifiedByTutor(true);
+                                setGroupSessionDuration(Number(e.target.value));
+                              }}
+                              className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                            >
+                              <option value={30}>30 دقيقة</option>
+                              <option value={45}>45 دقيقة</option>
+                              <option value={60}>60 دقيقة (ساعة كاملة)</option>
+                              <option value={75}>75 دقيقة</option>
+                              <option value={90}>90 دقيقة</option>
+                              <option value={120}>120 دقيقة</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="group-start-date-input"
+                              className="text-xs font-bold text-[#1F2A44] block"
+                            >
+                              تاريخ البدء
+                            </label>
+                            <input
+                              id="group-start-date-input"
+                              type="date"
+                              min={getTodayCalendarDateInTimezone(groupTimezone)}
+                              value={groupStartDate}
+                              onChange={(e) => {
+                                setGroupScheduleModifiedByTutor(true);
+                                setGroupStartDate(e.target.value);
+                              }}
+                              required
+                              className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="group-start-time-input"
+                              className="text-xs font-bold text-[#1F2A44] block"
+                            >
+                              وقت بدء اللقاءات
+                            </label>
+                            <input
+                              id="group-start-time-input"
+                              type="time"
+                              value={groupSessionStartTime}
+                              onChange={(e) => {
+                                setGroupScheduleModifiedByTutor(true);
+                                setGroupSessionStartTime(e.target.value);
+                              }}
+                              required
+                              className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-mono focus:border-[#0D4E8B] outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="group-timezone-select"
+                              className="text-xs font-bold text-[#1F2A44] block"
+                            >
+                              المنطقة الزمنية
+                            </label>
+                            <select
+                              id="group-timezone-select"
+                              value={groupTimezone}
+                              onChange={(e) => {
+                                setGroupScheduleModifiedByTutor(true);
+                                setGroupTimezone(e.target.value);
+                              }}
+                              className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                            >
+                              {SUPPORTED_TUTOR_TIMEZONES.map((tz) => (
+                                <option key={tz.value} value={tz.value}>
+                                  {tz.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="text-xs font-bold text-[#1F2A44] block">
+                            أيام اللقاءات الأسبوعية:
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              { day: 6, label: 'السبت' },
+                              { day: 0, label: 'الأحد' },
+                              { day: 1, label: 'الاثنين' },
+                              { day: 2, label: 'الثلاثاء' },
+                              { day: 3, label: 'الأربعاء' },
+                              { day: 4, label: 'الخميس' },
+                              { day: 5, label: 'الجمعة' },
+                            ].map((d) => {
+                              const isSelected = groupWeeklyDays.includes(d.day);
+                              return (
+                                <button
+                                  key={d.day}
+                                  type="button"
+                                  onClick={() => {
+                                    setGroupScheduleModifiedByTutor(true);
+                                    if (isSelected) {
+                                      if (groupWeeklyDays.length > 1) {
+                                        setGroupWeeklyDays(
+                                          groupWeeklyDays.filter((x) => x !== d.day)
+                                        );
+                                      }
+                                    } else {
+                                      setGroupWeeklyDays([...groupWeeklyDays, d.day]);
+                                    }
+                                  }}
+                                  className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                                    isSelected
+                                      ? 'bg-[#0D4E8B] text-white shadow-xs'
+                                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {d.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label
+                            htmlFor="group-schedule-summary-input"
+                            className="text-xs font-bold text-[#1F2A44] block"
+                          >
+                            ملخص الجدول الأسبوعي (يتولد تلقائياً ويمكنك تعديله){' '}
+                            <span className="text-rose-500">*</span>
+                          </label>
+                          <input
+                            id="group-schedule-summary-input"
+                            type="text"
+                            value={groupScheduleSummary}
+                            onChange={(e) => setGroupScheduleSummary(e.target.value)}
+                            placeholder="مثال: كل اثنين وأربعاء من ٦:٠٠ م إلى ٧:٠٠ م (بتوقيت القاهرة)"
+                            required
+                            className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                          />
+                        </div>
+
+                        {/* Sessions Table Preview */}
+                        {generatedGroupSessions.length > 0 && (
+                          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                            <div className="flex items-center justify-between flex-wrap gap-1">
+                              <span className="text-xs font-bold text-[#1F2A44] block">
+                                جدول اللقاءات المحسوب ({generatedGroupSessions.length} لقاء):
+                              </span>
+                              <span className="text-[11px] text-[#64748B]">
+                                {getTimezoneArabicLabel(groupTimezone)}
+                              </span>
+                            </div>
+                            <div className="max-h-44 overflow-y-auto space-y-1 text-xs">
+                              {generatedGroupSessions.map((s) => {
+                                const dateInfo = formatSlotDateArabic(
+                                  s.sessionDate,
+                                  s.timezone || groupTimezone
+                                );
+                                return (
+                                  <div
+                                    key={s.sessionNumber}
+                                    className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-slate-100 gap-2"
+                                  >
+                                    <span className="font-bold text-[#0D4E8B]">{s.title}</span>
+                                    <span className="text-slate-700 font-medium">
+                                      {dateInfo.fullLabel} ({s.sessionDate})
+                                    </span>
+                                    <span className="font-mono text-slate-600" dir="ltr">
+                                      {s.startTime} - {s.endTime}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
-                  </button>
-                </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setGroupWizardStep(2)}
+                        className="px-4 py-2.5 min-h-[44px] rounded-xl border border-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                        <span>السابق: العدد والتسعير</span>
+                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAddGroupForm(false);
+                            setEditingGroup(null);
+                          }}
+                          className="px-4 py-2.5 min-h-[44px] rounded-xl border border-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                        >
+                          إلغاء
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isCreatingGroup || isLoadingGroupSessionsForEdit}
+                          className="px-6 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {isCreatingGroup ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Check className="w-4 h-4" />
+                              <span>
+                                {editingGroup ? 'حفظ ونشر التعديلات' : 'نشر المجموعة التعليمية'}
+                              </span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </form>
             </div>
           )}
@@ -2447,646 +3784,283 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             ) : groups.length === 0 ? (
               <div className="bg-white p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-3xl space-y-2">
                 <Users className="w-8 h-8 text-[#CBD5E1] mx-auto" />
-                <p className="text-xs font-bold text-[#64748B]">لم تقم بإنشاء أي مجموعات تعليمية بعد.</p>
-                <p className="text-[11px] text-[#94A3B8]">
-                  أنشئ مجموعتك الأولى بالأعلى لتقديم دورات تفاعلية مشتركة بعدد مقاعد محدد.
+                <p className="text-xs font-bold text-[#64748B]">
+                  لم تقم بإنشاء أي مجموعات تعليمية بعد.
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {groups.map((group) => (
-                  <div
-                    key={group.id}
-                    className="bg-white rounded-3xl border border-[#E2E8F0] p-5 shadow-xs flex flex-col justify-between gap-4"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                            group.adminSuspended
-                              ? 'bg-rose-50 text-rose-800 border border-rose-200'
-                              : group.reviewStatus === 'rejected'
-                              ? 'bg-rose-50 text-rose-800 border border-rose-200'
-                              : group.reviewStatus === 'needs_revision'
-                              ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                              : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                          }`}>
-                            {group.adminSuspended
-                              ? 'موقوفة إدارياً'
-                              : group.reviewStatus === 'rejected'
-                              ? 'مرفوضة إدارياً'
-                              : group.reviewStatus === 'needs_revision'
-                              ? 'ملاحظة إدارية للتعديل'
-                              : 'منشورة ومتاحة'}
-                          </span>
+                {groups.map((group) => {
+                  const fin = calculateGroupFinancialSummary({
+                    maxStudents: group.maxStudents,
+                    pricePerStudent: group.pricePerStudent,
+                    priceType: (group.priceType as 'per_session' | 'full_package') || 'full_package',
+                    sessionsCount: group.sessionsCount,
+                  });
+                  return (
+                    <div
+                      key={group.id}
+                      className="bg-white rounded-3xl border border-[#E2E8F0] p-5 shadow-xs flex flex-col justify-between gap-4"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                                group.adminSuspended
+                                  ? 'bg-rose-50 text-rose-800 border border-rose-200'
+                                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              }`}
+                            >
+                              {group.adminSuspended ? 'موقوفة إدارياً' : 'منشورة ومتاحة'}
+                            </span>
 
-                          <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                            group.status === 'open'
-                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                              : group.status === 'in_progress'
-                              ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                              : 'bg-slate-100 text-slate-700'
-                          }`}>
-                            {group.status === 'open'
-                              ? 'التسجيل مفتوح'
-                              : group.status === 'in_progress'
-                              ? 'بدأت بالفعل'
-                              : group.status === 'completed'
-                              ? 'مكتملة'
-                              : 'ملغاة'}
+                            <span
+                              className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                                group.status === 'open'
+                                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                  : group.status === 'in_progress'
+                                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {group.status === 'open'
+                                ? 'التسجيل مفتوح'
+                                : group.status === 'in_progress'
+                                ? 'بدأت بالفعل'
+                                : group.status === 'completed'
+                                ? 'مكتملة'
+                                : 'ملغاة'}
+                            </span>
+                          </div>
+
+                          <span className="text-xs font-bold text-[#0D4E8B] bg-slate-50 px-2.5 py-0.5 rounded-lg border border-slate-200">
+                            {group.pricePerStudent} {group.currency} /{' '}
+                            {group.priceType === 'per_session' ? 'للحصة' : 'للباقة'}
                           </span>
                         </div>
 
-                        <span className="text-xs font-bold text-[#0D4E8B] bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200">
-                          {group.pricePerStudent} {group.currency} / {group.priceType === 'per_session' ? 'للحصة' : 'للباقة'}
-                        </span>
-                      </div>
+                        <h4 className="font-['Cairo'] text-base font-bold text-[#1F2A44]">
+                          {group.title}
+                        </h4>
 
-                      <h4 className="font-['Cairo'] text-base font-bold text-[#1F2A44]">
-                        {group.title}
-                      </h4>
-
-                      <p className="text-xs text-[#0D4E8B] font-bold">
-                        {group.specializationLabel}
-                      </p>
-
-                      {group.description && (
-                        <p className="text-xs text-[#64748B] line-clamp-2 leading-relaxed">
-                          {group.description}
+                        <p className="text-xs text-[#0D4E8B] font-bold">
+                          {group.specializationLabel}
                         </p>
-                      )}
 
-                      {group.adminSuspended && (group.adminSuspensionReason || group.adminReviewNotes) ? (
-                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900">
-                          <span className="font-bold">سبب الإيقاف الإداري: </span>
-                          <span>{group.adminSuspensionReason || group.adminReviewNotes}</span>
-                        </div>
-                      ) : group.adminReviewNotes ? (
-                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                          <span className="font-bold">ملاحظات الإدارة: </span>
-                          <span>{group.adminReviewNotes}</span>
-                        </div>
-                      ) : null}
-
-                      <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span>المقاعد المتبقية:</span>
-                          <span className="font-bold text-[#1F2A44]">
-                            {group.remainingSeats !== undefined ? group.remainingSeats : Math.max(0, group.maxStudents - group.enrolledStudents)} مقاعد متبقية (المشغول: {group.enrolledStudents})
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span>الجدول الأسبوعي:</span>
-                          <span className="font-bold text-[#0D4E8B]">{group.weeklyScheduleSummary}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span>تاريخ البدء:</span>
-                          <span className="font-mono">{group.startDate} ({group.sessionsCount} حصص)</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Status Toggle Actions */}
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-[#64748B]">
-                        {group.adminSuspended
-                          ? 'موقوفة إدارياً من الإدارة'
-                          : group.isPublished
-                          ? 'معروضة بالملف العام'
-                          : 'غير معروضة حالياً'}
-                      </span>
-
-                      <div className="flex items-center gap-1.5">
-                        {group.enrolledStudents === 0 && !group.adminSuspended && group.status !== 'completed' && group.status !== 'cancelled' && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingGroup(group);
-                              setGroupTitle(group.title);
-                              setGroupDescription(group.description || '');
-                              setGroupMaxStudents(group.maxStudents);
-                              setGroupPricePerStudent(group.pricePerStudent);
-                              setGroupPriceType(group.priceType as any);
-                              setGroupSessionsCount(group.sessionsCount);
-                              setGroupSessionDuration(group.sessionDurationMinutes);
-                              setGroupStartDate(group.startDate);
-                              setGroupScheduleSummary(group.weeklyScheduleSummary);
-                              const matchSpec = specializations.find((s) => s.label === group.specializationLabel);
-                              if (matchSpec) setGroupSpecId(matchSpec.id);
-                              setShowAddGroupForm(true);
-                              window.scrollTo({ top: 400, behavior: 'smooth' });
-                            }}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all cursor-pointer flex items-center gap-1"
-                          >
-                            <Edit3 className="w-3 h-3" />
-                            <span>تعديل</span>
-                          </button>
+                        {group.description && (
+                          <p className="text-xs text-[#64748B] line-clamp-2 leading-relaxed">
+                            {group.description}
+                          </p>
                         )}
 
-                        {!group.adminSuspended && group.status === 'open' ? (
-                          <button
-                            type="button"
-                            disabled={updatingGroupId === group.id}
-                            onClick={() => handleUpdateGroupStatus(group.id, 'in_progress')}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all cursor-pointer"
-                          >
-                            بدء المجموعة
-                          </button>
-                        ) : !group.adminSuspended && group.status === 'in_progress' ? (
-                          <button
-                            type="button"
-                            disabled={updatingGroupId === group.id}
-                            onClick={() => handleUpdateGroupStatus(group.id, 'completed')}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all cursor-pointer"
-                          >
-                            إنهاء المجموعة
-                          </button>
-                        ) : null}
+                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span>المقاعد المتبقية:</span>
+                            <span className="font-bold text-[#1F2A44]">
+                              {group.remainingSeats !== undefined
+                                ? group.remainingSeats
+                                : Math.max(0, group.maxStudents - group.enrolledStudents)}{' '}
+                              مقاعد (المشغول: {group.enrolledStudents})
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>الجدول الأسبوعي:</span>
+                            <span className="font-bold text-[#0D4E8B]">
+                              {group.weeklyScheduleSummary}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>تاريخ البدء:</span>
+                            <span className="font-mono">
+                              {group.startDate} ({group.sessionsCount} حصص)
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between pt-1 border-t border-slate-200/70">
+                            <span>إجمالي اشتراك الطالب / عند الاكتمال:</span>
+                            <span className="font-bold text-emerald-700">
+                              {fin.totalStudentSubscription} {group.currency} • الإجمالي:{' '}
+                              {fin.totalRevenueWhenFull} {group.currency}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-[#64748B]">
+                          {group.adminSuspended
+                            ? 'موقوفة إدارياً من الإدارة'
+                            : group.isPublished
+                            ? 'معروضة بالملف العام'
+                            : 'غير معروضة حالياً'}
+                        </span>
+
+                        <div className="flex items-center gap-1.5">
+                          {group.enrolledStudents === 0 &&
+                            !group.adminSuspended &&
+                            group.status !== 'completed' &&
+                            group.status !== 'cancelled' && (
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditGroup(group)}
+                                className="px-3 py-1.5 min-h-[38px] rounded-lg text-xs font-bold border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all cursor-pointer flex items-center gap-1"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>تعديل</span>
+                              </button>
+                            )}
+
+                          {!group.adminSuspended && group.status === 'open' ? (
+                            <button
+                              type="button"
+                              disabled={updatingGroupId === group.id}
+                              onClick={() => handleUpdateGroupStatus(group.id, 'in_progress')}
+                              className="px-3 py-1.5 min-h-[38px] rounded-lg text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all cursor-pointer"
+                            >
+                              بدء المجموعة
+                            </button>
+                          ) : !group.adminSuspended && group.status === 'in_progress' ? (
+                            <button
+                              type="button"
+                              disabled={updatingGroupId === group.id}
+                              onClick={() => handleUpdateGroupStatus(group.id, 'completed')}
+                              className="px-3 py-1.5 min-h-[38px] rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all cursor-pointer"
+                            >
+                              إنهاء المجموعة
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* SECTION 4: PROFILE OVERVIEW & APPROVED SPECIALIZATIONS */}
-      {/* ========================================================================= */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6 animate-fade-in">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">سعر الحصة المعتمد</span>
-              <div className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#0D4E8B]">
-                {
-                  formatSessionPriceSummary({
-                    minPrice: tutor.hourlyRateMin,
-                    maxPrice: tutor.hourlyRateMax,
-                    currency: tutor.currency,
-                    durationMinutes: tutor.sessionDurationMinutes,
-                  }).combinedText
-                }
+      {/* Edit Trial Slot Modal (Strictly 20 Minutes) */}
+      {editingTrialSlot && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+          dir="rtl"
+        >
+          <form
+            onSubmit={handleUpdateTrialSlot}
+            className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-xl"
+          >
+            <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
+              <Edit3 className="w-5 h-5 text-[#0D4E8B]" />
+              <span>تعديل الموعد التجريبي (٢٠ دقيقة)</span>
+            </h3>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label
+                  htmlFor="edit-trial-date-input"
+                  className="font-bold text-slate-700 block mb-1"
+                >
+                  التاريخ *
+                </label>
+                <input
+                  id="edit-trial-date-input"
+                  type="date"
+                  min={getTodayCalendarDateInTimezone(editTrialTimezone)}
+                  value={editTrialDate}
+                  onChange={(e) => setEditTrialDate(e.target.value)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
+                  required
+                />
               </div>
-              <span className="text-[11px] text-[#64748B] block mt-1">
-                تعديل السعر يتطلب مراجعة وموافقة الإدارة.
-              </span>
-            </div>
 
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">الخبرة التعليمية</span>
-              <div className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
-                {formatTutorExperience(tutor.yearsOfExperience, tutor.experienceBadgeText)}
-              </div>
-              <span className="text-[11px] text-[#64748B] block mt-1">
-                تظهر موحّدة في بطاقة البحث والملف العام
-              </span>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">المواعيد التجريبية المسجلة</span>
-              <div className="font-['Cairo'] text-lg font-extrabold text-[#0D4E8B]">
-                {trialSlots.filter((s) => s.isAvailable).length} موعد متاح
-              </div>
-              <span className="text-[11px] text-emerald-800 font-bold block mt-1">
-                {trialSlots.filter((s) => s.isBooked).length} موعد محجوز لطالب
-              </span>
-            </div>
-          </div>
-
-          {/* Approved Specializations Card */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-[#0D4E8B]" />
-                <span>تخصصاتي المعتمدة في منصة شاطر ({specializations.length})</span>
-              </h3>
-              <span className="text-xs text-[#64748B]">
-                التخصصات المعتمدة من الإدارة التي يمكنك فتح مواعيد لها
-              </span>
-            </div>
-
-            {specializations.length === 0 ? (
-              <p className="text-xs text-[#64748B]">لم يتم ربط تخصصات معتمدة بعد.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {specializations.map((spec) => (
-                  <div
-                    key={spec.id}
-                    className="p-3.5 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] flex items-center gap-3"
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="edit-trial-start-input"
+                    className="font-bold text-slate-700 block mb-1"
                   >
-                    <div className="w-8 h-8 rounded-xl bg-blue-50 text-[#0D4E8B] flex items-center justify-center shrink-0">
-                      <CheckCircle2 className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-xs sm:text-sm text-[#1F2A44]">{spec.label}</h4>
-                      <span className="text-[10px] text-[#64748B]">
-                        {spec.track === 'school' ? 'المسار المدرسي' : 'مسار القرآن والتأسيس'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Details Card */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 shadow-xs space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
-                <GraduationCap className="w-5 h-5 text-[#0D4E8B]" />
-                <span>بيانات ملفك الحالية</span>
-              </h3>
-              <button
-                type="button"
-                onClick={handleOpenParentPreview}
-                disabled={isLoadingPreview}
-                className="px-3 py-1.5 rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-[#0D4E8B] text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>شوف ملفك زي ولي الأمر</span>
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs sm:text-sm">
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                <span className="font-bold text-[#1F2A44] block">جملة قصيرة عنك:</span>
-                <p className="text-slate-700 leading-relaxed">{tutor.headline || 'لم يحدد'}</p>
-              </div>
-
-              {tutor.helpChildQuote && (
-                <div className="p-4 rounded-2xl bg-[#F0F6FD] border border-[#CBD5E1] space-y-1">
-                  <span className="font-bold text-[#0D4E8B] block">إزاي بتساعد الطفل يفهم؟:</span>
-                  <p className="text-[#1F2A44] italic leading-relaxed">"{tutor.helpChildQuote}"</p>
+                    وقت البداية *
+                  </label>
+                  <input
+                    id="edit-trial-start-input"
+                    type="time"
+                    value={editTrialStart}
+                    onChange={(e) => handleEditTrialStartChange(e.target.value)}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
+                    required
+                  />
                 </div>
-              )}
-
-              {tutor.helpChildSummary && (
-                <div className="p-4 rounded-2xl bg-white border border-[#E2E8F0] space-y-1">
-                  <span className="font-bold text-[#1F2A44] block">نبذة عنك لولي الأمر:</span>
-                  <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{tutor.helpChildSummary}</p>
+                <div>
+                  <label
+                    htmlFor="edit-trial-end-input"
+                    className="font-bold text-slate-700 block mb-1"
+                  >
+                    وقت النهاية (٢٠ د تلقائياً)
+                  </label>
+                  <input
+                    id="edit-trial-end-input"
+                    type="time"
+                    value={editTrialEnd}
+                    readOnly
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono bg-slate-100 text-slate-600 cursor-not-allowed outline-none"
+                  />
                 </div>
-              )}
-            </div>
-
-            <div className="pt-2 flex items-center justify-between border-t border-[#F1F5F9] text-xs text-[#64748B]">
-              <span>ترغب في تعديل نصوص ملفك أو تغيير صورتك الشخصية؟</span>
-              <button
-                type="button"
-                onClick={() => setActiveTab('profile-draft')}
-                className="font-bold text-[#0D4E8B] hover:underline cursor-pointer flex items-center gap-1"
-              >
-                <span>تعديل ملفي وصورتي</span>
-                <ArrowRight className="w-3.5 h-3.5 rotate-180" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* SECTION 5: PROFILE TEXTS (IMMEDIATE UPDATE) & AVATAR (SEPARATE REVIEW) */}
-      {/* ========================================================================= */}
-      {activeTab === 'profile-draft' && (
-        <div className="space-y-6 animate-fade-in">
-          {/* PART A: TEXTS FORM — IMMEDIATE UPDATE (NO REVIEW WORDING) */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 sm:p-8 shadow-xs space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F1F5F9] pb-4">
-              <div className="space-y-1">
-                <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
-                  <Edit3 className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>تعديل نصوص ملفك التعريفي</span>
-                </h3>
-                <p className="text-xs text-[#64748B] leading-relaxed">
-                  عدّل الجملة القصيرة ونبذتك التعريفية وسيتم حفظها وتحديثها في ملفك فوراً.
-                </p>
               </div>
 
+              <div>
+                <label
+                  htmlFor="edit-trial-timezone-select"
+                  className="font-bold text-slate-700 block mb-1"
+                >
+                  المنطقة الزمنية
+                </label>
+                <select
+                  id="edit-trial-timezone-select"
+                  value={editTrialTimezone}
+                  onChange={(e) => setEditTrialTimezone(e.target.value)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-200 font-bold focus:border-[#0D4E8B] focus:outline-none bg-white"
+                >
+                  {SUPPORTED_TUTOR_TIMEZONES.map((tz) => (
+                    <option key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
               <button
                 type="button"
-                onClick={handleOpenParentPreview}
-                disabled={isLoadingPreview}
-                className="px-3.5 py-2 rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer shrink-0"
+                onClick={() => setEditingTrialSlot(null)}
+                className="px-4 py-2 min-h-[40px] rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                {isLoadingPreview ? (
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                disabled={isUpdatingTrialSlot}
+                className="px-5 py-2 min-h-[40px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                {isUpdatingTrialSlot ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Eye className="w-3.5 h-3.5" />
-                )}
-                <span>شوف ملفك زي ولي الأمر</span>
-              </button>
-            </div>
-
-            {/* General Notice Banner */}
-            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>ممنوع كتابة أرقام هاتف أو روابط أو حسابات تواصل.</span>
-            </div>
-
-            {textSaveError && (
-              <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5">
-                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                <span className="font-bold">{textSaveError}</span>
-              </div>
-            )}
-
-            {textSaveSuccess && (
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                <span className="font-bold">{textSaveSuccess}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveProfileText} className="space-y-5">
-              {/* 1. Short Headline ("جملة قصيرة عنك") */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] block">
-                    جملة قصيرة عنك <span className="text-rose-500">*</span>
-                  </label>
-                  <span
-                    className={`text-[11px] font-mono font-bold ${
-                      draftHeadline.trim().length < 10 || draftHeadline.trim().length > 250
-                        ? 'text-amber-600'
-                        : 'text-emerald-700'
-                    }`}
-                  >
-                    {draftHeadline.trim().length} / 250 (من 10 إلى 250 حرفًا)
-                  </span>
-                </div>
-                <input
-                  type="text"
-                  value={draftHeadline}
-                  onChange={(e) => setDraftHeadline(e.target.value)}
-                  maxLength={250}
-                  placeholder="أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة"
-                  required
-                  className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
-                />
-                <p className="text-[11px] text-[#64748B]">
-                  اكتب بتساعد مين وفي إيه. مثال: أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة.
-                </p>
-              </div>
-
-              {/* 2. Help Child Quote ("إزاي بتساعد الطفل يفهم؟") */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] block">
-                    إزاي بتساعد الطفل يفهم؟ <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
-                  </label>
-                  <span
-                    className={`text-[11px] font-mono font-bold ${
-                      draftQuote.trim().length > 0 &&
-                      (draftQuote.trim().length < 5 || draftQuote.trim().length > 350)
-                        ? 'text-amber-600'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    {draftQuote.trim().length} / 350 {draftQuote.trim().length > 0 ? '(من 5 إلى 350 حرفًا)' : ''}
-                  </span>
-                </div>
-                <textarea
-                  rows={2}
-                  value={draftQuote}
-                  onChange={(e) => setDraftQuote(e.target.value)}
-                  maxLength={350}
-                  placeholder="مثال: أبسّط الدرس بأمثلة عملية قريبة من الطفل وأتأكد إنه حل بنفسه قبل نهاية الحصة."
-                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
-                />
-              </div>
-
-              {/* 3. Summary ("اكتب نبذة عنك لولي الأمر") */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs sm:text-sm font-bold text-[#1F2A44] block">
-                    اكتب نبذة عنك لولي الأمر <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
-                  </label>
-                  <span
-                    className={`text-[11px] font-mono font-bold ${
-                      draftSummary.trim().length > 0 &&
-                      (draftSummary.trim().length < 20 || draftSummary.trim().length > 2500)
-                        ? 'text-amber-600'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    {draftSummary.trim().length} / 2500 {draftSummary.trim().length > 0 ? '(من 20 إلى 2500 حرفًا)' : ''}
-                  </span>
-                </div>
-                <textarea
-                  rows={5}
-                  value={draftSummary}
-                  onChange={(e) => setDraftSummary(e.target.value)}
-                  maxLength={2500}
-                  placeholder="اكتب نبذة واضحة لولي الأمر..."
-                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
-                />
-                <p className="text-[11px] text-[#64748B]">
-                  اذكر خبرتك وطريقتك وإزاي بتتابع مع ولي الأمر.
-                </p>
-              </div>
-
-              <div className="pt-2 flex items-center justify-end">
-                <button
-                  type="submit"
-                  disabled={isSavingProfileText}
-                  className="px-6 py-3 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
-                >
-                  {isSavingProfileText ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>حفظ التعديلات</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* PART B: AVATAR FORM — SEPARATE ADMIN REVIEW */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 sm:p-8 shadow-xs space-y-5">
-            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-[#F1F5F9] pb-4">
-              <div>
-                <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
-                  <Camera className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>الصورة الشخصية لملفك</span>
-                </h3>
-                <p className="text-xs text-[#64748B] mt-0.5">
-                  استخدم صورة واضحة لوجهك بإضاءة جيدة وخلفية بسيطة.
-                </p>
-              </div>
-
-              {pendingDraft && (pendingDraft.status === 'pending_review' || pendingDraft.status === 'needs_revision') && (
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${
-                    pendingDraft.status === 'pending_review'
-                      ? 'bg-blue-50 text-[#0D4E8B] border border-blue-200'
-                      : 'bg-amber-50 text-amber-900 border border-amber-200'
-                  }`}
-                >
-                  <Clock3 className="w-3.5 h-3.5" />
-                  <span>
-                    حالة الصورة الجديدة:{' '}
-                    {pendingDraft.status === 'pending_review' ? 'قيد المراجعة' : 'مطلوب تعديل'}
-                  </span>
-                </span>
-              )}
-            </div>
-
-            {/* Status & Admin Reason for New Avatar */}
-            {pendingDraft && (pendingDraft.status === 'pending_review' || pendingDraft.status === 'needs_revision' || pendingDraft.status === 'rejected') && (
-              <div
-                className={`p-4 rounded-2xl border text-xs sm:text-sm space-y-2 ${
-                  pendingDraft.status === 'pending_review'
-                    ? 'bg-blue-50 border-blue-200 text-[#0D4E8B]'
-                    : pendingDraft.status === 'needs_revision'
-                    ? 'bg-amber-50 border-amber-200 text-amber-900'
-                    : 'bg-rose-50 border-rose-200 text-rose-900'
-                }`}
-              >
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <span className="font-bold flex items-center gap-1.5">
-                    <Clock3 className="w-4 h-4" />
-                    <span>
-                      حالة الصورة الجديدة:{' '}
-                      {pendingDraft.status === 'pending_review'
-                        ? 'قيد المراجعة'
-                        : pendingDraft.status === 'needs_revision'
-                        ? 'مطلوب تعديل'
-                        : 'مرفوضة'}
-                    </span>
-                  </span>
-                  {pendingDraft.submittedAt && (
-                    <span className="text-[11px] text-[#64748B]">
-                      تاريخ الإرسال: {new Date(pendingDraft.submittedAt).toLocaleDateString('ar-EG')}
-                    </span>
-                  )}
-                </div>
-
-                {pendingDraft.adminNotes && (
-                  <div className="p-3 rounded-xl bg-white/80 border border-inherit text-xs">
-                    <span className="font-bold block mb-0.5">سبب الإدارة / الملاحظات:</span>
-                    <p>{pendingDraft.adminNotes}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Side-by-side: Current vs New Avatar */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* 1. Current Avatar */}
-              <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3">
-                <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
-                  {tutor.avatarUrl ? (
-                    <img src={tutor.avatarUrl} alt={tutor.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <User className="w-8 h-8 text-slate-400" />
-                  )}
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-500 block">الصورة الحالية:</span>
-                  <span className="text-xs font-bold text-[#1F2A44] block">
-                    {tutor.avatarUrl ? 'الصورة المعتمدة حالياً في ملفك' : 'لا توجد صورة حالية'}
-                  </span>
-                </div>
-              </div>
-
-              {/* 2. New Avatar Upload */}
-              <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3 relative">
-                <div className="relative w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
-                  {draftAvatarPreview ? (
-                    <img src={draftAvatarPreview} alt="صورة جديدة" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-400">
-                      <Camera className="w-7 h-7" />
-                    </div>
-                  )}
-
-                  {isUploadingAvatar && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center text-white">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-1.5 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-bold text-[#0D4E8B] block">الصورة الجديدة:</span>
-                    {pendingDraft?.status === 'pending_review' && (
-                      <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-blue-100 text-[#0D4E8B]">
-                        قيد المراجعة
-                      </span>
-                    )}
-                    {pendingDraft?.status === 'needs_revision' && (
-                      <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-amber-100 text-amber-900">
-                        مطلوب تعديل
-                      </span>
-                    )}
-                  </div>
-                  <label className="px-3 py-1.5 rounded-xl border border-[#0D4E8B] bg-blue-50/70 hover:bg-blue-100/70 text-xs font-bold text-[#0D4E8B] transition-all cursor-pointer inline-flex items-center gap-1.5">
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>{isUploadingAvatar ? 'جاري الرفع...' : 'اختيار صورة جديدة'}</span>
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={handleAvatarFileChange}
-                      disabled={isUploadingAvatar || pendingDraft?.status === 'pending_review'}
-                      className="hidden"
-                    />
-                  </label>
-                  <p className="text-[10px] text-[#64748B]">
-                    صيغ مدعومة: JPG أو PNG أو WebP بحد أقصى 2 ميجابايت.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {avatarUploadError && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span className="font-bold">{avatarUploadError}</span>
-              </div>
-            )}
-
-            {avatarUploadSuccess && (
-              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span className="font-bold">{avatarUploadSuccess}</span>
-              </div>
-            )}
-
-            <div className="pt-1 flex items-center justify-end">
-              <button
-                type="button"
-                onClick={handleSubmitAvatarDraft}
-                disabled={
-                  isSubmittingDraft ||
-                  isUploadingAvatar ||
-                  !draftAvatarPath ||
-                  pendingDraft?.status === 'pending_review'
-                }
-                className="px-6 py-2.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
-              >
-                {isSubmittingDraft ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>إرسال الصورة للمراجعة</span>
-                  </>
+                  <span>حفظ التعديل</span>
                 )}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 
       {/* Edit Private Slot Modal */}
       {editingPrivateSlot && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4"
+          dir="rtl"
+        >
           <form
             onSubmit={handleUpdatePrivateSlot}
             className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-xl"
@@ -3099,28 +4073,21 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <div className="space-y-3 text-xs">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <label className="font-bold text-slate-700 block">
+                  <span className="font-bold text-slate-700 block">
                     التخصصات المعتمدة المتاحة لهذا الموعد *
-                  </label>
+                  </span>
                   <span className="text-[10px] font-bold text-[#0D4E8B]">
                     محدد ({editSlotSpecIds.length})
                   </span>
                 </div>
-                <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+                <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
                   {specializations.map((s) => {
                     const isChecked = editSlotSpecIds.includes(s.id);
+                    const editSpecInputId = `edit-slot-spec-${s.id}`;
                     return (
-                      <div
+                      <label
                         key={s.id}
-                        onClick={() => {
-                          if (isChecked) {
-                            if (editSlotSpecIds.length > 1) {
-                              setEditSlotSpecIds(editSlotSpecIds.filter((id) => id !== s.id));
-                            }
-                          } else {
-                            setEditSlotSpecIds([...editSlotSpecIds, s.id]);
-                          }
-                        }}
+                        htmlFor={editSpecInputId}
                         className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center gap-2 ${
                           isChecked
                             ? 'bg-blue-50 border-[#0D4E8B] text-[#0D4E8B] font-bold'
@@ -3128,85 +4095,145 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         }`}
                       >
                         <input
+                          id={editSpecInputId}
                           type="checkbox"
                           checked={isChecked}
-                          onChange={() => {}}
-                          className="w-4 h-4 rounded text-[#0D4E8B] pointer-events-none shrink-0"
+                          onChange={() => {
+                            if (isChecked) {
+                              if (editSlotSpecIds.length > 1) {
+                                setEditSlotSpecIds(editSlotSpecIds.filter((id) => id !== s.id));
+                              }
+                            } else {
+                              setEditSlotSpecIds([...editSlotSpecIds, s.id]);
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-[#0D4E8B] shrink-0"
                         />
                         <span className="leading-snug">{s.label}</span>
-                      </div>
+                      </label>
                     );
                   })}
                 </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  السعر والمدة المحددان أدناه ينطبقان على جميع التخصصات البديلة المختارة لهذا الموعد.
-                </p>
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">التاريخ *</label>
-                <input
-                  type="date"
-                  min={new Date().toISOString().split('T')[0]}
-                  value={editSlotDate}
-                  onChange={(e) => setEditSlotDate(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
-                  required
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="edit-private-date-input"
+                    className="font-bold text-slate-700 block mb-1"
+                  >
+                    التاريخ *
+                  </label>
+                  <input
+                    id="edit-private-date-input"
+                    type="date"
+                    min={getTodayCalendarDateInTimezone(editSlotTimezone)}
+                    value={editSlotDate}
+                    onChange={(e) => setEditSlotDate(e.target.value)}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="edit-private-timezone-select"
+                    className="font-bold text-slate-700 block mb-1"
+                  >
+                    المنطقة الزمنية
+                  </label>
+                  <select
+                    id="edit-private-timezone-select"
+                    value={editSlotTimezone}
+                    onChange={(e) => setEditSlotTimezone(e.target.value)}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-bold focus:border-[#0D4E8B] focus:outline-none bg-white"
+                  >
+                    {SUPPORTED_TUTOR_TIMEZONES.map((tz) => (
+                      <option key={tz.value} value={tz.value}>
+                        {tz.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">وقت البدء *</label>
+                  <label
+                    htmlFor="edit-private-start-input"
+                    className="font-bold text-slate-700 block mb-1"
+                  >
+                    وقت البدء *
+                  </label>
                   <input
+                    id="edit-private-start-input"
                     type="time"
                     value={editSlotStart}
                     onChange={(e) => {
                       setEditSlotStart(e.target.value);
-                      setEditSlotEnd(addMinutesToTime(e.target.value, editSlotDuration));
+                      setEditSlotEnd(addMinutesToTimeStr(e.target.value, editSlotDuration));
                     }}
-                    className="w-full p-2.5 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
                     required
                   />
                 </div>
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">وقت النهاية *</label>
+                  <label
+                    htmlFor="edit-private-end-input"
+                    className="font-bold text-slate-700 block mb-1"
+                  >
+                    وقت النهاية (تلقائياً)
+                  </label>
                   <input
+                    id="edit-private-end-input"
                     type="time"
                     value={editSlotEnd}
-                    onChange={(e) => setEditSlotEnd(e.target.value)}
-                    className="w-full p-2.5 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
-                    required
+                    readOnly
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono bg-slate-100 text-slate-600 cursor-not-allowed outline-none"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">المدة (دقيقة)</label>
+                  <label
+                    htmlFor="edit-private-duration-select"
+                    className="font-bold text-slate-700 block mb-1"
+                  >
+                    المدة (دقيقة)
+                  </label>
                   <select
+                    id="edit-private-duration-select"
                     value={editSlotDuration}
                     onChange={(e) => {
                       const dur = Number(e.target.value);
                       setEditSlotDuration(dur);
-                      if (editSlotStart) setEditSlotEnd(addMinutesToTime(editSlotStart, dur));
+                      if (editSlotStart) setEditSlotEnd(addMinutesToTimeStr(editSlotStart, dur));
                     }}
-                    className="w-full p-2.5 rounded-xl border border-slate-200 font-bold focus:border-[#0D4E8B] focus:outline-none"
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-bold focus:border-[#0D4E8B] focus:outline-none bg-white"
                   >
+                    <option value={30}>30 دقيقة</option>
                     <option value={45}>45 دقيقة</option>
                     <option value={50}>50 دقيقة</option>
                     <option value={60}>60 دقيقة</option>
+                    <option value={75}>75 دقيقة</option>
                     <option value={90}>90 دقيقة</option>
+                    <option value={120}>120 دقيقة</option>
                   </select>
                 </div>
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">السعر (ج.م)</label>
+                  <label
+                    htmlFor="edit-private-price-input"
+                    className="font-bold text-slate-700 block mb-1"
+                  >
+                    السعر ({editingPrivateSlot.currency || tutor.currency})
+                  </label>
                   <input
+                    id="edit-private-price-input"
                     type="number"
                     min={0}
                     value={editSlotPrice}
                     onChange={(e) => setEditSlotPrice(Number(e.target.value))}
-                    className="w-full p-2.5 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
+                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
                     required
                   />
                 </div>
@@ -3217,14 +4244,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => setEditingPrivateSlot(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                className="px-4 py-2 min-h-[40px] rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 إلغاء
               </button>
               <button
                 type="submit"
                 disabled={isUpdatingSlot}
-                className="px-5 py-2 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                className="px-5 py-2 min-h-[40px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
               >
                 {isUpdatingSlot ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
