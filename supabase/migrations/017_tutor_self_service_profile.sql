@@ -525,16 +525,17 @@ $$;
 -- 5. Trial Slot Management (`tutor_create_slot` & `tutor_update_trial_slot`)
 --    + Dubai Timezone Support (`Asia/Dubai`) & Cross-Schedule Conflict Checks
 -- ============================================================================
+DROP FUNCTION IF EXISTS public.tutor_create_slot(DATE, TIME, TIME, TEXT);
 CREATE OR REPLACE FUNCTION public.tutor_create_slot(
   p_slot_date DATE,
   p_start_time TIME,
   p_end_time TIME,
   p_timezone TEXT DEFAULT 'Africa/Cairo'
 )
-RETURNS UUID
+RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, auth, pg_temp
 AS $$
 DECLARE
   v_tutor_id TEXT;
@@ -542,11 +543,11 @@ DECLARE
   v_tz TEXT;
   v_start_at TIMESTAMPTZ;
   v_end_at TIMESTAMPTZ;
-  v_conflict TEXT;
+  v_conflict RECORD;
 BEGIN
   v_tutor_id := public.get_current_tutor_id();
   IF v_tutor_id IS NULL THEN
-    RAISE EXCEPTION 'غير مصرح لك بإضافة مواعيد.';
+    RAISE EXCEPTION 'غير مصرح: حسابك غير مرتبط بملف معلم معتمد.';
   END IF;
 
   PERFORM public.acquire_tutor_lock(v_tutor_id);
@@ -560,8 +561,8 @@ BEGIN
     RAISE EXCEPTION 'وقت النهاية يجب أن يكون بعد وقت البداية.';
   END IF;
 
-  v_start_at := ((p_slot_date::text || ' ' || p_start_time::text)::timestamp) AT TIME ZONE v_tz;
-  v_end_at := ((p_slot_date::text || ' ' || p_end_time::text)::timestamp) AT TIME ZONE v_tz;
+  v_start_at := (p_slot_date + p_start_time) AT TIME ZONE v_tz;
+  v_end_at := (p_slot_date + p_end_time) AT TIME ZONE v_tz;
 
   IF v_start_at <= NOW() THEN
     RAISE EXCEPTION 'لا يمكن إضافة موعد في وقت سابق من الآن.';
@@ -571,7 +572,8 @@ BEGIN
     RAISE EXCEPTION 'مدة الحصة التجريبية في نظام شاطر هي 20 دقيقة بالضبط.';
   END IF;
 
-  v_conflict := public.internal_check_tutor_time_conflict(
+  SELECT * INTO v_conflict
+  FROM public.internal_check_tutor_time_conflict(
     v_tutor_id,
     v_start_at,
     v_end_at,
@@ -580,8 +582,8 @@ BEGIN
     NULL
   );
 
-  IF v_conflict IS NOT NULL THEN
-    RAISE EXCEPTION 'يوجد تعارض زمني لهذا الموعد مع %.', v_conflict;
+  IF v_conflict.has_conflict THEN
+    RAISE EXCEPTION 'تعارض زمني: %', v_conflict.conflict_details;
   END IF;
 
   INSERT INTO public.tutor_available_slots (
@@ -592,7 +594,9 @@ BEGIN
     timezone,
     is_available,
     is_booked,
-    admin_suspended
+    admin_suspended,
+    created_at,
+    updated_at
   ) VALUES (
     v_tutor_id,
     p_slot_date,
@@ -601,14 +605,22 @@ BEGIN
     v_tz,
     TRUE,
     FALSE,
-    FALSE
+    FALSE,
+    NOW(),
+    NOW()
   )
   RETURNING id INTO v_new_id;
 
-  RETURN v_new_id;
+  RETURN jsonb_build_object(
+    'success', TRUE,
+    'slotId', v_new_id,
+    'insertedCount', 1,
+    'message', 'تمت إضافة الموعد التجريبي بنجاح.'
+  );
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.tutor_update_trial_slot(UUID, DATE, TIME, TIME, TEXT);
 CREATE OR REPLACE FUNCTION public.tutor_update_trial_slot(
   p_slot_id UUID,
   p_slot_date DATE,
@@ -619,7 +631,7 @@ CREATE OR REPLACE FUNCTION public.tutor_update_trial_slot(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, auth, pg_temp
 AS $$
 DECLARE
   v_tutor_id TEXT;
@@ -627,8 +639,7 @@ DECLARE
   v_tz TEXT;
   v_start_at TIMESTAMPTZ;
   v_end_at TIMESTAMPTZ;
-  v_conflict TEXT;
-  v_has_active_booking BOOLEAN := FALSE;
+  v_conflict RECORD;
 BEGIN
   v_tutor_id := public.get_current_tutor_id();
   IF v_tutor_id IS NULL THEN
@@ -654,17 +665,6 @@ BEGIN
     RAISE EXCEPTION 'لا يمكن تعديل موعد تجريبي محجوز لطالب.';
   END IF;
 
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.trial_bookings tb
-    WHERE tb.slot_id = p_slot_id
-      AND tb.booking_status IN ('pending', 'confirmed', 'completed')
-  ) INTO v_has_active_booking;
-
-  IF v_has_active_booking THEN
-    RAISE EXCEPTION 'لا يمكن تعديل موعد تجريبي مرتبط بطلب حجز قائم.';
-  END IF;
-
   v_tz := COALESCE(NULLIF(BTRIM(p_timezone), ''), COALESCE(v_slot.timezone, 'Africa/Cairo'));
   IF v_tz NOT IN ('Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai') THEN
     RAISE EXCEPTION 'المنطقة الزمنية غير مدعومة. يرجى اختيار توقيت القاهرة أو الرياض أو دبي.';
@@ -674,8 +674,8 @@ BEGIN
     RAISE EXCEPTION 'وقت النهاية يجب أن يكون بعد وقت البداية.';
   END IF;
 
-  v_start_at := ((p_slot_date::text || ' ' || p_start_time::text)::timestamp) AT TIME ZONE v_tz;
-  v_end_at := ((p_slot_date::text || ' ' || p_end_time::text)::timestamp) AT TIME ZONE v_tz;
+  v_start_at := (p_slot_date + p_start_time) AT TIME ZONE v_tz;
+  v_end_at := (p_slot_date + p_end_time) AT TIME ZONE v_tz;
 
   IF v_start_at <= NOW() THEN
     RAISE EXCEPTION 'لا يمكن نقل الموعد التجريبي إلى وقت سابق من الآن.';
@@ -685,7 +685,8 @@ BEGIN
     RAISE EXCEPTION 'مدة الحصة التجريبية المعتمدة هي 20 دقيقة بالضبط.';
   END IF;
 
-  v_conflict := public.internal_check_tutor_time_conflict(
+  SELECT * INTO v_conflict
+  FROM public.internal_check_tutor_time_conflict(
     v_tutor_id,
     v_start_at,
     v_end_at,
@@ -694,8 +695,8 @@ BEGIN
     NULL
   );
 
-  IF v_conflict IS NOT NULL THEN
-    RAISE EXCEPTION 'يوجد تعارض زمني للموعد المعدل مع %.', v_conflict;
+  IF v_conflict.has_conflict THEN
+    RAISE EXCEPTION 'تعارض زمني: %', v_conflict.conflict_details;
   END IF;
 
   UPDATE public.tutor_available_slots
@@ -703,767 +704,26 @@ BEGIN
     slot_date = p_slot_date,
     start_time = p_start_time,
     end_time = p_end_time,
-    timezone = v_tz
-  WHERE id = p_slot_id AND tutor_id = v_tutor_id;
-
-  RETURN jsonb_build_object(
-    'success', TRUE,
-    'slotId', p_slot_id
-  );
-END;
-$$;
-
--- ============================================================================
--- 6. Extend Timezone Validation in Private Slots & Group Sessions to Include
---    `Asia/Dubai` alongside `Africa/Cairo` and `Asia/Riyadh`
--- ============================================================================
-CREATE OR REPLACE FUNCTION public.tutor_create_private_slots(
-  p_specialization_label TEXT,
-  p_duration_minutes INTEGER,
-  p_price_amount INTEGER,
-  p_currency TEXT DEFAULT 'ج.م',
-  p_slots JSONB DEFAULT '[]'::jsonb,
-  p_offering_course_option_id TEXT DEFAULT NULL,
-  p_quran_age_group_id TEXT DEFAULT NULL,
-  p_quran_level_id TEXT DEFAULT NULL,
-  p_timezone TEXT DEFAULT 'Africa/Cairo',
-  p_allowed_specializations JSONB DEFAULT '[]'::jsonb
-)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_tutor_id TEXT;
-  v_tz TEXT;
-  v_slot JSONB;
-  v_date DATE;
-  v_start TIME;
-  v_end TIME;
-  v_start_at TIMESTAMPTZ;
-  v_end_at TIMESTAMPTZ;
-  v_conflict TEXT;
-  v_inserted_count INTEGER := 0;
-  v_validated_specs JSONB;
-  v_primary_spec JSONB;
-  v_primary_label TEXT;
-  v_primary_course_id TEXT;
-  v_primary_age_id TEXT;
-  v_primary_level_id TEXT;
-BEGIN
-  v_tutor_id := public.get_current_tutor_id();
-  IF v_tutor_id IS NULL THEN
-    RAISE EXCEPTION 'غير مصرح لك بإضافة مواعيد خاصة.';
-  END IF;
-
-  PERFORM public.acquire_tutor_lock(v_tutor_id);
-
-  IF p_duration_minutes IS NULL OR p_duration_minutes < 30 OR p_duration_minutes > 120 THEN
-    RAISE EXCEPTION 'مدة الحصة الخاصة يجب أن تكون بين 30 و 120 دقيقة.';
-  END IF;
-
-  IF p_price_amount IS NULL OR p_price_amount < 0 THEN
-    RAISE EXCEPTION 'سعر الحصة الخاصة يجب أن يكون قيمة موجبة.';
-  END IF;
-
-  v_tz := COALESCE(NULLIF(BTRIM(p_timezone), ''), 'Africa/Cairo');
-  IF v_tz NOT IN ('Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai') THEN
-    RAISE EXCEPTION 'المنطقة الزمنية غير مدعومة. يرجى اختيار توقيت القاهرة أو الرياض أو دبي.';
-  END IF;
-
-  IF jsonb_typeof(p_slots) <> 'array' OR jsonb_array_length(p_slots) = 0 THEN
-    RAISE EXCEPTION 'يرجى تحديد موعد واحد على الأقل.';
-  END IF;
-
-  IF jsonb_array_length(p_slots) > 60 THEN
-    RAISE EXCEPTION 'لا يمكن إضافة أكثر من 60 موعداً في المرة الواحدة.';
-  END IF;
-
-  v_validated_specs := public.internal_validate_tutor_slot_specializations(
-    v_tutor_id,
-    p_allowed_specializations,
-    p_offering_course_option_id,
-    p_quran_age_group_id,
-    p_quran_level_id
-  );
-
-  v_primary_spec := v_validated_specs -> 0;
-  v_primary_label := v_primary_spec ->> 'label';
-  v_primary_course_id := NULLIF(BTRIM(COALESCE(v_primary_spec ->> 'courseOptionId', '')), '');
-  v_primary_age_id := NULLIF(BTRIM(COALESCE(v_primary_spec ->> 'ageGroupId', '')), '');
-  v_primary_level_id := NULLIF(BTRIM(COALESCE(v_primary_spec ->> 'levelId', '')), '');
-
-  FOR v_slot IN SELECT * FROM jsonb_array_elements(p_slots)
-  LOOP
-    v_date := (v_slot ->> 'date')::DATE;
-    v_start := (v_slot ->> 'startTime')::TIME;
-    v_end := (v_slot ->> 'endTime')::TIME;
-
-    IF v_end <= v_start THEN
-      RAISE EXCEPTION 'وقت النهاية يجب أن يكون بعد وقت البداية في تاريخ %.', v_date;
-    END IF;
-
-    v_start_at := ((v_date::text || ' ' || v_start::text)::timestamp) AT TIME ZONE v_tz;
-    v_end_at := ((v_date::text || ' ' || v_end::text)::timestamp) AT TIME ZONE v_tz;
-
-    IF v_start_at <= NOW() THEN
-      RAISE EXCEPTION 'لا يمكن إضافة موعد خاص في وقت سابق من الآن (% %).', v_date, v_start;
-    END IF;
-
-    IF EXTRACT(EPOCH FROM (v_end_at - v_start_at)) / 60 <> p_duration_minutes THEN
-      RAISE EXCEPTION 'الفرق بين وقت البداية والنهاية في تاريخ % لا يطابق مدة الحصة (% دقيقة).', v_date, p_duration_minutes;
-    END IF;
-
-    v_conflict := public.internal_check_tutor_time_conflict(
-      v_tutor_id,
-      v_start_at,
-      v_end_at,
-      NULL,
-      NULL,
-      NULL
-    );
-
-    IF v_conflict IS NOT NULL THEN
-      RAISE EXCEPTION 'يوجد تعارض زمني في تاريخ % الساعة % مع %.', v_date, v_start, v_conflict;
-    END IF;
-
-    INSERT INTO public.tutor_private_slots (
-      tutor_id,
-      offering_course_option_id,
-      quran_age_group_id,
-      quran_level_id,
-      specialization_label,
-      allowed_specializations,
-      slot_date,
-      start_time,
-      end_time,
-      timezone,
-      start_at_utc,
-      end_at_utc,
-      duration_minutes,
-      price_amount,
-      currency,
-      is_available,
-      admin_suspended,
-      is_booked
-    ) VALUES (
-      v_tutor_id,
-      v_primary_course_id,
-      v_primary_age_id,
-      v_primary_level_id,
-      v_primary_label,
-      v_validated_specs,
-      v_date,
-      v_start,
-      v_end,
-      v_tz,
-      v_start_at,
-      v_end_at,
-      p_duration_minutes,
-      p_price_amount,
-      COALESCE(NULLIF(BTRIM(p_currency), ''), 'ج.م'),
-      TRUE,
-      FALSE,
-      FALSE
-    );
-
-    v_inserted_count := v_inserted_count + 1;
-  END LOOP;
-
-  RETURN jsonb_build_object(
-    'success', TRUE,
-    'insertedCount', v_inserted_count
-  );
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.tutor_update_private_slot(
-  p_slot_id UUID,
-  p_slot_date DATE,
-  p_start_time TIME,
-  p_end_time TIME,
-  p_duration_minutes INTEGER,
-  p_price_amount INTEGER,
-  p_timezone TEXT DEFAULT 'Africa/Cairo',
-  p_offering_course_option_id TEXT DEFAULT NULL,
-  p_quran_age_group_id TEXT DEFAULT NULL,
-  p_quran_level_id TEXT DEFAULT NULL,
-  p_allowed_specializations JSONB DEFAULT '[]'::jsonb
-)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_tutor_id TEXT;
-  v_slot RECORD;
-  v_tz TEXT;
-  v_start_at TIMESTAMPTZ;
-  v_end_at TIMESTAMPTZ;
-  v_conflict TEXT;
-  v_has_active_booking BOOLEAN;
-  v_validated_specs JSONB;
-  v_primary_spec JSONB;
-  v_primary_label TEXT;
-  v_primary_course_id TEXT;
-  v_primary_age_id TEXT;
-  v_primary_level_id TEXT;
-BEGIN
-  v_tutor_id := public.get_current_tutor_id();
-  IF v_tutor_id IS NULL THEN
-    RAISE EXCEPTION 'غير مصرح لك بتعديل المواعيد الخاصة.';
-  END IF;
-
-  PERFORM public.acquire_tutor_lock(v_tutor_id);
-
-  SELECT * INTO v_slot
-  FROM public.tutor_private_slots
-  WHERE id = p_slot_id AND tutor_id = v_tutor_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'الموعد غير موجود أو لا يتبع حسابك.';
-  END IF;
-
-  IF v_slot.admin_suspended = TRUE THEN
-    RAISE EXCEPTION 'لا يمكن تعديل موعد موقوف إدارياً.';
-  END IF;
-
-  IF v_slot.is_booked = TRUE THEN
-    RAISE EXCEPTION 'لا يمكن تعديل موعد محجوز لطالب.';
-  END IF;
-
-  SELECT EXISTS (
-    SELECT 1 FROM public.tutor_private_bookings
-    WHERE slot_id = p_slot_id AND booking_status IN ('pending', 'confirmed', 'completed')
-  ) INTO v_has_active_booking;
-
-  IF v_has_active_booking THEN
-    RAISE EXCEPTION 'لا يمكن تعديل موعد مرتبط بحجز نشط.';
-  END IF;
-
-  IF p_duration_minutes IS NULL OR p_duration_minutes < 30 OR p_duration_minutes > 120 THEN
-    RAISE EXCEPTION 'مدة الحصة الخاصة يجب أن تكون بين 30 و 120 دقيقة.';
-  END IF;
-
-  IF p_price_amount IS NULL OR p_price_amount < 0 THEN
-    RAISE EXCEPTION 'سعر الحصة الخاصة يجب أن يكون قيمة موجبة.';
-  END IF;
-
-  v_tz := COALESCE(NULLIF(BTRIM(p_timezone), ''), v_slot.timezone, 'Africa/Cairo');
-  IF v_tz NOT IN ('Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai') THEN
-    RAISE EXCEPTION 'المنطقة الزمنية غير مدعومة. يرجى اختيار توقيت القاهرة أو الرياض أو دبي.';
-  END IF;
-
-  IF p_end_time <= p_start_time THEN
-    RAISE EXCEPTION 'وقت النهاية يجب أن يكون بعد وقت البداية.';
-  END IF;
-
-  v_start_at := ((p_slot_date::text || ' ' || p_start_time::text)::timestamp) AT TIME ZONE v_tz;
-  v_end_at := ((p_slot_date::text || ' ' || p_end_time::text)::timestamp) AT TIME ZONE v_tz;
-
-  IF v_start_at <= NOW() THEN
-    RAISE EXCEPTION 'لا يمكن نقل الموعد إلى وقت سابق من الآن.';
-  END IF;
-
-  IF EXTRACT(EPOCH FROM (v_end_at - v_start_at)) / 60 <> p_duration_minutes THEN
-    RAISE EXCEPTION 'الفرق بين وقت البداية والنهاية لا يطابق مدة الحصة (% دقيقة).', p_duration_minutes;
-  END IF;
-
-  IF (p_allowed_specializations IS NOT NULL AND jsonb_typeof(p_allowed_specializations) = 'array' AND jsonb_array_length(p_allowed_specializations) > 0)
-     OR p_offering_course_option_id IS NOT NULL
-     OR p_quran_age_group_id IS NOT NULL
-     OR p_quran_level_id IS NOT NULL THEN
-    v_validated_specs := public.internal_validate_tutor_slot_specializations(
-      v_tutor_id,
-      p_allowed_specializations,
-      p_offering_course_option_id,
-      p_quran_age_group_id,
-      p_quran_level_id
-    );
-  ELSE
-    v_validated_specs := public.internal_validate_tutor_slot_specializations(
-      v_tutor_id,
-      v_slot.allowed_specializations,
-      v_slot.offering_course_option_id,
-      v_slot.quran_age_group_id,
-      v_slot.quran_level_id
-    );
-  END IF;
-
-  v_primary_spec := v_validated_specs -> 0;
-  v_primary_label := v_primary_spec ->> 'label';
-  v_primary_course_id := NULLIF(BTRIM(COALESCE(v_primary_spec ->> 'courseOptionId', '')), '');
-  v_primary_age_id := NULLIF(BTRIM(COALESCE(v_primary_spec ->> 'ageGroupId', '')), '');
-  v_primary_level_id := NULLIF(BTRIM(COALESCE(v_primary_spec ->> 'levelId', '')), '');
-
-  v_conflict := public.internal_check_tutor_time_conflict(
-    v_tutor_id,
-    v_start_at,
-    v_end_at,
-    NULL,
-    p_slot_id,
-    NULL
-  );
-
-  IF v_conflict IS NOT NULL THEN
-    RAISE EXCEPTION 'يوجد تعارض زمني للموعد المعدل مع %.', v_conflict;
-  END IF;
-
-  UPDATE public.tutor_private_slots
-  SET
-    offering_course_option_id = v_primary_course_id,
-    quran_age_group_id = v_primary_age_id,
-    quran_level_id = v_primary_level_id,
-    specialization_label = v_primary_label,
-    allowed_specializations = v_validated_specs,
-    slot_date = p_slot_date,
-    start_time = p_start_time,
-    end_time = p_end_time,
     timezone = v_tz,
-    start_at_utc = v_start_at,
-    end_at_utc = v_end_at,
-    duration_minutes = p_duration_minutes,
-    price_amount = p_price_amount,
     updated_at = NOW()
   WHERE id = p_slot_id AND tutor_id = v_tutor_id;
 
-  RETURN jsonb_build_object('success', TRUE);
-END;
-$$;
-
--- Allow Asia/Dubai in tutor_create_group and tutor_update_group as well
-CREATE OR REPLACE FUNCTION public.tutor_create_group(
-  p_title TEXT,
-  p_description TEXT,
-  p_specialization_label TEXT,
-  p_max_students INTEGER,
-  p_price_per_student INTEGER,
-  p_price_type TEXT DEFAULT 'full_package',
-  p_currency TEXT DEFAULT 'ج.م',
-  p_sessions_count INTEGER DEFAULT 4,
-  p_session_duration_minutes INTEGER DEFAULT 60,
-  p_start_date DATE DEFAULT NULL,
-  p_end_date DATE DEFAULT NULL,
-  p_weekly_schedule_summary TEXT DEFAULT '',
-  p_sessions JSONB DEFAULT '[]'::jsonb,
-  p_offering_course_option_id TEXT DEFAULT NULL,
-  p_quran_age_group_id TEXT DEFAULT NULL,
-  p_quran_level_id TEXT DEFAULT NULL
-)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_tutor_id TEXT;
-  v_new_group_id UUID;
-  v_canonical_label TEXT;
-  v_sess JSONB;
-  v_sess_num INTEGER;
-  v_sess_date DATE;
-  v_start TIME;
-  v_end TIME;
-  v_tz TEXT;
-  v_start_at TIMESTAMPTZ;
-  v_end_at TIMESTAMPTZ;
-  v_conflict TEXT;
-  v_min_date DATE := NULL;
-  v_max_date DATE := NULL;
-BEGIN
-  v_tutor_id := public.get_current_tutor_id();
-  IF v_tutor_id IS NULL THEN
-    RAISE EXCEPTION 'غير مصرح لك بإنشاء مجموعة تعليمية.';
-  END IF;
-
-  PERFORM public.acquire_tutor_lock(v_tutor_id);
-
-  IF BTRIM(COALESCE(p_title, '')) = '' THEN
-    RAISE EXCEPTION 'اسم المجموعة مطلوب.';
-  END IF;
-
-  IF p_max_students < 2 OR p_max_students > 20 THEN
-    RAISE EXCEPTION 'الحد الأقصى للطلاب في المجموعة يجب أن يكون بين 2 و 20 طالباً.';
-  END IF;
-
-  IF p_price_per_student < 0 THEN
-    RAISE EXCEPTION 'سعر اشتراك الطالب يجب أن يكون قيمة موجبة.';
-  END IF;
-
-  IF p_price_type NOT IN ('per_session', 'full_package') THEN
-    RAISE EXCEPTION 'نوع التسعير غير صالح.';
-  END IF;
-
-  IF p_sessions_count < 1 OR p_sessions_count > 48 THEN
-    RAISE EXCEPTION 'عدد حصص المجموعة يجب أن يكون بين 1 و 48 حصة.';
-  END IF;
-
-  IF p_session_duration_minutes < 30 OR p_session_duration_minutes > 120 THEN
-    RAISE EXCEPTION 'مدة حصة المجموعة يجب أن تكون بين 30 و 120 دقيقة.';
-  END IF;
-
-  IF jsonb_typeof(p_sessions) <> 'array' OR jsonb_array_length(p_sessions) <> p_sessions_count THEN
-    RAISE EXCEPTION 'يجب إرسال جدول اللقاءات الفعلي مطابقاً لعدد الحصص المحدد (% حصة).', p_sessions_count;
-  END IF;
-
-  v_canonical_label := public.internal_resolve_and_verify_tutor_specialization(
-    v_tutor_id,
-    p_offering_course_option_id,
-    p_quran_age_group_id,
-    p_quran_level_id
-  );
-
-  INSERT INTO public.tutor_groups (
-    tutor_id,
-    title,
-    description,
-    offering_course_option_id,
-    quran_age_group_id,
-    quran_level_id,
-    specialization_label,
-    max_students,
-    enrolled_students,
-    price_per_student,
-    price_type,
-    currency,
-    sessions_count,
-    session_duration_minutes,
-    start_date,
-    end_date,
-    weekly_schedule_summary,
-    review_status,
-    admin_suspended,
-    status,
-    is_published
-  ) VALUES (
-    v_tutor_id,
-    BTRIM(p_title),
-    BTRIM(COALESCE(p_description, '')),
-    p_offering_course_option_id,
-    p_quran_age_group_id,
-    p_quran_level_id,
-    v_canonical_label,
-    p_max_students,
-    0,
-    p_price_per_student,
-    p_price_type,
-    COALESCE(NULLIF(BTRIM(p_currency), ''), 'ج.م'),
-    p_sessions_count,
-    p_session_duration_minutes,
-    COALESCE(p_start_date, CURRENT_DATE + 1),
-    p_end_date,
-    BTRIM(COALESCE(p_weekly_schedule_summary, '')),
-    'approved',
-    FALSE,
-    'open',
-    TRUE
-  )
-  RETURNING id INTO v_new_group_id;
-
-  v_sess_num := 0;
-  FOR v_sess IN SELECT * FROM jsonb_array_elements(p_sessions)
-  LOOP
-    v_sess_num := v_sess_num + 1;
-    v_sess_date := (v_sess ->> 'sessionDate')::DATE;
-    v_start := (v_sess ->> 'startTime')::TIME;
-    v_end := (v_sess ->> 'endTime')::TIME;
-    v_tz := COALESCE(NULLIF(BTRIM(v_sess ->> 'timezone'), ''), 'Africa/Cairo');
-
-    IF v_tz NOT IN ('Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai') THEN
-      RAISE EXCEPTION 'المنطقة الزمنية غير مدعومة في اللقاء رقم %.', v_sess_num;
-    END IF;
-
-    IF v_end <= v_start THEN
-      RAISE EXCEPTION 'وقت النهاية يجب أن يكون بعد وقت البداية في اللقاء رقم %.', v_sess_num;
-    END IF;
-
-    v_start_at := ((v_sess_date::text || ' ' || v_start::text)::timestamp) AT TIME ZONE v_tz;
-    v_end_at := ((v_sess_date::text || ' ' || v_end::text)::timestamp) AT TIME ZONE v_tz;
-
-    IF v_start_at <= NOW() THEN
-      RAISE EXCEPTION 'لا يمكن جدولة اللقاء رقم % في وقت سابق من الآن (% %).', v_sess_num, v_sess_date, v_start;
-    END IF;
-
-    IF EXTRACT(EPOCH FROM (v_end_at - v_start_at)) / 60 <> p_session_duration_minutes THEN
-      RAISE EXCEPTION 'مدة اللقاء رقم % في تاريخ % لا تطابق مدة حصة المجموعة (% دقيقة).', v_sess_num, v_sess_date, p_session_duration_minutes;
-    END IF;
-
-    v_conflict := public.internal_check_tutor_time_conflict(
-      v_tutor_id,
-      v_start_at,
-      v_end_at,
-      NULL,
-      NULL,
-      NULL
-    );
-
-    IF v_conflict IS NOT NULL THEN
-      RAISE EXCEPTION 'تعارض زمني في اللقاء رقم % بتاريخ % الساعة % مع %.', v_sess_num, v_sess_date, v_start, v_conflict;
-    END IF;
-
-    INSERT INTO public.tutor_group_sessions (
-      group_id,
-      tutor_id,
-      session_number,
-      session_date,
-      start_time,
-      end_time,
-      timezone,
-      start_at_utc,
-      end_at_utc,
-      title
-    ) VALUES (
-      v_new_group_id,
-      v_tutor_id,
-      v_sess_num,
-      v_sess_date,
-      v_start,
-      v_end,
-      v_tz,
-      v_start_at,
-      v_end_at,
-      COALESCE(NULLIF(BTRIM(v_sess ->> 'title'), ''), 'اللقاء ' || v_sess_num)
-    );
-
-    IF v_min_date IS NULL OR v_sess_date < v_min_date THEN
-      v_min_date := v_sess_date;
-    END IF;
-    IF v_max_date IS NULL OR v_sess_date > v_max_date THEN
-      v_max_date := v_sess_date;
-    END IF;
-  END LOOP;
-
-  UPDATE public.tutor_groups
-  SET
-    start_date = COALESCE(v_min_date, start_date),
-    end_date = COALESCE(v_max_date, end_date)
-  WHERE id = v_new_group_id;
-
   RETURN jsonb_build_object(
     'success', TRUE,
-    'groupId', v_new_group_id,
-    'reviewStatus', 'approved',
-    'isPublished', TRUE
+    'slotId', p_slot_id,
+    'message', 'تم تعديل الموعد التجريبي بنجاح.'
   );
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.tutor_update_group(
-  p_group_id UUID,
-  p_title TEXT,
-  p_description TEXT,
-  p_max_students INTEGER,
-  p_price_per_student INTEGER,
-  p_price_type TEXT,
-  p_currency TEXT,
-  p_sessions_count INTEGER,
-  p_session_duration_minutes INTEGER,
-  p_start_date DATE,
-  p_end_date DATE,
-  p_weekly_schedule_summary TEXT,
-  p_sessions JSONB,
-  p_offering_course_option_id TEXT DEFAULT NULL,
-  p_quran_age_group_id TEXT DEFAULT NULL,
-  p_quran_level_id TEXT DEFAULT NULL
-)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_tutor_id TEXT;
-  v_group RECORD;
-  v_canonical_label TEXT;
-  v_sess JSONB;
-  v_sess_num INTEGER;
-  v_sess_date DATE;
-  v_start TIME;
-  v_end TIME;
-  v_tz TEXT;
-  v_start_at TIMESTAMPTZ;
-  v_end_at TIMESTAMPTZ;
-  v_conflict TEXT;
-  v_min_date DATE := NULL;
-  v_max_date DATE := NULL;
-  v_has_enrollments BOOLEAN;
-BEGIN
-  v_tutor_id := public.get_current_tutor_id();
-  IF v_tutor_id IS NULL THEN
-    RAISE EXCEPTION 'غير مصرح لك بتعديل المجموعة.';
-  END IF;
-
-  PERFORM public.acquire_tutor_lock(v_tutor_id);
-
-  SELECT * INTO v_group
-  FROM public.tutor_groups
-  WHERE id = p_group_id AND tutor_id = v_tutor_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'المجموعة غير موجودة أو لا تتبع حسابك.';
-  END IF;
-
-  IF v_group.admin_suspended = TRUE THEN
-    RAISE EXCEPTION 'لا يمكن تعديل مجموعة موقوفة إدارياً. يرجى مراجعة الإدارة.';
-  END IF;
-
-  IF v_group.enrolled_students > 0 THEN
-    RAISE EXCEPTION 'لا يمكن تعديل جدول أو تسعير مجموعة بها طلاب مشتركين بالفعل.';
-  END IF;
-
-  SELECT EXISTS (
-    SELECT 1 FROM public.tutor_group_enrollments
-    WHERE group_id = p_group_id AND enrollment_status IN ('pending', 'confirmed', 'completed')
-  ) INTO v_has_enrollments;
-
-  IF v_has_enrollments THEN
-    RAISE EXCEPTION 'لا يمكن تعديل مجموعة مرتبطة بطلبات اشتراك قائمة.';
-  END IF;
-
-  IF BTRIM(COALESCE(p_title, '')) = '' THEN
-    RAISE EXCEPTION 'اسم المجموعة مطلوب.';
-  END IF;
-
-  IF p_max_students < 2 OR p_max_students > 20 THEN
-    RAISE EXCEPTION 'الحد الأقصى للطلاب يجب أن يكون بين 2 و 20 طالباً.';
-  END IF;
-
-  IF p_price_per_student < 0 THEN
-    RAISE EXCEPTION 'سعر الاشتراك يجب أن يكون قيمة موجبة.';
-  END IF;
-
-  IF p_price_type NOT IN ('per_session', 'full_package') THEN
-    RAISE EXCEPTION 'نوع التسعير غير صالح.';
-  END IF;
-
-  IF p_sessions_count < 1 OR p_sessions_count > 48 THEN
-    RAISE EXCEPTION 'عدد الحصص يجب أن يكون بين 1 و 48 حصة.';
-  END IF;
-
-  IF p_session_duration_minutes < 30 OR p_session_duration_minutes > 120 THEN
-    RAISE EXCEPTION 'مدة الحصة يجب أن تكون بين 30 و 120 دقيقة.';
-  END IF;
-
-  IF jsonb_typeof(p_sessions) <> 'array' OR jsonb_array_length(p_sessions) <> p_sessions_count THEN
-    RAISE EXCEPTION 'جدول اللقاءات يجب أن يطابق عدد الحصص المحدد (% حصة).', p_sessions_count;
-  END IF;
-
-  v_canonical_label := public.internal_resolve_and_verify_tutor_specialization(
-    v_tutor_id,
-    COALESCE(p_offering_course_option_id, v_group.offering_course_option_id),
-    COALESCE(p_quran_age_group_id, v_group.quran_age_group_id),
-    COALESCE(p_quran_level_id, v_group.quran_level_id)
-  );
-
-  DELETE FROM public.tutor_group_sessions WHERE group_id = p_group_id;
-
-  v_sess_num := 0;
-  FOR v_sess IN SELECT * FROM jsonb_array_elements(p_sessions)
-  LOOP
-    v_sess_num := v_sess_num + 1;
-    v_sess_date := (v_sess ->> 'sessionDate')::DATE;
-    v_start := (v_sess ->> 'startTime')::TIME;
-    v_end := (v_sess ->> 'endTime')::TIME;
-    v_tz := COALESCE(NULLIF(BTRIM(v_sess ->> 'timezone'), ''), 'Africa/Cairo');
-
-    IF v_tz NOT IN ('Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai') THEN
-      RAISE EXCEPTION 'المنطقة الزمنية غير مدعومة في اللقاء رقم %.', v_sess_num;
-    END IF;
-
-    IF v_end <= v_start THEN
-      RAISE EXCEPTION 'وقت النهاية يجب أن يكون بعد وقت البداية في اللقاء رقم %.', v_sess_num;
-    END IF;
-
-    v_start_at := ((v_sess_date::text || ' ' || v_start::text)::timestamp) AT TIME ZONE v_tz;
-    v_end_at := ((v_sess_date::text || ' ' || v_end::text)::timestamp) AT TIME ZONE v_tz;
-
-    IF v_start_at <= NOW() THEN
-      RAISE EXCEPTION 'لا يمكن جدولة اللقاء رقم % في وقت سابق من الآن.', v_sess_num;
-    END IF;
-
-    IF EXTRACT(EPOCH FROM (v_end_at - v_start_at)) / 60 <> p_session_duration_minutes THEN
-      RAISE EXCEPTION 'مدة اللقاء رقم % لا تطابق مدة حصة المجموعة (% دقيقة).', v_sess_num, p_session_duration_minutes;
-    END IF;
-
-    v_conflict := public.internal_check_tutor_time_conflict(
-      v_tutor_id,
-      v_start_at,
-      v_end_at,
-      NULL,
-      NULL,
-      p_group_id
-    );
-
-    IF v_conflict IS NOT NULL THEN
-      RAISE EXCEPTION 'تعارض زمني في اللقاء رقم % بتاريخ % الساعة % مع %.', v_sess_num, v_sess_date, v_start, v_conflict;
-    END IF;
-
-    INSERT INTO public.tutor_group_sessions (
-      group_id,
-      tutor_id,
-      session_number,
-      session_date,
-      start_time,
-      end_time,
-      timezone,
-      start_at_utc,
-      end_at_utc,
-      title
-    ) VALUES (
-      p_group_id,
-      v_tutor_id,
-      v_sess_num,
-      v_sess_date,
-      v_start,
-      v_end,
-      v_tz,
-      v_start_at,
-      v_end_at,
-      COALESCE(NULLIF(BTRIM(v_sess ->> 'title'), ''), 'اللقاء ' || v_sess_num)
-    );
-
-    IF v_min_date IS NULL OR v_sess_date < v_min_date THEN
-      v_min_date := v_sess_date;
-    END IF;
-    IF v_max_date IS NULL OR v_sess_date > v_max_date THEN
-      v_max_date := v_sess_date;
-    END IF;
-  END LOOP;
-
-  UPDATE public.tutor_groups
-  SET
-    title = BTRIM(p_title),
-    description = BTRIM(COALESCE(p_description, '')),
-    offering_course_option_id = COALESCE(p_offering_course_option_id, offering_course_option_id),
-    quran_age_group_id = COALESCE(p_quran_age_group_id, quran_age_group_id),
-    quran_level_id = COALESCE(p_quran_level_id, quran_level_id),
-    specialization_label = v_canonical_label,
-    max_students = p_max_students,
-    price_per_student = p_price_per_student,
-    price_type = p_price_type,
-    currency = COALESCE(NULLIF(BTRIM(p_currency), ''), 'ج.م'),
-    sessions_count = p_sessions_count,
-    session_duration_minutes = p_session_duration_minutes,
-    start_date = COALESCE(v_min_date, p_start_date),
-    end_date = COALESCE(v_max_date, p_end_date),
-    weekly_schedule_summary = BTRIM(COALESCE(p_weekly_schedule_summary, '')),
-    review_status = 'approved',
-    is_published = CASE WHEN admin_suspended = TRUE THEN FALSE ELSE TRUE END,
-    updated_at = NOW()
-  WHERE id = p_group_id AND tutor_id = v_tutor_id;
-
-  RETURN jsonb_build_object(
-    'success', TRUE,
-    'groupId', p_group_id,
-    'reviewStatus', 'approved',
-    'isPublished', TRUE
-  );
-END;
-$$;
+-- ============================================================================
+-- 6. Remove Accidental Duplicate TEXT Overloads & Keep Canonical UUID Signatures
+--    from Migrations 010 & 013 (Supporting Africa/Cairo, Asia/Riyadh, Asia/Dubai)
+-- ============================================================================
+DROP FUNCTION IF EXISTS public.tutor_create_private_slots(TEXT, INTEGER, INTEGER, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT, JSONB);
+DROP FUNCTION IF EXISTS public.tutor_update_private_slot(UUID, DATE, TIME, TIME, INTEGER, INTEGER, TEXT, TEXT, TEXT, TEXT, JSONB);
+DROP FUNCTION IF EXISTS public.tutor_create_group(TEXT, TEXT, TEXT, INTEGER, INTEGER, TEXT, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, JSONB, TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.tutor_update_group(UUID, TEXT, TEXT, INTEGER, INTEGER, TEXT, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, JSONB, TEXT, TEXT, TEXT);
 
 -- ============================================================================
 -- 7. Grants & Function Access Lockdown
@@ -1483,20 +743,9 @@ GRANT EXECUTE ON FUNCTION public.tutor_update_profile_pricing(INTEGER, TEXT, INT
 REVOKE ALL ON FUNCTION public.tutor_update_profile_avatar(TEXT, TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.tutor_update_profile_avatar(TEXT, TEXT) TO authenticated, service_role;
 
-REVOKE ALL ON FUNCTION public.tutor_create_slot(DATE, TIME, TIME, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tutor_create_slot(DATE, TIME, TIME, TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.tutor_create_slot(DATE, TIME, TIME, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tutor_create_slot(DATE, TIME, TIME, TEXT) TO authenticated, service_role;
 
-REVOKE ALL ON FUNCTION public.tutor_update_trial_slot(UUID, DATE, TIME, TIME, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tutor_update_trial_slot(UUID, DATE, TIME, TIME, TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.tutor_update_trial_slot(UUID, DATE, TIME, TIME, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tutor_update_trial_slot(UUID, DATE, TIME, TIME, TEXT) TO authenticated, service_role;
 
-REVOKE ALL ON FUNCTION public.tutor_create_private_slots(TEXT, INTEGER, INTEGER, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tutor_create_private_slots(TEXT, INTEGER, INTEGER, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT, JSONB) TO authenticated;
-
-REVOKE ALL ON FUNCTION public.tutor_update_private_slot(UUID, DATE, TIME, TIME, INTEGER, INTEGER, TEXT, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tutor_update_private_slot(UUID, DATE, TIME, TIME, INTEGER, INTEGER, TEXT, TEXT, TEXT, TEXT, JSONB) TO authenticated;
-
-REVOKE ALL ON FUNCTION public.tutor_create_group(TEXT, TEXT, TEXT, INTEGER, INTEGER, TEXT, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, JSONB, TEXT, TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tutor_create_group(TEXT, TEXT, TEXT, INTEGER, INTEGER, TEXT, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, JSONB, TEXT, TEXT, TEXT) TO authenticated;
-
-REVOKE ALL ON FUNCTION public.tutor_update_group(UUID, TEXT, TEXT, INTEGER, INTEGER, TEXT, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, JSONB, TEXT, TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tutor_update_group(UUID, TEXT, TEXT, INTEGER, INTEGER, TEXT, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, JSONB, TEXT, TEXT, TEXT) TO authenticated;

@@ -351,24 +351,49 @@ export const TutorPortalService = {
   async getMySlots(): Promise<TutorAvailableSlot[]> {
     const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_get_my_slots');
 
-    if (!rpcError && rpcData) {
-      return (rpcData as any[]).map((s) => ({
+    if (!rpcError) {
+      if (
+        rpcData &&
+        !Array.isArray(rpcData) &&
+        typeof rpcData === 'object' &&
+        'success' in rpcData &&
+        (rpcData as any).success === false
+      ) {
+        throw new Error(String((rpcData as any).message || 'تعذر تحميل المواعيد التجريبية.'));
+      }
+
+      if (!Array.isArray(rpcData)) {
+        throw new Error('تعذر تحميل المواعيد التجريبية: استجابة غير صالحة من الخادم.');
+      }
+
+      return rpcData.map((s: any) => ({
         id: s.id,
-        tutorId: '',
-        slotDate: s.slot_date,
-        startTime: s.start_time,
-        endTime: s.end_time,
+        tutorId: s.tutor_id ?? s.tutorId ?? '',
+        slotDate: s.slot_date ?? s.slotDate,
+        startTime: s.start_time ?? s.startTime,
+        endTime: s.end_time ?? s.endTime,
         timezone: s.timezone || 'Africa/Cairo',
-        isAvailable: Boolean(s.is_available),
-        adminSuspended: Boolean(s.admin_suspended),
-        isBooked: Boolean(s.is_booked),
-        bookedAt: s.booked_at,
+        isAvailable: Boolean(s.is_available ?? s.isAvailable),
+        adminSuspended: Boolean(s.admin_suspended ?? s.adminSuspended),
+        isBooked: Boolean(s.is_booked ?? s.isBooked),
+        bookedAt: s.booked_at ?? s.bookedAt ?? null,
         notes: null, // Always concealed from tutor
-        createdAt: s.created_at,
+        createdAt: s.created_at ?? s.createdAt,
       }));
     }
 
-    // Fallback: get current tutor ID and query slots
+    const errCode = String(rpcError.code || '');
+    const errMsg = String(rpcError.message || '');
+    const isMissingRpc =
+      errCode === '42883' ||
+      errCode === 'PGRST202' ||
+      /could not find the function.*tutor_get_my_slots/i.test(errMsg);
+
+    if (!isMissingRpc) {
+      throw new Error(`تعذر تحميل المواعيد التجريبية: ${errMsg || 'خطأ في الخادم'}`);
+    }
+
+    // Fallback ONLY when RPC tutor_get_my_slots is not deployed yet
     const context = await this.getMyContext();
     const { data, error } = await supabase
       .from('tutor_available_slots')
@@ -378,7 +403,7 @@ export const TutorPortalService = {
       .order('start_time', { ascending: true });
 
     if (error) {
-      throw new Error(`تعذر تحميل المواعيد: ${error.message}`);
+      throw new Error(`تعذر تحميل المواعيد التجريبية: ${error.message}`);
     }
 
     return (data || []).map((s: any) => ({
@@ -399,15 +424,15 @@ export const TutorPortalService = {
 
   /**
    * 3. Create a future available slot
-   * Strictly uses secure server-side RPC tutor_create_slot
+   * Strictly uses secure server-side RPC tutor_create_slot and verifies actual save result
    */
   async createSlot(
     slotDate: string,
     startTime: string,
     endTime: string,
     timezone: string = 'Africa/Cairo'
-  ): Promise<void> {
-    const { error: rpcError } = await supabase.rpc('tutor_create_slot', {
+  ): Promise<{ slotId: string | null; insertedCount: number }> {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_create_slot', {
       p_slot_date: slotDate,
       p_start_time: startTime,
       p_end_time: endTime,
@@ -415,8 +440,53 @@ export const TutorPortalService = {
     });
 
     if (rpcError) {
-      throw new Error(`تعذر حفظ الموعد: ${rpcError.message}`);
+      throw new Error(`تعذر حفظ الموعد التجريبي: ${rpcError.message}`);
     }
+
+    if (rpcData == null) {
+      throw new Error('لم يؤكد الخادم حفظ الموعد التجريبي (استجابة فارغة من قاعدة البيانات).');
+    }
+
+    if (typeof rpcData === 'string') {
+      const cleanId = rpcData.trim();
+      if (!cleanId) {
+        throw new Error('لم يُرجع الخادم معرّف الموعد التجريبي المضاف.');
+      }
+      return { slotId: cleanId, insertedCount: 1 };
+    }
+
+    if (typeof rpcData === 'object') {
+      const payload = rpcData as Record<string, any>;
+      if ('success' in payload && payload.success === false) {
+        throw new Error(
+          String(payload.message || payload.error || 'رفض الخادم حفظ الموعد التجريبي.')
+        );
+      }
+
+      if ('insertedCount' in payload || 'inserted_count' in payload) {
+        const rawCount = payload.insertedCount ?? payload.inserted_count;
+        const parsedCount = typeof rawCount === 'number' ? rawCount : Number(rawCount);
+        if (!Number.isFinite(parsedCount) || parsedCount <= 0) {
+          throw new Error(
+            String(payload.message || 'لم يتم حفظ أي موعد تجريبي في قاعدة البيانات (العدد المضاف: 0).')
+          );
+        }
+      }
+
+      const slotId =
+        String(payload.slotId || payload.slot_id || payload.id || '').trim() || null;
+      const isConfirmed = payload.success === true || Boolean(slotId);
+
+      if (!isConfirmed) {
+        throw new Error(
+          String(payload.message || 'لم يؤكد الخادم حفظ الموعد التجريبي في قاعدة البيانات.')
+        );
+      }
+
+      return { slotId, insertedCount: 1 };
+    }
+
+    throw new Error('لم يُرجع الخادم تأكيدًا صالحًا لحفظ الموعد التجريبي.');
   },
 
   /**
@@ -467,8 +537,8 @@ export const TutorPortalService = {
       throw new Error(rpcError.message || 'تعذر تعديل الموعد التجريبي.');
     }
 
-    if (data && typeof data === 'object' && data.success === false && data.message) {
-      throw new Error(String(data.message));
+    if (!data || (typeof data === 'object' && 'success' in data && (data as any).success === false)) {
+      throw new Error(String((data as any)?.message || 'رفض الخادم تعديل الموعد التجريبي.'));
     }
   },
 
@@ -619,21 +689,24 @@ export const TutorPortalService = {
     currency: string;
     sessionDurationMinutes: number;
   }> {
-    const price = Math.round(Number(payload.sessionPrice));
-    const duration = Math.round(Number(payload.sessionDurationMinutes));
+    const rawPrice = Number(payload.sessionPrice);
+    const rawDuration = Number(payload.sessionDurationMinutes);
     const currency = String(payload.currency || 'ج.م').trim();
 
-    if (!Number.isFinite(price) || price <= 0 || price > 100000) {
-      throw new Error('يرجى إدخال سعر حصة صحيح أكبر من صفر.');
+    if (!Number.isFinite(rawPrice) || !Number.isInteger(rawPrice) || rawPrice < 1 || rawPrice > 100000) {
+      throw new Error('يرجى إدخال سعر حصة صحيح (رقم صحيح بدون كسور من 1 إلى 100000).');
     }
 
-    if (!Number.isFinite(duration) || duration < 30 || duration > 120) {
+    if (!Number.isFinite(rawDuration) || !Number.isInteger(rawDuration) || rawDuration < 30 || rawDuration > 120) {
       throw new Error('مدة الحصة يجب أن تكون بين 30 و 120 دقيقة.');
     }
 
     if (!['ج.م', 'ر.س', 'د.إ', '$'].includes(currency)) {
       throw new Error('يرجى اختيار عملة مدعومة.');
     }
+
+    const price = rawPrice;
+    const duration = rawDuration;
 
     const { data, error: rpcError } = await supabase.rpc('tutor_update_profile_pricing', {
       p_session_price: price,
@@ -1031,30 +1104,44 @@ export const TutorPortalService = {
       throw new Error(`تعذر تحميل المواعيد الخاصة: ${rpcError.message}`);
     }
 
-    return ((rpcData as any[]) || []).map((s) => ({
+    if (
+      rpcData &&
+      !Array.isArray(rpcData) &&
+      typeof rpcData === 'object' &&
+      'success' in rpcData &&
+      (rpcData as any).success === false
+    ) {
+      throw new Error(String((rpcData as any).message || 'تعذر تحميل المواعيد الخاصة.'));
+    }
+
+    if (!Array.isArray(rpcData)) {
+      throw new Error('تعذر تحميل المواعيد الخاصة: استجابة غير صالحة من الخادم.');
+    }
+
+    return rpcData.map((s: any) => ({
       id: s.id,
       specializationLabel: resolveSpecializationLabel({
-        specializationLabel: s.specialization_label,
-        quranAgeGroupId: s.quran_age_group_id,
-        quranLevelId: s.quran_level_id,
+        specializationLabel: s.specialization_label ?? s.specializationLabel,
+        quranAgeGroupId: s.quran_age_group_id ?? s.quranAgeGroupId,
+        quranLevelId: s.quran_level_id ?? s.quranLevelId,
       }),
-      offeringCourseOptionId: s.offering_course_option_id ?? null,
-      quranAgeGroupId: s.quran_age_group_id ?? null,
-      quranLevelId: s.quran_level_id ?? null,
+      offeringCourseOptionId: s.offering_course_option_id ?? s.offeringCourseOptionId ?? null,
+      quranAgeGroupId: s.quran_age_group_id ?? s.quranAgeGroupId ?? null,
+      quranLevelId: s.quran_level_id ?? s.quranLevelId ?? null,
       allowedSpecializations: normalizeSlotAllowedSpecializations(s),
-      slotDate: s.slot_date,
-      startTime: s.start_time,
-      endTime: s.end_time,
+      slotDate: s.slot_date ?? s.slotDate,
+      startTime: s.start_time ?? s.startTime,
+      endTime: s.end_time ?? s.endTime,
       timezone: s.timezone || 'Africa/Cairo',
-      durationMinutes: Number(s.duration_minutes),
-      priceAmount: Number(s.price_amount),
+      durationMinutes: Number(s.duration_minutes ?? s.durationMinutes),
+      priceAmount: Number(s.price_amount ?? s.priceAmount),
       currency: s.currency || 'ج.م',
-      isAvailable: Boolean(s.is_available),
-      adminSuspended: Boolean(s.admin_suspended),
-      adminSuspensionNotes: s.admin_suspension_notes ?? null,
-      isBooked: Boolean(s.is_booked),
-      bookedAt: s.booked_at ?? null,
-      createdAt: s.created_at,
+      isAvailable: Boolean(s.is_available ?? s.isAvailable),
+      adminSuspended: Boolean(s.admin_suspended ?? s.adminSuspended),
+      adminSuspensionNotes: s.admin_suspension_notes ?? s.adminSuspensionNotes ?? null,
+      isBooked: Boolean(s.is_booked ?? s.isBooked),
+      bookedAt: s.booked_at ?? s.bookedAt ?? null,
+      createdAt: s.created_at ?? s.createdAt,
     }));
   },
 
@@ -1085,13 +1172,37 @@ export const TutorPortalService = {
       throw new Error('يرجى تحديد موعد واحد على الأقل للإضافة.');
     }
 
-    if (durationMinutes == null || Number.isNaN(Number(durationMinutes)) || durationMinutes < 30 || durationMinutes > 120) {
+    const rawDuration = Number(durationMinutes);
+    if (durationMinutes == null || !Number.isFinite(rawDuration) || !Number.isInteger(rawDuration) || rawDuration < 30 || rawDuration > 120) {
       throw new Error('مدة الحصة الخاصة مطلوبة ويجب أن تكون بين 30 و 120 دقيقة.');
     }
 
-    if (priceAmount == null || Number.isNaN(Number(priceAmount)) || priceAmount < 0) {
-      throw new Error('سعر الحصة الخاصة مطلوب ويجب أن يكون قيمة موجبة أو صفراً.');
+    const rawPrice = Number(priceAmount);
+    if (priceAmount == null || !Number.isFinite(rawPrice) || !Number.isInteger(rawPrice) || rawPrice < 0 || rawPrice > 100000) {
+      throw new Error('سعر الحصة الخاصة مطلوب ويجب أن يكون رقمًا صحيحًا بدون كسور (من 0 إلى 100000).');
     }
+
+    const verifyPrivateSlotInsertPayload = (payload: any): { insertedCount: number } => {
+      if (!payload || typeof payload !== 'object') {
+        throw new Error('لم يؤكد الخادم حفظ المواعيد الخاصة (استجابة فارغة أو غير صالحة).');
+      }
+      if ('success' in payload && payload.success === false) {
+        throw new Error(
+          String(payload.message || payload.error || 'رفض الخادم حفظ المواعيد الخاصة.')
+        );
+      }
+      const rawCount = payload.insertedCount ?? payload.inserted_count;
+      const insertedCount = typeof rawCount === 'number' ? rawCount : Number(rawCount);
+      if (!Number.isFinite(insertedCount) || insertedCount <= 0) {
+        throw new Error(
+          String(
+            payload.message ||
+              'لم تتم إضافة أي موعد خاص في قاعدة البيانات (عدد المواعيد المضافة: 0).'
+          )
+        );
+      }
+      return { insertedCount };
+    };
 
     const primarySpec = allSpecs[0];
     const allowedSpecsPayload = allSpecs.map((s) => ({
@@ -1105,8 +1216,8 @@ export const TutorPortalService = {
 
     const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_create_private_slots', {
       p_specialization_label: primarySpec.label,
-      p_duration_minutes: Math.round(Number(durationMinutes)),
-      p_price_amount: Math.round(Number(priceAmount)),
+      p_duration_minutes: rawDuration,
+      p_price_amount: rawPrice,
       p_currency: currency,
       p_slots: slots,
       p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
@@ -1117,7 +1228,7 @@ export const TutorPortalService = {
     });
 
     if (!rpcError) {
-      return { insertedCount: rpcData?.insertedCount || slots.length };
+      return verifyPrivateSlotInsertPayload(rpcData);
     }
 
     if (isMissingMultiSpecRpcError(rpcError)) {
@@ -1129,8 +1240,8 @@ export const TutorPortalService = {
 
       const { data: fallbackData, error: fallbackError } = await supabase.rpc('tutor_create_private_slots', {
         p_specialization_label: primarySpec.label,
-        p_duration_minutes: Math.round(Number(durationMinutes)),
-        p_price_amount: Math.round(Number(priceAmount)),
+        p_duration_minutes: rawDuration,
+        p_price_amount: rawPrice,
         p_currency: currency,
         p_slots: slots,
         p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
@@ -1143,7 +1254,7 @@ export const TutorPortalService = {
         throw new Error(`تعذر حفظ المواعيد الخاصة: ${fallbackError.message}`);
       }
 
-      return { insertedCount: fallbackData?.insertedCount || slots.length };
+      return verifyPrivateSlotInsertPayload(fallbackData);
     }
 
     throw new Error(`تعذر حفظ المواعيد الخاصة: ${rpcError.message}`);
@@ -1184,12 +1295,14 @@ export const TutorPortalService = {
       throw new Error('يرجى اختيار تخصص معتمد واحد على الأقل للموعد الخاص.');
     }
 
-    if (durationMinutes == null || Number.isNaN(Number(durationMinutes)) || durationMinutes < 30 || durationMinutes > 120) {
+    const rawDuration = Number(durationMinutes);
+    if (durationMinutes == null || !Number.isFinite(rawDuration) || !Number.isInteger(rawDuration) || rawDuration < 30 || rawDuration > 120) {
       throw new Error('مدة الحصة الخاصة مطلوبة ويجب أن تكون بين 30 و 120 دقيقة.');
     }
 
-    if (priceAmount == null || Number.isNaN(Number(priceAmount)) || priceAmount < 0) {
-      throw new Error('سعر الحصة الخاصة مطلوب ويجب أن يكون قيمة موجبة أو صفراً.');
+    const rawPrice = Number(priceAmount);
+    if (priceAmount == null || !Number.isFinite(rawPrice) || !Number.isInteger(rawPrice) || rawPrice < 0 || rawPrice > 100000) {
+      throw new Error('سعر الحصة الخاصة مطلوب ويجب أن يكون رقمًا صحيحًا بدون كسور (من 0 إلى 100000).');
     }
 
     const primarySpec = allSpecs[0];
@@ -1202,13 +1315,13 @@ export const TutorPortalService = {
       label: s.label,
     }));
 
-    const { error: rpcError } = await supabase.rpc('tutor_update_private_slot', {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_update_private_slot', {
       p_slot_id: slotId,
       p_slot_date: slotDate,
       p_start_time: startTime,
       p_end_time: endTime,
-      p_duration_minutes: Math.round(Number(durationMinutes)),
-      p_price_amount: Math.round(Number(priceAmount)),
+      p_duration_minutes: rawDuration,
+      p_price_amount: rawPrice,
       p_timezone: timezone,
       p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
       p_quran_age_group_id: primarySpec.track === 'quran' ? primarySpec.ageGroupId || null : null,
@@ -1217,23 +1330,26 @@ export const TutorPortalService = {
     });
 
     if (!rpcError) {
+      if (!rpcData || (typeof rpcData === 'object' && 'success' in rpcData && (rpcData as any).success === false)) {
+        throw new Error(String((rpcData as any)?.message || 'رفض الخادم تعديل الموعد الخاص.'));
+      }
       return;
     }
 
     if (isMissingMultiSpecRpcError(rpcError)) {
       if (allSpecs.length > 1) {
         throw new Error(
-          'تعديل الموعد الخاص ليشمل أكثر من تخصص بديل يتطلب تطبيق تحديث قاعدة البيانات (Migration 013) أولاً. يرجى اختيار تخصص واحد فقط حالياً لحين تطبيق التحديث.'
+          'تعديل الموعد الخاص ليشمل أكثر من تخصص بديل تتطلب تطبيق تحديث قاعدة البيانات (Migration 013) أولاً. يرجى اختيار تخصص واحد فقط حالياً لحين تطبيق التحديث.'
         );
       }
 
-      const { error: fallbackError } = await supabase.rpc('tutor_update_private_slot', {
+      const { data: fallbackData, error: fallbackError } = await supabase.rpc('tutor_update_private_slot', {
         p_slot_id: slotId,
         p_slot_date: slotDate,
         p_start_time: startTime,
         p_end_time: endTime,
-        p_duration_minutes: Math.round(Number(durationMinutes)),
-        p_price_amount: Math.round(Number(priceAmount)),
+        p_duration_minutes: rawDuration,
+        p_price_amount: rawPrice,
         p_timezone: timezone,
         p_offering_course_option_id: primarySpec.track === 'school' ? primarySpec.courseOptionId || null : null,
         p_quran_age_group_id: primarySpec.track === 'quran' ? primarySpec.ageGroupId || null : null,
@@ -1242,6 +1358,9 @@ export const TutorPortalService = {
 
       if (fallbackError) {
         throw new Error(`تعذر تعديل الموعد الخاص: ${fallbackError.message}`);
+      }
+      if (!fallbackData || (typeof fallbackData === 'object' && 'success' in fallbackData && (fallbackData as any).success === false)) {
+        throw new Error(String((fallbackData as any)?.message || 'رفض الخادم تعديل الموعد الخاص.'));
       }
       return;
     }
@@ -1268,41 +1387,68 @@ export const TutorPortalService = {
    */
   async getMyGroups(): Promise<TutorGroup[]> {
     const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_get_my_groups');
-    if (!rpcError && rpcData) {
-      return (rpcData as any[]).map((g) => ({
+    if (!rpcError) {
+      if (
+        rpcData &&
+        !Array.isArray(rpcData) &&
+        typeof rpcData === 'object' &&
+        'success' in rpcData &&
+        (rpcData as any).success === false
+      ) {
+        throw new Error(String((rpcData as any).message || 'تعذر تحميل المجموعات التعليمية.'));
+      }
+
+      if (!Array.isArray(rpcData)) {
+        throw new Error('تعذر تحميل المجموعات التعليمية: استجابة غير صالحة من الخادم.');
+      }
+
+      return rpcData.map((g: any) => ({
         id: g.id,
         title: g.title,
         description: g.description,
         specializationLabel: resolveSpecializationLabel({
-          specializationLabel: g.specialization_label,
-          quranAgeGroupId: g.quran_age_group_id,
-          quranLevelId: g.quran_level_id,
+          specializationLabel: g.specialization_label ?? g.specializationLabel,
+          quranAgeGroupId: g.quran_age_group_id ?? g.quranAgeGroupId,
+          quranLevelId: g.quran_level_id ?? g.quranLevelId,
         }),
-        maxStudents: g.max_students,
-        enrolledStudents: g.enrolled_students || 0,
+        maxStudents: g.max_students ?? g.maxStudents,
+        enrolledStudents: g.enrolled_students ?? g.enrolledStudents ?? 0,
         remainingSeats:
           g.remaining_seats !== undefined
             ? g.remaining_seats
-            : Math.max(0, g.max_students - (g.enrolled_students || 0)),
-        pricePerStudent: g.price_per_student,
-        priceType: g.price_type || 'full_package',
+            : g.remainingSeats !== undefined
+            ? g.remainingSeats
+            : Math.max(0, (g.max_students ?? g.maxStudents) - (g.enrolled_students ?? g.enrolledStudents ?? 0)),
+        pricePerStudent: g.price_per_student ?? g.pricePerStudent,
+        priceType: g.price_type || g.priceType || 'full_package',
         currency: g.currency || 'ج.م',
-        sessionsCount: g.sessions_count,
-        sessionDurationMinutes: g.session_duration_minutes,
-        startDate: g.start_date,
-        endDate: g.end_date,
-        weeklyScheduleSummary: g.weekly_schedule_summary,
-        reviewStatus: g.review_status || (g.is_published ? 'approved' : 'open'),
-        adminReviewNotes: g.admin_review_notes || null,
-        adminSuspended: Boolean(g.admin_suspended),
-        adminSuspensionReason: g.admin_suspension_reason || null,
+        sessionsCount: g.sessions_count ?? g.sessionsCount,
+        sessionDurationMinutes: g.session_duration_minutes ?? g.sessionDurationMinutes,
+        startDate: g.start_date ?? g.startDate,
+        endDate: g.end_date ?? g.endDate,
+        weeklyScheduleSummary: g.weekly_schedule_summary ?? g.weeklyScheduleSummary,
+        reviewStatus: g.review_status || g.reviewStatus || (g.is_published ? 'approved' : 'open'),
+        adminReviewNotes: g.admin_review_notes || g.adminReviewNotes || null,
+        adminSuspended: Boolean(g.admin_suspended ?? g.adminSuspended),
+        adminSuspensionReason: g.admin_suspension_reason || g.adminSuspensionReason || null,
         status: g.status,
-        isPublished: Boolean(g.is_published),
-        createdAt: g.created_at,
+        isPublished: Boolean(g.is_published ?? g.isPublished),
+        createdAt: g.created_at ?? g.createdAt,
       }));
     }
 
-    // Fallback: direct select if RPC not yet deployed
+    const errCode = String(rpcError.code || '');
+    const errMsg = String(rpcError.message || '');
+    const isMissingRpc =
+      errCode === '42883' ||
+      errCode === 'PGRST202' ||
+      /could not find the function.*tutor_get_my_groups/i.test(errMsg);
+
+    if (!isMissingRpc) {
+      throw new Error(`تعذر تحميل المجموعات التعليمية: ${errMsg || 'خطأ في الخادم'}`);
+    }
+
+    // Fallback: direct select ONLY if RPC not yet deployed
     const context = await this.getMyContext();
     const { data, error } = await supabase
       .from('tutor_groups')
@@ -1311,7 +1457,7 @@ export const TutorPortalService = {
       .order('start_date', { ascending: false });
 
     if (error) {
-      return [];
+      throw new Error(`تعذر تحميل المجموعات التعليمية: ${error.message}`);
     }
 
     return (data || []).map((g: any) => ({
@@ -1400,12 +1546,17 @@ export const TutorPortalService = {
       sessions,
     } = params;
 
-    const { error: rpcError } = await supabase.rpc('tutor_create_group', {
+    const rawGroupPrice = Number(pricePerStudent);
+    if (pricePerStudent == null || !Number.isFinite(rawGroupPrice) || !Number.isInteger(rawGroupPrice) || rawGroupPrice < 0 || rawGroupPrice > 100000) {
+      throw new Error('سعر الاشتراك للطالب يجب أن يكون رقمًا صحيحًا بدون كسور (من 0 إلى 100000).');
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_create_group', {
       p_title: title.trim(),
       p_description: description.trim(),
       p_specialization_label: specialization.label,
       p_max_students: maxStudents,
-      p_price_per_student: pricePerStudent,
+      p_price_per_student: rawGroupPrice,
       p_price_type: priceType,
       p_currency: currency,
       p_sessions_count: sessionsCount,
@@ -1421,6 +1572,10 @@ export const TutorPortalService = {
 
     if (rpcError) {
       throw new Error(`تعذر إنشاء المجموعة التعليمية: ${rpcError.message}`);
+    }
+
+    if (!rpcData || (typeof rpcData === 'object' && 'success' in rpcData && (rpcData as any).success === false)) {
+      throw new Error(String((rpcData as any)?.message || 'رفض الخادم إنشاء المجموعة التعليمية.'));
     }
   },
 
@@ -1478,12 +1633,17 @@ export const TutorPortalService = {
       sessions,
     } = params;
 
-    const { error: rpcError } = await supabase.rpc('tutor_update_group', {
+    const rawGroupPrice = Number(pricePerStudent);
+    if (pricePerStudent == null || !Number.isFinite(rawGroupPrice) || !Number.isInteger(rawGroupPrice) || rawGroupPrice < 0 || rawGroupPrice > 100000) {
+      throw new Error('سعر الاشتراك للطالب يجب أن يكون رقمًا صحيحًا بدون كسور (من 0 إلى 100000).');
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('tutor_update_group', {
       p_group_id: groupId,
       p_title: title.trim(),
       p_description: description.trim(),
       p_max_students: maxStudents,
-      p_price_per_student: pricePerStudent,
+      p_price_per_student: rawGroupPrice,
       p_price_type: priceType,
       p_currency: currency,
       p_sessions_count: sessionsCount,
@@ -1499,6 +1659,10 @@ export const TutorPortalService = {
 
     if (rpcError) {
       throw new Error(`تعذر تحديث بيانات المجموعة: ${rpcError.message}`);
+    }
+
+    if (!rpcData || (typeof rpcData === 'object' && 'success' in rpcData && (rpcData as any).success === false)) {
+      throw new Error(String((rpcData as any)?.message || 'رفض الخادم تحديث بيانات المجموعة.'));
     }
   },
 

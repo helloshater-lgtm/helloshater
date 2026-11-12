@@ -91,20 +91,33 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
   // Direct Self-Service Pricing State ("سعري ومدة الحصة")
   const [pricingSessionPrice, setPricingSessionPrice] = useState<number>(150);
+  const [pricingSessionPriceInput, setPricingSessionPriceInput] = useState<string>('150');
   const [pricingCurrency, setPricingCurrency] = useState<string>('ج.م');
   const [pricingDurationMinutes, setPricingDurationMinutes] = useState<number>(50);
   const [isSavingPricing, setIsSavingPricing] = useState(false);
   const [pricingSaveSuccess, setPricingSaveSuccess] = useState<string | null>(null);
   const [pricingSaveError, setPricingSaveError] = useState<string | null>(null);
+  const [pricingFieldErrors, setPricingFieldErrors] = useState<{
+    price?: string;
+    duration?: string;
+    currency?: string;
+  }>({});
 
   // 1. Trial Slots State (Strictly 20 minutes)
   const [trialSlots, setTrialSlots] = useState<TutorAvailableSlot[]>([]);
+  const [isLoadingTrials, setIsLoadingTrials] = useState(false);
+  const [trialSlotsLoadError, setTrialSlotsLoadError] = useState<string | null>(null);
+  const [trialReloadWarning, setTrialReloadWarning] = useState<string | null>(null);
   const [newTrialDate, setNewTrialDate] = useState('');
   const [newTrialStart, setNewTrialStart] = useState('16:00');
   const [newTrialEnd, setNewTrialEnd] = useState('16:20');
   const [newTrialTimezone, setNewTrialTimezone] = useState<string>('Africa/Cairo');
   const [isAddingTrial, setIsAddingTrial] = useState(false);
   const [deletingTrialId, setDeletingTrialId] = useState<string | null>(null);
+  const [trialFieldErrors, setTrialFieldErrors] = useState<{
+    date?: string;
+    start?: string;
+  }>({});
 
   // Editing Trial Slot Modal State (Strictly 20 minutes)
   const [editingTrialSlot, setEditingTrialSlot] = useState<TutorAvailableSlot | null>(null);
@@ -127,9 +140,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // 2. Private Slots State (1:1 paid sessions with multi-specialization support)
   const [privateSlots, setPrivateSlots] = useState<TutorPrivateSlot[]>([]);
   const [isLoadingPrivate, setIsLoadingPrivate] = useState(false);
+  const [privateSlotsLoadError, setPrivateSlotsLoadError] = useState<string | null>(null);
+  const [privateReloadWarning, setPrivateReloadWarning] = useState<string | null>(null);
   const [selectedSpecIds, setSelectedSpecIds] = useState<string[]>([]);
   const [privateDurationMinutes, setPrivateDurationMinutes] = useState<number>(50);
   const [privatePriceAmount, setPrivatePriceAmount] = useState<number>(150);
+  const [privatePriceInput, setPrivatePriceInput] = useState<string>('150');
   const [privateCurrency, setPrivateCurrency] = useState<string>('ج.م');
   const [privateTimezone, setPrivateTimezone] = useState<string>('Africa/Cairo');
   const [privateSchedulingMode, setPrivateSchedulingMode] = useState<'single' | 'weekly_repeat'>('single');
@@ -142,6 +158,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   >([]);
   const [isSavingPrivateSlots, setIsSavingPrivateSlots] = useState(false);
   const [deletingPrivateSlotId, setDeletingPrivateSlotId] = useState<string | null>(null);
+  const [privateFieldErrors, setPrivateFieldErrors] = useState<{
+    specializations?: string;
+    price?: string;
+    duration?: string;
+    date?: string;
+  }>({});
 
   // Editing private slot modal state
   const [editingPrivateSlot, setEditingPrivateSlot] = useState<TutorPrivateSlot | null>(null);
@@ -150,9 +172,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [editSlotEnd, setEditSlotEnd] = useState('');
   const [editSlotDuration, setEditSlotDuration] = useState(50);
   const [editSlotPrice, setEditSlotPrice] = useState(150);
+  const [editSlotPriceInput, setEditSlotPriceInput] = useState('150');
   const [editSlotTimezone, setEditSlotTimezone] = useState<string>('Africa/Cairo');
   const [editSlotSpecIds, setEditSlotSpecIds] = useState<string[]>([]);
   const [isUpdatingSlot, setIsUpdatingSlot] = useState(false);
+  const [editPrivateFieldErrors, setEditPrivateFieldErrors] = useState<{
+    price?: string;
+    date?: string;
+  }>({});
 
   // Generate Preview for Private Slots using timezone-independent calendar math
   useEffect(() => {
@@ -195,6 +222,8 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // 3. Educational Groups State (3-Step Wizard)
   const [groups, setGroups] = useState<TutorGroup[]>([]);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
+  const [groupsLoadError, setGroupsLoadError] = useState<string | null>(null);
+  const [groupsReloadWarning, setGroupsReloadWarning] = useState<string | null>(null);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [showAddGroupForm, setShowAddGroupForm] = useState(false);
   const [groupWizardStep, setGroupWizardStep] = useState<1 | 2 | 3>(1);
@@ -205,6 +234,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [groupSpecId, setGroupSpecId] = useState('');
   const [groupMaxStudents, setGroupMaxStudents] = useState(5);
   const [groupPricePerStudent, setGroupPricePerStudent] = useState(250);
+  const [groupPriceInput, setGroupPriceInput] = useState('250');
   const [groupPriceType, setGroupPriceType] = useState<'per_session' | 'full_package'>('full_package');
   const [groupCurrency, setGroupCurrency] = useState('ج.م');
   const [groupSessionsCount, setGroupSessionsCount] = useState(4);
@@ -230,6 +260,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [isLoadingGroupSessionsForEdit, setIsLoadingGroupSessionsForEdit] = useState(false);
   // Tracks whether tutor explicitly changed any schedule field while editing an existing group
   const [groupScheduleModifiedByTutor, setGroupScheduleModifiedByTutor] = useState<boolean>(true);
+  const [groupFieldErrors, setGroupFieldErrors] = useState<{
+    title?: string;
+    spec?: string;
+    maxStudents?: string;
+    price?: string;
+    sessionsCount?: string;
+    startDate?: string;
+    schedule?: string;
+  }>({});
 
   // 4. Profile Text & Self-Service Avatar State
   const [draftHeadline, setDraftHeadline] = useState('');
@@ -238,6 +277,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [isSavingProfileText, setIsSavingProfileText] = useState(false);
   const [textSaveSuccess, setTextSaveSuccess] = useState<string | null>(null);
   const [textSaveError, setTextSaveError] = useState<string | null>(null);
+  const [textFieldErrors, setTextFieldErrors] = useState<{
+    headline?: string;
+    quote?: string;
+    summary?: string;
+  }>({});
 
   const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
   const [selectedAvatarPreviewUrl, setSelectedAvatarPreviewUrl] = useState<string | null>(null);
@@ -282,10 +326,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       const dbDuration = Number(tutor.sessionDurationMinutes) >= 30 ? Number(tutor.sessionDurationMinutes) : 50;
 
       setPricingSessionPrice(dbPrice);
+      setPricingSessionPriceInput(String(dbPrice));
       setPricingCurrency(dbCurrency);
       setPricingDurationMinutes(dbDuration);
 
       setPrivatePriceAmount(dbPrice);
+      setPrivatePriceInput(String(dbPrice));
       setPrivateCurrency(dbCurrency);
       setPrivateDurationMinutes(dbDuration);
       setGroupCurrency(dbCurrency);
@@ -326,34 +372,65 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     }
   };
 
-  const loadTrialSlots = async () => {
+  const loadTrialSlots = async (options?: {
+    throwOnError?: boolean;
+  }): Promise<TutorAvailableSlot[]> => {
+    setIsLoadingTrials(true);
+    setTrialSlotsLoadError(null);
     try {
       const mySlots = await TutorPortalService.getMySlots();
       setTrialSlots(mySlots);
-    } catch (err) {
-      console.warn('Could not load trial slots:', err);
+      setTrialReloadWarning(null);
+      return mySlots;
+    } catch (err: any) {
+      const msg = err?.message || 'تعذر تحميل قائمة المواعيد التجريبية.';
+      setTrialSlotsLoadError(msg);
+      if (options?.throwOnError) {
+        throw new Error(msg);
+      }
+      return [];
+    } finally {
+      setIsLoadingTrials(false);
     }
   };
 
-  const loadPrivateSlots = async () => {
+  const loadPrivateSlots = async (options?: {
+    throwOnError?: boolean;
+  }): Promise<TutorPrivateSlot[]> => {
     setIsLoadingPrivate(true);
+    setPrivateSlotsLoadError(null);
     try {
       const pSlots = await TutorPortalService.getMyPrivateSlots();
       setPrivateSlots(pSlots);
-    } catch (err) {
-      console.warn('Could not load private slots:', err);
+      setPrivateReloadWarning(null);
+      return pSlots;
+    } catch (err: any) {
+      const msg = err?.message || 'تعذر تحميل قائمة المواعيد الخاصة.';
+      setPrivateSlotsLoadError(msg);
+      if (options?.throwOnError) {
+        throw new Error(msg);
+      }
+      return [];
     } finally {
       setIsLoadingPrivate(false);
     }
   };
 
-  const loadGroups = async () => {
+  const loadGroups = async (options?: { throwOnError?: boolean }): Promise<TutorGroup[]> => {
     setIsLoadingGroups(true);
+    setGroupsLoadError(null);
     try {
       const myGroups = await TutorPortalService.getMyGroups();
       setGroups(myGroups);
-    } catch (err) {
-      console.warn('Could not load groups:', err);
+      setGroupsReloadWarning(null);
+      return myGroups;
+    } catch (err: any) {
+      const msg = err?.message || 'تعذر تحميل قائمة المجموعات التعليمية.';
+      setGroupsLoadError(msg);
+      if (options?.throwOnError) {
+        throw new Error(msg);
+      }
+      return [];
     } finally {
       setIsLoadingGroups(false);
     }
@@ -399,19 +476,33 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     e.preventDefault();
     setPricingSaveError(null);
     setPricingSaveSuccess(null);
+    setPricingFieldErrors({});
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const priceNum = Math.round(Number(pricingSessionPrice));
-    const durationNum = Math.round(Number(pricingDurationMinutes));
+    const normalizedPriceStr = String(pricingSessionPriceInput ?? '')
+      .trim()
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+    const priceNum = Number(normalizedPriceStr);
+    const durationNum = Number(pricingDurationMinutes);
 
-    if (!Number.isFinite(priceNum) || priceNum <= 0 || priceNum > 100000) {
-      setPricingSaveError('يرجى إدخال سعر حصة صحيح أكبر من صفر.');
-      return;
+    const nextFieldErrors: { price?: string; duration?: string; currency?: string } = {};
+
+    if (!normalizedPriceStr) {
+      nextFieldErrors.price = 'حقل السعر فارغ: يرجى إدخال رقم صحيح بدون كسور (من 1 إلى 100000، مثل 127 أو 175).';
+    } else if (!/^-?[0-9]+$/.test(normalizedPriceStr) || !Number.isInteger(priceNum)) {
+      nextFieldErrors.price = 'لا يُسمح بالكسور العشرية: يرجى إدخال رقم صحيح بدون كسور (مثل 127 أو 175) دون تقريب تلقائي.';
+    } else if (!Number.isFinite(priceNum) || priceNum < 1 || priceNum > 100000) {
+      nextFieldErrors.price = 'القيمة خارج النطاق المسموح: يجب أن يكون سعر الحصة رقمًا صحيحًا من 1 إلى 100000.';
     }
 
-    if (!Number.isFinite(durationNum) || durationNum < 30 || durationNum > 120) {
-      setPricingSaveError('مدة الحصة يجب أن تكون بين 30 و 120 دقيقة.');
+    if (!Number.isFinite(durationNum) || !Number.isInteger(durationNum) || durationNum < 30 || durationNum > 120) {
+      nextFieldErrors.duration = 'مدة الحصة غير صالحة: يجب اختيار مدة بين 30 و 120 دقيقة.';
+    }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setPricingFieldErrors(nextFieldErrors);
+      setPricingSaveError(nextFieldErrors.price || nextFieldErrors.duration || 'يرجى مراجعة الحقول المميزة باللون الأحمر.');
       return;
     }
 
@@ -438,7 +529,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         };
       });
 
+      setPricingSessionPrice(updatedPricing.hourlyRateMin);
+      setPricingSessionPriceInput(String(updatedPricing.hourlyRateMin));
       setPrivatePriceAmount(updatedPricing.hourlyRateMin);
+      setPrivatePriceInput(String(updatedPricing.hourlyRateMin));
       setPrivateCurrency(updatedPricing.currency);
       setPrivateDurationMinutes(updatedPricing.sessionDurationMinutes);
 
@@ -446,7 +540,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         `تم حفظ سعرك (${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة — ${updatedPricing.sessionDurationMinutes} دقيقة) وتحديث ملفك المنشور مباشرةً وأصبح هو السعر الافتراضي لمواعيدك الخاصة الجديدة.`
       );
     } catch (err: any) {
-      setPricingSaveError(err?.message || 'تعذر حفظ السعر ومدة الحصة.');
+      const msg = err?.message || 'تعذر حفظ السعر ومدة الحصة.';
+      setPricingSaveError(msg);
+      setPricingFieldErrors({ price: msg });
     } finally {
       setIsSavingPricing(false);
     }
@@ -455,24 +551,71 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // 1. Handlers for Trial Slots (20 mins)
   const handleCreateTrialSlot = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTrialDate || !newTrialStart || !newTrialEnd) {
-      setErrorMessage('يرجى تحديد تاريخ ووقت البداية والنهاية للموعد التجريبي.');
-      return;
-    }
-
-    const computedEnd = addMinutesToTimeStr(newTrialStart, 20);
-    setIsAddingTrial(true);
+    setTrialFieldErrors({});
+    setTrialReloadWarning(null);
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    if (!newTrialDate) {
+      const msg = 'يرجى تحديد تاريخ الموعد التجريبي (تاريخ اليوم أو تاريخ مستقبلي).';
+      setTrialFieldErrors({ date: msg });
+      setErrorMessage(msg);
+      return;
+    }
+    if (!newTrialStart || !newTrialEnd) {
+      const msg = 'يرجى تحديد وقت بداية الموعد التجريبي.';
+      setTrialFieldErrors({ start: msg });
+      setErrorMessage(msg);
+      return;
+    }
+
+    const savedDate = newTrialDate.trim().slice(0, 10);
+    const savedStart = newTrialStart.trim().slice(0, 5);
+    const computedEnd = addMinutesToTimeStr(newTrialStart, 20);
+    setIsAddingTrial(true);
+
     try {
-      await TutorPortalService.createSlot(newTrialDate, newTrialStart, computedEnd, newTrialTimezone);
-      setSuccessMessage('تمت إضافة الموعد التجريبي ونشره في ملفك بنجاح!');
-      setTimeout(() => setSuccessMessage(null), 4000);
-      await loadTrialSlots();
+      const saveResult = await TutorPortalService.createSlot(
+        savedDate,
+        newTrialStart,
+        computedEnd,
+        newTrialTimezone
+      );
+      const actualAddedCount = saveResult.insertedCount;
+
+      // Clear date input immediately after save succeeds so the tutor cannot accidentally duplicate the slot
       setNewTrialDate('');
+
+      try {
+        const refreshedSlots = await loadTrialSlots({ throwOnError: true });
+        const foundInRefreshed = refreshedSlots.some((s) =>
+          saveResult.slotId
+            ? s.id === saveResult.slotId
+            : String(s.slotDate || '').slice(0, 10) === savedDate &&
+              String(s.startTime || '').slice(0, 5) === savedStart
+        );
+
+        if (!foundInRefreshed) {
+          setTrialReloadWarning(
+            `تم الحفظ (عدد المواعيد المضافة: ${actualAddedCount})، لكن تعذر تحديث القائمة أو لم يظهر الموعد الجديد بعد.`
+          );
+          return;
+        }
+
+        setSuccessMessage(
+          `تم حفظ ونشر ${actualAddedCount} موعد تجريبي بنجاح وظهوره في قائمة المواعيد المسجلة!`
+        );
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } catch (reloadErr: any) {
+        const detail = reloadErr?.message ? ` — ${reloadErr.message}` : '';
+        setTrialReloadWarning(
+          `تم الحفظ (عدد المواعيد المضافة: ${actualAddedCount})، لكن تعذر تحديث القائمة${detail}`
+        );
+      }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'فشل إضافة الموعد التجريبي.');
+      const msg = err?.message || 'فشل إضافة الموعد التجريبي.';
+      setTrialFieldErrors({ date: msg });
+      setErrorMessage(msg);
     } finally {
       setIsAddingTrial(false);
     }
@@ -482,24 +625,46 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     e.preventDefault();
     if (!editingTrialSlot) return;
 
+    const updatedSlotId = editingTrialSlot.id;
+    const savedDate = editTrialDate.trim().slice(0, 10);
+    const savedStart = editTrialStart.trim().slice(0, 5);
     const computedEnd = addMinutesToTimeStr(editTrialStart, 20);
     setIsUpdatingTrialSlot(true);
+    setTrialReloadWarning(null);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
       await TutorPortalService.updateTrialSlot({
-        slotId: editingTrialSlot.id,
+        slotId: updatedSlotId,
         slotDate: editTrialDate,
         startTime: editTrialStart,
         endTime: computedEnd,
         timezone: editTrialTimezone,
       });
 
-      setSuccessMessage('تم تعديل الموعد التجريبي (٢٠ دقيقة) بنجاح.');
-      setTimeout(() => setSuccessMessage(null), 4000);
       setEditingTrialSlot(null);
-      await loadTrialSlots();
+
+      try {
+        const refreshedSlots = await loadTrialSlots({ throwOnError: true });
+        const foundUpdated = refreshedSlots.some(
+          (s) =>
+            s.id === updatedSlotId &&
+            String(s.slotDate || '').slice(0, 10) === savedDate &&
+            String(s.startTime || '').slice(0, 5) === savedStart
+        );
+
+        if (!foundUpdated) {
+          setTrialReloadWarning('تم الحفظ، لكن تعذر تحديث القائمة.');
+          return;
+        }
+
+        setSuccessMessage('تم تعديل الموعد التجريبي (٢٠ دقيقة) وتحديث القائمة بنجاح.');
+        setTimeout(() => setSuccessMessage(null), 4000);
+      } catch (reloadErr: any) {
+        const detail = reloadErr?.message ? ` — ${reloadErr.message}` : '';
+        setTrialReloadWarning(`تم الحفظ، لكن تعذر تحديث القائمة${detail}`);
+      }
     } catch (err: any) {
       setErrorMessage(err?.message || 'تعذر تعديل الموعد التجريبي.');
     } finally {
@@ -527,50 +692,116 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // 2. Handlers for Private Slots (1:1 with multi-specialization support)
   const handleSavePrivateSlots = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPrivateFieldErrors({});
+    setPrivateReloadWarning(null);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const nextErrors: {
+      specializations?: string;
+      price?: string;
+      duration?: string;
+      date?: string;
+    } = {};
+
     const chosenSpecs = specializations.filter((s) => selectedSpecIds.includes(s.id));
     if (chosenSpecs.length === 0) {
-      setErrorMessage('يرجى اختيار تخصص معتمد واحد على الأقل للموعد الخاص.');
-      return;
+      nextErrors.specializations = 'يرجى اختيار تخصص معتمد واحد على الأقل لهذا الموعد الخاص.';
+    }
+
+    const normalizedSlotPriceStr = String(privatePriceInput ?? '')
+      .trim()
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+    const parsedSlotPrice = Number(normalizedSlotPriceStr);
+
+    if (!normalizedSlotPriceStr) {
+      nextErrors.price = 'حقل السعر مطلوب: يرجى إدخال رقم صحيح بدون كسور (من 0 إلى 100000).';
+    } else if (!/^-?[0-9]+$/.test(normalizedSlotPriceStr) || !Number.isInteger(parsedSlotPrice)) {
+      nextErrors.price = 'لا يُسمح بالكسور العشرية: يرجى إدخال رقم صحيح بدون كسور (مثل 6 أو 127 أو 175).';
+    } else if (!Number.isFinite(parsedSlotPrice) || parsedSlotPrice < 0 || parsedSlotPrice > 100000) {
+      nextErrors.price = 'القيمة خارج النطاق المسموح: يجب أن يكون سعر الحصة رقمًا صحيحًا بين 0 و 100000.';
     }
 
     if (previewPrivateSlots.length === 0) {
-      setErrorMessage('يرجى تحديد موعد صالح واحد على الأقل للمعاينة والحفظ.');
+      nextErrors.date =
+        privateSchedulingMode === 'single'
+          ? 'يرجى تحديد تاريخ الموعد (تاريخ اليوم أو تاريخ مستقبلي) لإضافة الموعد.'
+          : 'يرجى تحديد تاريخ نهاية التكرار الأسبوعي (تاريخ مستقبلي) وأيام التكرار.';
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setPrivateFieldErrors(nextErrors);
+      setErrorMessage(
+        nextErrors.price ||
+          nextErrors.date ||
+          nextErrors.specializations ||
+          'يرجى مراجعة الحقول المطلوبة لإضافة الموعد.'
+      );
       return;
     }
 
-    if (privatePriceAmount < 0) {
-      setErrorMessage('يرجى تحديد سعر حصة صالح.');
-      return;
-    }
+    const activeCurrency = privateCurrency || context?.tutor.currency || 'ج.م';
+    const slotsToSave = [...previewPrivateSlots];
 
     setIsSavingPrivateSlots(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
 
     try {
       const res = await TutorPortalService.createPrivateSlots({
         specializations: chosenSpecs,
         durationMinutes: privateDurationMinutes,
-        priceAmount: privatePriceAmount,
-        currency: privateCurrency,
+        priceAmount: parsedSlotPrice,
+        currency: activeCurrency,
         timezone: privateTimezone,
-        slots: previewPrivateSlots,
+        slots: slotsToSave,
       });
+
+      const actualInsertedCount = res.insertedCount;
 
       const specsNotice =
         chosenSpecs.length > 1
           ? `مع ${chosenSpecs.length} تخصصات بديلة لنفس الموعد`
           : `لتخصص ${chosenSpecs[0].label}`;
 
-      setSuccessMessage(
-        `تم حفظ ونشر ${res.insertedCount} موعداً خاصاً بنجاح بسعر ${privatePriceAmount} ${privateCurrency} (${specsNotice})!`
-      );
-      setTimeout(() => setSuccessMessage(null), 6000);
-      await loadPrivateSlots();
+      setPrivatePriceAmount(parsedSlotPrice);
+      setPrivatePriceInput(String(parsedSlotPrice));
+      setPrivateCurrency(activeCurrency);
+
+      // Clear date inputs immediately after save succeeds so the tutor cannot accidentally duplicate the slots
       setPrivateSingleDate('');
       setPrivateRepeatUntilDate('');
+
+      try {
+        const refreshedSlots = await loadPrivateSlots({ throwOnError: true });
+        const matchedNewSlotsCount = slotsToSave.filter((expected) =>
+          refreshedSlots.some(
+            (actual) =>
+              String(actual.slotDate || '').slice(0, 10) ===
+                String(expected.date || '').slice(0, 10) &&
+              String(actual.startTime || '').slice(0, 5) ===
+                String(expected.startTime || '').slice(0, 5)
+          )
+        ).length;
+
+        if (matchedNewSlotsCount < actualInsertedCount) {
+          setPrivateReloadWarning(
+            `تم الحفظ (عدد المواعيد المضافة: ${actualInsertedCount} بسعر ${parsedSlotPrice} ${activeCurrency})، لكن تعذر تحديث القائمة بالكامل.`
+          );
+          return;
+        }
+
+        setSuccessMessage(
+          `تم حفظ ونشر ${actualInsertedCount} موعد خاص بنجاح بسعر ${parsedSlotPrice} ${activeCurrency} (${specsNotice}) وظهورها في قائمة مواعيدك المسجلة!`
+        );
+        setTimeout(() => setSuccessMessage(null), 6000);
+      } catch (reloadErr: any) {
+        const detail = reloadErr?.message ? ` — ${reloadErr.message}` : '';
+        setPrivateReloadWarning(
+          `تم الحفظ (عدد المواعيد المضافة: ${actualInsertedCount} بسعر ${parsedSlotPrice} ${activeCurrency})، لكن تعذر تحديث القائمة${detail}`
+        );
+      }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'فشل حفظ المواعيد الخاصة.');
+      const msg = err?.message || 'فشل حفظ المواعيد الخاصة.';
+      setErrorMessage(msg);
     } finally {
       setIsSavingPrivateSlots(false);
     }
@@ -596,35 +827,84 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const handleUpdatePrivateSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPrivateSlot) return;
+    setEditPrivateFieldErrors({});
+    setPrivateReloadWarning(null);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
     const chosenSpecs = specializations.filter((s) => editSlotSpecIds.includes(s.id));
     if (chosenSpecs.length === 0) {
       setErrorMessage('يرجى اختيار تخصص معتمد واحد على الأقل للموعد الخاص.');
       return;
     }
 
+    const normalizedEditPriceStr = String(editSlotPriceInput ?? '')
+      .trim()
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+    const parsedEditPrice = Number(normalizedEditPriceStr);
+
+    if (
+      !normalizedEditPriceStr ||
+      !/^-?[0-9]+$/.test(normalizedEditPriceStr) ||
+      !Number.isInteger(parsedEditPrice) ||
+      parsedEditPrice < 0 ||
+      parsedEditPrice > 100000
+    ) {
+      const msg = 'يرجى إدخال سعر حصة صحيح بدون كسور (من 0 إلى 100000).';
+      setEditPrivateFieldErrors({ price: msg });
+      return;
+    }
+
+    if (!editSlotDate) {
+      setEditPrivateFieldErrors({ date: 'يرجى تحديد تاريخ الموعد.' });
+      return;
+    }
+
+    const updatedSlotId = editingPrivateSlot.id;
+    const savedDate = editSlotDate.trim().slice(0, 10);
+    const savedStart = editSlotStart.trim().slice(0, 5);
     const computedEnd = addMinutesToTimeStr(editSlotStart, editSlotDuration);
     setIsUpdatingSlot(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
 
     try {
       await TutorPortalService.updatePrivateSlot({
-        slotId: editingPrivateSlot.id,
+        slotId: updatedSlotId,
         slotDate: editSlotDate,
         startTime: editSlotStart,
         endTime: computedEnd,
         durationMinutes: editSlotDuration,
-        priceAmount: editSlotPrice,
+        priceAmount: parsedEditPrice,
         specializations: chosenSpecs,
         timezone: editSlotTimezone || editingPrivateSlot.timezone || 'Africa/Cairo',
       });
 
-      setSuccessMessage('تم تعديل الموعد الخاص وتحديث التخصصات المعتمدة بنجاح.');
-      setTimeout(() => setSuccessMessage(null), 4000);
+      setEditSlotPrice(parsedEditPrice);
       setEditingPrivateSlot(null);
-      await loadPrivateSlots();
+
+      try {
+        const refreshedSlots = await loadPrivateSlots({ throwOnError: true });
+        const foundUpdated = refreshedSlots.some(
+          (s) =>
+            s.id === updatedSlotId &&
+            String(s.slotDate || '').slice(0, 10) === savedDate &&
+            String(s.startTime || '').slice(0, 5) === savedStart
+        );
+
+        if (!foundUpdated) {
+          setPrivateReloadWarning('تم الحفظ، لكن تعذر تحديث القائمة.');
+          return;
+        }
+
+        setSuccessMessage('تم تعديل الموعد الخاص وتحديث القائمة بنجاح.');
+        setTimeout(() => setSuccessMessage(null), 4000);
+      } catch (reloadErr: any) {
+        const detail = reloadErr?.message ? ` — ${reloadErr.message}` : '';
+        setPrivateReloadWarning(`تم الحفظ، لكن تعذر تحديث القائمة${detail}`);
+      }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'فشل تعديل الموعد الخاص.');
+      const msg = err?.message || 'فشل تعديل الموعد الخاص.';
+      setEditPrivateFieldErrors({ price: msg });
+      setErrorMessage(msg);
     } finally {
       setIsUpdatingSlot(false);
     }
@@ -678,6 +958,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
   const handleOpenNewGroupWizard = () => {
     setEditingGroup(null);
+    setGroupFieldErrors({});
     setGroupScheduleModifiedByTutor(true);
     setGroupWizardStep(1);
     setGroupTitle('');
@@ -687,6 +968,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     }
     setGroupMaxStudents(5);
     setGroupPricePerStudent(250);
+    setGroupPriceInput('250');
     setGroupPriceType('full_package');
     setGroupCurrency(context?.tutor.currency || 'ج.م');
     setGroupSessionsCount(4);
@@ -702,6 +984,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const handleStartEditGroup = async (group: TutorGroup) => {
     setErrorMessage(null);
     setSuccessMessage(null);
+    setGroupFieldErrors({});
     setEditingGroup(group);
     setGroupScheduleModifiedByTutor(false);
     setGroupWizardStep(1);
@@ -709,6 +992,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     setGroupDescription(group.description || '');
     setGroupMaxStudents(group.maxStudents);
     setGroupPricePerStudent(group.pricePerStudent);
+    setGroupPriceInput(String(group.pricePerStudent ?? 0));
     setGroupPriceType((group.priceType as 'per_session' | 'full_package') || 'full_package');
     setGroupCurrency(group.currency || context?.tutor.currency || 'ج.م');
     setGroupSessionsCount(group.sessionsCount);
@@ -767,29 +1051,66 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // 3. Handlers for Educational Groups
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
+    setGroupFieldErrors({});
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
     const chosenSpec = specializations.find((s) => s.id === groupSpecId);
     if (!chosenSpec) {
-      setErrorMessage('يرجى اختيار تخصص معتمد للمجموعة.');
+      const msg = 'يرجى اختيار تخصص معتمد للمجموعة.';
+      setGroupFieldErrors({ spec: msg });
+      setErrorMessage(msg);
       setGroupWizardStep(1);
       return;
     }
 
     if (!groupTitle.trim()) {
-      setErrorMessage('يرجى إدخال اسم مميز للمجموعة التعليمية.');
+      const msg = 'يرجى إدخال اسم مميز للمجموعة التعليمية.';
+      setGroupFieldErrors({ title: msg });
+      setErrorMessage(msg);
       setGroupWizardStep(1);
       return;
     }
 
+    const normalizedGroupPriceStr = String(groupPriceInput ?? '')
+      .trim()
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+    const parsedGroupPrice = Number(normalizedGroupPriceStr);
+
+    if (
+      !normalizedGroupPriceStr ||
+      !/^-?[0-9]+$/.test(normalizedGroupPriceStr) ||
+      !Number.isInteger(parsedGroupPrice) ||
+      parsedGroupPrice < 0 ||
+      parsedGroupPrice > 100000
+    ) {
+      const msg = 'يرجى إدخال سعر اشتراك صحيح بدون كسور (رقم صحيح من 0 إلى 100000، مثل 127 أو 175).';
+      setGroupFieldErrors({ price: msg });
+      setErrorMessage(msg);
+      setGroupWizardStep(2);
+      return;
+    }
+
+    if (!Number.isInteger(groupMaxStudents) || groupMaxStudents < 2 || groupMaxStudents > 20) {
+      const msg = 'الحد الأقصى للطلاب يجب أن يكون رقمًا صحيحًا بين 2 و 20 طالبًا.';
+      setGroupFieldErrors({ maxStudents: msg });
+      setErrorMessage(msg);
+      setGroupWizardStep(2);
+      return;
+    }
+
     if (!groupStartDate) {
-      setErrorMessage('يرجى تحديد تاريخ بدء المجموعة.');
+      const msg = 'يرجى تحديد تاريخ بدء المجموعة.';
+      setGroupFieldErrors({ startDate: msg });
+      setErrorMessage(msg);
       setGroupWizardStep(3);
       return;
     }
 
     if (generatedGroupSessions.length !== groupSessionsCount) {
-      setErrorMessage(
-        `جدول اللقاءات (${generatedGroupSessions.length}) يجب أن يطابق تماماً عدد الحصص المحدد (${groupSessionsCount}).`
-      );
+      const msg = `جدول اللقاءات (${generatedGroupSessions.length}) يجب أن يطابق تماماً عدد الحصص المحدد (${groupSessionsCount}).`;
+      setGroupFieldErrors({ sessionsCount: msg });
+      setErrorMessage(msg);
       setGroupWizardStep(3);
       return;
     }
@@ -804,24 +1125,27 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       });
 
     if (!finalSummary) {
-      setErrorMessage('يرجى التحقق من ملخص مواعيد الحصص الأسبوعية.');
+      const msg = 'يرجى التحقق من ملخص مواعيد الحصص الأسبوعية.';
+      setGroupFieldErrors({ schedule: msg });
+      setErrorMessage(msg);
       setGroupWizardStep(3);
       return;
     }
 
     setIsCreatingGroup(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
+    setGroupsReloadWarning(null);
+    const savedGroupTitle = groupTitle.trim();
+    const isEditingExistingGroup = Boolean(editingGroup);
 
     try {
       if (editingGroup) {
         await TutorPortalService.updateGroup({
           groupId: editingGroup.id,
-          title: groupTitle.trim(),
+          title: savedGroupTitle,
           description: groupDescription.trim(),
           specialization: chosenSpec,
           maxStudents: groupMaxStudents,
-          pricePerStudent: groupPricePerStudent,
+          pricePerStudent: parsedGroupPrice,
           priceType: groupPriceType,
           currency: groupCurrency,
           sessionsCount: groupSessionsCount,
@@ -835,15 +1159,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           sessions: generatedGroupSessions,
         });
 
-        setSuccessMessage('تم تحديث بيانات المجموعة ونشرها مباشرة بنجاح.');
         setEditingGroup(null);
       } else {
         await TutorPortalService.createGroup({
-          title: groupTitle.trim(),
+          title: savedGroupTitle,
           description: groupDescription.trim(),
           specialization: chosenSpec,
           maxStudents: groupMaxStudents,
-          pricePerStudent: groupPricePerStudent,
+          pricePerStudent: parsedGroupPrice,
           priceType: groupPriceType,
           currency: groupCurrency,
           sessionsCount: groupSessionsCount,
@@ -856,18 +1179,32 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           weeklyScheduleSummary: finalSummary,
           sessions: generatedGroupSessions,
         });
-
-        setSuccessMessage(
-          'تم إنشاء المجموعة التعليمية ونشرها مباشرة بنجاح؛ أصبحت متاحة الآن للتسجيل في ملفك العام.'
-        );
       }
 
-      setTimeout(() => setSuccessMessage(null), 5000);
+      // Close form and clear inputs immediately after save succeeds to prevent duplicate submission
       setShowAddGroupForm(false);
       setGroupTitle('');
       setGroupDescription('');
       setGroupScheduleSummary('');
-      await loadGroups();
+
+      try {
+        const refreshedGroups = await loadGroups({ throwOnError: true });
+        const foundGroup = refreshedGroups.some((g) => g.title.trim() === savedGroupTitle);
+        if (!foundGroup) {
+          setGroupsReloadWarning('تم الحفظ، لكن تعذر تحديث القائمة.');
+          return;
+        }
+
+        setSuccessMessage(
+          isEditingExistingGroup
+            ? 'تم تحديث بيانات المجموعة ونشرها مباشرة بنجاح.'
+            : 'تم إنشاء المجموعة التعليمية ونشرها مباشرة بنجاح؛ أصبحت متاحة الآن للتسجيل في ملفك العام.'
+        );
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } catch (reloadErr: any) {
+        const detail = reloadErr?.message ? ` — ${reloadErr.message}` : '';
+        setGroupsReloadWarning(`تم الحفظ، لكن تعذر تحديث القائمة${detail}`);
+      }
     } catch (err: any) {
       setErrorMessage(err?.message || 'تعذر حفظ المجموعة التعليمية.');
     } finally {
@@ -978,6 +1315,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
     setTextSaveError(null);
     setTextSaveSuccess(null);
+    setTextFieldErrors({});
     setErrorMessage(null);
     setSuccessMessage(null);
 
@@ -985,18 +1323,28 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     const trimmedQuote = draftQuote.trim();
     const trimmedSummary = draftSummary.trim();
 
+    const nextFieldErrors: { headline?: string; quote?: string; summary?: string } = {};
+
     if (!trimmedHeadline || trimmedHeadline.length < 10 || trimmedHeadline.length > 250) {
-      setTextSaveError('الجملة القصيرة عنك مطلوبة، ويجب أن تكون من 10 إلى 250 حرفًا.');
-      return;
+      nextFieldErrors.headline = `العنوان القصير مطلوب ويجب أن يكون بين 10 و 250 حرفًا (عدد الحروف الحالي: ${trimmedHeadline.length} حرفًا). مثال مقبول: «مدرسة رياضيات».`;
     }
 
     if (trimmedQuote.length > 0 && (trimmedQuote.length < 5 || trimmedQuote.length > 350)) {
-      setTextSaveError('جملة "إزاي بتساعد الطفل يفهم؟" يجب أن تكون من 5 إلى 350 حرفًا عند كتابتها.');
-      return;
+      nextFieldErrors.quote = `جملة "إزاي بتساعد الطفل يفهم؟" اختيارية، وعند كتابتها يجب أن تكون بين 5 و 350 حرفًا (عدد الحروف الحالي: ${trimmedQuote.length} حرفًا).`;
     }
 
     if (trimmedSummary.length > 0 && (trimmedSummary.length < 20 || trimmedSummary.length > 2500)) {
-      setTextSaveError('النبذة عنك لولي الأمر يجب أن تكون من 20 إلى 2500 حرفًا عند كتابتها.');
+      nextFieldErrors.summary = `النبذة التفصيلية عنك لولي الأمر اختيارية، وعند كتابتها يجب أن تكون بين 20 و 2500 حرفًا (عدد الحروف الحالي: ${trimmedSummary.length} حرفًا).`;
+    }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setTextFieldErrors(nextFieldErrors);
+      setTextSaveError(
+        nextFieldErrors.headline ||
+          nextFieldErrors.quote ||
+          nextFieldErrors.summary ||
+          'يرجى مراجعة الحقول المميزة باللون الأحمر.'
+      );
       return;
     }
 
@@ -1028,7 +1376,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       }
     } catch (err: any) {
       // Preserve typed text in state and display error clearly
-      setTextSaveError(err?.message || 'حدث خطأ أثناء حفظ التعديلات. نصوصك المكتوبة محفوظة في النموذج.');
+      const msg = err?.message || 'حدث خطأ أثناء حفظ التعديلات. نصوصك المكتوبة محفوظة في النموذج.';
+      setTextSaveError(msg);
+      if (msg.includes('الجملة القصيرة') || msg.includes('العنوان')) {
+        setTextFieldErrors({ headline: msg });
+      } else if (msg.includes('مساعدة الطفل')) {
+        setTextFieldErrors({ quote: msg });
+      } else if (msg.includes('النبذة')) {
+        setTextFieldErrors({ summary: msg });
+      }
     } finally {
       setIsSavingProfileText(false);
     }
@@ -1843,7 +2199,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleSaveProfilePricing} className="space-y-5">
+            <form onSubmit={handleSaveProfilePricing} noValidate className="space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Single Session Price */}
                 <div className="space-y-1.5">
@@ -1856,17 +2212,40 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                   <input
                     id="tutor-pricing-session-price"
                     type="number"
-                    min={20}
+                    min={1}
                     max={100000}
-                    step={5}
-                    value={pricingSessionPrice}
-                    onChange={(e) => setPricingSessionPrice(Number(e.target.value))}
+                    step={1}
+                    value={pricingSessionPriceInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPricingSessionPriceInput(val);
+                      const num = Number(val);
+                      if (val.trim() !== '' && Number.isFinite(num)) {
+                        setPricingSessionPrice(num);
+                      }
+                      if (pricingFieldErrors.price) {
+                        setPricingFieldErrors((prev) => ({ ...prev, price: undefined }));
+                      }
+                    }}
                     required
-                    className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-sm font-bold focus:border-[#0D4E8B] outline-none"
+                    className={`w-full h-11 px-3.5 rounded-xl border text-sm font-bold focus:border-[#0D4E8B] outline-none ${
+                      pricingFieldErrors.price
+                        ? 'border-rose-400 bg-rose-50/40'
+                        : 'border-[#CBD5E1]'
+                    }`}
                   />
                   <span className="text-[11px] text-[#64748B] block">
-                    المبلغ المطلوب للحصة الفردية الواحدة
+                    رقم صحيح بدون كسور (من 1 إلى 100000 — مثل 127 أو 175)
                   </span>
+                  {pricingFieldErrors.price && (
+                    <p
+                      role="alert"
+                      className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{pricingFieldErrors.price}</span>
+                    </p>
+                  )}
                 </div>
 
                 {/* Currency */}
@@ -1905,8 +2284,17 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                   <select
                     id="tutor-pricing-duration"
                     value={pricingDurationMinutes}
-                    onChange={(e) => setPricingDurationMinutes(Number(e.target.value))}
-                    className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm font-bold focus:border-[#0D4E8B] outline-none bg-white"
+                    onChange={(e) => {
+                      setPricingDurationMinutes(Number(e.target.value));
+                      if (pricingFieldErrors.duration) {
+                        setPricingFieldErrors((prev) => ({ ...prev, duration: undefined }));
+                      }
+                    }}
+                    className={`w-full h-11 px-3.5 rounded-xl border text-xs sm:text-sm font-bold focus:border-[#0D4E8B] outline-none bg-white ${
+                      pricingFieldErrors.duration
+                        ? 'border-rose-400 bg-rose-50/40'
+                        : 'border-[#CBD5E1]'
+                    }`}
                   >
                     <option value={30}>30 دقيقة</option>
                     <option value={45}>45 دقيقة</option>
@@ -1919,6 +2307,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                   <span className="text-[11px] text-[#64748B] block">
                     مدة الحصة الواحدة المقابلة للسعر أعلاه
                   </span>
+                  {pricingFieldErrors.duration && (
+                    <p
+                      role="alert"
+                      className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{pricingFieldErrors.duration}</span>
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2112,6 +2509,22 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </p>
             </div>
 
+            {/* Clarification of Headline vs Bio */}
+            <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs space-y-1.5">
+              <div className="font-bold flex items-center gap-1.5 text-[#0D4E8B]">
+                <Info className="w-4 h-4 shrink-0" />
+                <span>الفرق بين العنوان القصير والنبذة التفصيلية:</span>
+              </div>
+              <ul className="list-disc list-inside space-y-1 text-blue-800 leading-relaxed">
+                <li>
+                  <strong>العنوان القصير (جملة قصيرة عنك):</strong> يظهر مباشرةً تحت اسمك في بطاقة البحث وأعلى ملفك التعريفي (مطلوب: من 10 إلى 250 حرفًا — عبارات مثل «مدرسة رياضيات» أو «معلم لغة عربية» تحقق الشرط).
+                </li>
+                <li>
+                  <strong>النبذة التفصيلية لولي الأمر:</strong> تظهر داخل صفحة ملفك لتوضيح خبرتك الأكاديمية وطريقتك في الشرح والمتابعة مع ولي الأمر (اختيارية: من 20 إلى 2500 حرفًا عند كتابتها).
+                </li>
+              </ul>
+            </div>
+
             <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
               <span>ممنوع كتابة أرقام هاتف أو روابط أو حسابات تواصل داخل النصوص.</span>
@@ -2137,15 +2550,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleSaveProfileText} className="space-y-5">
-              {/* 1. Short Headline ("جملة قصيرة عنك") */}
+            <form onSubmit={handleSaveProfileText} noValidate className="space-y-5">
+              {/* 1. Short Headline ("جملة قصيرة عنك / العنوان القصير") */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <label
                     htmlFor="tutor-profile-headline"
                     className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
                   >
-                    جملة قصيرة عنك <span className="text-rose-500">*</span>
+                    العنوان القصير (جملة قصيرة عنك) <span className="text-rose-500">*</span>
                   </label>
                   <span
                     className={`text-[11px] font-mono font-bold ${
@@ -2154,22 +2567,40 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         : 'text-emerald-700'
                     }`}
                   >
-                    {draftHeadline.trim().length} / 250 (من 10 إلى 250 حرفًا)
+                    عدد الحروف: {draftHeadline.trim().length} / 250 (الحد المطلوب: من 10 إلى 250 حرفًا)
                   </span>
                 </div>
                 <input
                   id="tutor-profile-headline"
                   type="text"
                   value={draftHeadline}
-                  onChange={(e) => setDraftHeadline(e.target.value)}
+                  onChange={(e) => {
+                    setDraftHeadline(e.target.value);
+                    if (textFieldErrors.headline) {
+                      setTextFieldErrors((prev) => ({ ...prev, headline: undefined }));
+                    }
+                  }}
                   maxLength={250}
-                  placeholder="أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة"
+                  placeholder="مثال: مدرسة رياضيات — أو: أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة"
                   required
-                  className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                  className={`w-full h-11 px-3.5 rounded-xl border text-xs sm:text-sm focus:border-[#0D4E8B] outline-none ${
+                    textFieldErrors.headline
+                      ? 'border-rose-400 bg-rose-50/40'
+                      : 'border-[#CBD5E1]'
+                  }`}
                 />
                 <p className="text-[11px] text-[#64748B]">
-                  اكتب بتساعد مين وفي إيه. مثال: أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة.
+                  يظهر تحت اسمك مباشرة في البطاقات. مثال مقبول: «مدرسة رياضيات» (13 حرفًا) أو «أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة».
                 </p>
+                {textFieldErrors.headline && (
+                  <p
+                    role="alert"
+                    className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{textFieldErrors.headline}</span>
+                  </p>
+                )}
               </div>
 
               {/* 2. Help Child Quote ("إزاي بتساعد الطفل يفهم؟") */}
@@ -2190,19 +2621,36 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         : 'text-slate-500'
                     }`}
                   >
-                    {draftQuote.trim().length} / 350{' '}
-                    {draftQuote.trim().length > 0 ? '(من 5 إلى 350 حرفًا)' : ''}
+                    عدد الحروف: {draftQuote.trim().length} / 350 (الحد عند الكتابة: من 5 إلى 350 حرفًا)
                   </span>
                 </div>
                 <textarea
                   id="tutor-profile-quote"
                   rows={2}
                   value={draftQuote}
-                  onChange={(e) => setDraftQuote(e.target.value)}
+                  onChange={(e) => {
+                    setDraftQuote(e.target.value);
+                    if (textFieldErrors.quote) {
+                      setTextFieldErrors((prev) => ({ ...prev, quote: undefined }));
+                    }
+                  }}
                   maxLength={350}
                   placeholder="مثال: أبسّط الدرس بأمثلة عملية قريبة من الطفل وأتأكد إنه حل بنفسه قبل نهاية الحصة."
-                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                  className={`w-full p-3 rounded-xl border text-xs sm:text-sm focus:border-[#0D4E8B] outline-none ${
+                    textFieldErrors.quote
+                      ? 'border-rose-400 bg-rose-50/40'
+                      : 'border-[#CBD5E1]'
+                  }`}
                 />
+                {textFieldErrors.quote && (
+                  <p
+                    role="alert"
+                    className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{textFieldErrors.quote}</span>
+                  </p>
+                )}
               </div>
 
               {/* 3. Summary ("اكتب نبذة عنك لولي الأمر") */}
@@ -2212,7 +2660,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                     htmlFor="tutor-profile-summary"
                     className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
                   >
-                    اكتب نبذة عنك لولي الأمر{' '}
+                    النبذة التفصيلية عنك لولي الأمر{' '}
                     <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
                   </label>
                   <span
@@ -2223,22 +2671,39 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         : 'text-slate-500'
                     }`}
                   >
-                    {draftSummary.trim().length} / 2500{' '}
-                    {draftSummary.trim().length > 0 ? '(من 20 إلى 2500 حرفًا)' : ''}
+                    عدد الحروف: {draftSummary.trim().length} / 2500 (الحد عند الكتابة: من 20 إلى 2500 حرفًا)
                   </span>
                 </div>
                 <textarea
                   id="tutor-profile-summary"
                   rows={5}
                   value={draftSummary}
-                  onChange={(e) => setDraftSummary(e.target.value)}
+                  onChange={(e) => {
+                    setDraftSummary(e.target.value);
+                    if (textFieldErrors.summary) {
+                      setTextFieldErrors((prev) => ({ ...prev, summary: undefined }));
+                    }
+                  }}
                   maxLength={2500}
                   placeholder="اكتب نبذة واضحة لولي الأمر تذكر فيها خبرتك وطريقتك..."
-                  className="w-full p-3 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                  className={`w-full p-3 rounded-xl border text-xs sm:text-sm focus:border-[#0D4E8B] outline-none ${
+                    textFieldErrors.summary
+                      ? 'border-rose-400 bg-rose-50/40'
+                      : 'border-[#CBD5E1]'
+                  }`}
                 />
                 <p className="text-[11px] text-[#64748B]">
-                  اذكر خبرتك وطريقتك وإزاي بتتابع مع ولي الأمر.
+                  تظهر في قسم النبذة التفصيلية داخل ملفك. اذكر خبرتك وطريقتك وإزاي بتتابع مع ولي الأمر.
                 </p>
+                {textFieldErrors.summary && (
+                  <p
+                    role="alert"
+                    className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{textFieldErrors.summary}</span>
+                  </p>
+                )}
               </div>
 
               <div className="pt-2 flex items-center justify-end">
@@ -2286,6 +2751,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
             <form
               onSubmit={handleCreateTrialSlot}
+              noValidate
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2"
             >
               <div className="space-y-1">
@@ -2300,10 +2766,23 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                   type="date"
                   min={getTodayCalendarDateInTimezone(newTrialTimezone)}
                   value={newTrialDate}
-                  onChange={(e) => setNewTrialDate(e.target.value)}
+                  onChange={(e) => {
+                    setNewTrialDate(e.target.value);
+                    if (trialFieldErrors.date) {
+                      setTrialFieldErrors((prev) => ({ ...prev, date: undefined }));
+                    }
+                  }}
                   required
-                  className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                  className={`w-full h-11 px-3 rounded-xl border text-xs focus:border-[#0D4E8B] outline-none ${
+                    trialFieldErrors.date ? 'border-rose-400 bg-rose-50/40' : 'border-[#CBD5E1]'
+                  }`}
                 />
+                {trialFieldErrors.date && (
+                  <p role="alert" className="text-[11px] text-rose-600 font-bold flex items-start gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{trialFieldErrors.date}</span>
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -2392,13 +2871,76 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </span>
             </h3>
 
-            {trialSlots.length === 0 ? (
-              <div className="p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-2xl space-y-2">
-                <Clock3 className="w-8 h-8 text-[#CBD5E1] mx-auto" />
-                <p className="text-xs font-bold text-[#64748B]">
-                  لم تقم بإضافة أي مواعيد تجريبية بعد.
-                </p>
+            {trialReloadWarning && (
+              <div
+                role="alert"
+                className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">تم الحفظ، لكن تعذر تحديث القائمة</span>
+                    <p className="text-xs text-amber-900">{trialReloadWarning}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadTrialSlots()}
+                  disabled={isLoadingTrials}
+                  className="px-4 py-2 min-h-[40px] rounded-xl bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {isLoadingTrials ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  <span>إعادة تحميل القائمة</span>
+                </button>
               </div>
+            )}
+
+            {trialSlotsLoadError && (
+              <div
+                role="alert"
+                className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">فشل تحميل قائمة المواعيد التجريبية</span>
+                    <p className="text-xs text-rose-800">{trialSlotsLoadError}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadTrialSlots()}
+                  disabled={isLoadingTrials}
+                  className="px-4 py-2 min-h-[40px] rounded-xl bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {isLoadingTrials ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  <span>إعادة تحميل القائمة</span>
+                </button>
+              </div>
+            )}
+
+            {isLoadingTrials ? (
+              <div className="p-8 text-center text-xs text-[#64748B] flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>جاري تحميل المواعيد التجريبية...</span>
+              </div>
+            ) : trialSlots.length === 0 ? (
+              !trialSlotsLoadError && !trialReloadWarning ? (
+                <div className="p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-2xl space-y-2">
+                  <Clock3 className="w-8 h-8 text-[#CBD5E1] mx-auto" />
+                  <p className="text-xs font-bold text-[#64748B]">
+                    لم تقم بإضافة أي مواعيد تجريبية بعد.
+                  </p>
+                </div>
+              ) : null
             ) : (
               <div className="divide-y divide-[#F1F5F9]">
                 {trialSlots.map((slot) => {
@@ -2585,7 +3127,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 لا توجد تخصصات معتمدة مسجلة لملفك حالياً.
               </div>
             ) : (
-              <form onSubmit={handleSavePrivateSlots} className="space-y-4">
+              <form onSubmit={handleSavePrivateSlots} noValidate className="space-y-4">
                 {/* 1. Multi-Specialization Selection */}
                 <div className="space-y-2 p-4 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0]">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -2648,6 +3190,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                               } else {
                                 setSelectedSpecIds([...selectedSpecIds, spec.id]);
                               }
+                              if (privateFieldErrors.specializations) {
+                                setPrivateFieldErrors((prev) => ({
+                                  ...prev,
+                                  specializations: undefined,
+                                }));
+                              }
                             }}
                             className="w-4 h-4 rounded text-[#0D4E8B] focus:ring-[#0D4E8B] mt-0.5 shrink-0"
                           />
@@ -2667,6 +3215,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                       );
                     })}
                   </div>
+                  {privateFieldErrors.specializations && (
+                    <p
+                      role="alert"
+                      className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-1"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{privateFieldErrors.specializations}</span>
+                    </p>
+                  )}
                 </div>
 
                 {/* 2. Duration, Price & IANA Timezone */}
@@ -2706,16 +3263,40 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         id="private-slot-price"
                         type="number"
                         min={0}
-                        step={5}
-                        value={privatePriceAmount}
-                        onChange={(e) => setPrivatePriceAmount(Number(e.target.value))}
+                        max={100000}
+                        step={1}
+                        value={privatePriceInput}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPrivatePriceInput(val);
+                          const num = Number(val);
+                          if (val.trim() !== '' && Number.isFinite(num)) {
+                            setPrivatePriceAmount(num);
+                          }
+                          if (privateFieldErrors.price) {
+                            setPrivateFieldErrors((prev) => ({ ...prev, price: undefined }));
+                          }
+                        }}
                         required
-                        className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
+                        className={`w-full h-11 px-3 rounded-xl border text-xs font-bold focus:border-[#0D4E8B] outline-none ${
+                          privateFieldErrors.price
+                            ? 'border-rose-400 bg-rose-50/40'
+                            : 'border-[#CBD5E1]'
+                        }`}
                       />
                       <span className="text-xs font-bold text-[#64748B] shrink-0">
                         {privateCurrency}
                       </span>
                     </div>
+                    {privateFieldErrors.price && (
+                      <p
+                        role="alert"
+                        className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                      >
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span>{privateFieldErrors.price}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-1">
@@ -2784,10 +3365,28 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         type="date"
                         min={getTodayCalendarDateInTimezone(privateTimezone)}
                         value={privateSingleDate}
-                        onChange={(e) => setPrivateSingleDate(e.target.value)}
+                        onChange={(e) => {
+                          setPrivateSingleDate(e.target.value);
+                          if (privateFieldErrors.date) {
+                            setPrivateFieldErrors((prev) => ({ ...prev, date: undefined }));
+                          }
+                        }}
                         required
-                        className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                        className={`w-full h-11 px-3 rounded-xl border text-xs focus:border-[#0D4E8B] outline-none bg-white ${
+                          privateFieldErrors.date
+                            ? 'border-rose-400 bg-rose-50/40'
+                            : 'border-[#CBD5E1]'
+                        }`}
                       />
+                      {privateFieldErrors.date && (
+                        <p
+                          role="alert"
+                          className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          <span>{privateFieldErrors.date}</span>
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <label
@@ -2867,10 +3466,28 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           type="date"
                           min={getTomorrowCalendarDateInTimezone(privateTimezone)}
                           value={privateRepeatUntilDate}
-                          onChange={(e) => setPrivateRepeatUntilDate(e.target.value)}
+                          onChange={(e) => {
+                            setPrivateRepeatUntilDate(e.target.value);
+                            if (privateFieldErrors.date) {
+                              setPrivateFieldErrors((prev) => ({ ...prev, date: undefined }));
+                            }
+                          }}
                           required
-                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-white"
+                          className={`w-full h-11 px-3 rounded-xl border text-xs focus:border-[#0D4E8B] outline-none bg-white ${
+                            privateFieldErrors.date
+                              ? 'border-rose-400 bg-rose-50/40'
+                              : 'border-[#CBD5E1]'
+                          }`}
                         />
+                        {privateFieldErrors.date && (
+                          <p
+                            role="alert"
+                            className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{privateFieldErrors.date}</span>
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -2953,7 +3570,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 <div className="pt-2 flex justify-end">
                   <button
                     type="submit"
-                    disabled={isSavingPrivateSlots || previewPrivateSlots.length === 0}
+                    disabled={isSavingPrivateSlots}
                     className="px-6 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     {isSavingPrivateSlots ? (
@@ -2982,18 +3599,76 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </span>
             </h3>
 
+            {privateReloadWarning && (
+              <div
+                role="alert"
+                className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">تم الحفظ، لكن تعذر تحديث القائمة</span>
+                    <p className="text-xs text-amber-900">{privateReloadWarning}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadPrivateSlots()}
+                  disabled={isLoadingPrivate}
+                  className="px-4 py-2 min-h-[40px] rounded-xl bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {isLoadingPrivate ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  <span>إعادة تحميل القائمة</span>
+                </button>
+              </div>
+            )}
+
+            {privateSlotsLoadError && (
+              <div
+                role="alert"
+                className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">فشل تحميل قائمة المواعيد الخاصة</span>
+                    <p className="text-xs text-rose-800">{privateSlotsLoadError}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadPrivateSlots()}
+                  disabled={isLoadingPrivate}
+                  className="px-4 py-2 min-h-[40px] rounded-xl bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {isLoadingPrivate ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  <span>إعادة تحميل القائمة</span>
+                </button>
+              </div>
+            )}
+
             {isLoadingPrivate ? (
               <div className="p-8 text-center text-xs text-[#64748B] flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>جاري تحميل المواعيد الخاصة...</span>
               </div>
             ) : privateSlots.length === 0 ? (
-              <div className="p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-2xl space-y-2">
-                <CalendarCheck2 className="w-8 h-8 text-[#CBD5E1] mx-auto" />
-                <p className="text-xs font-bold text-[#64748B]">
-                  لم تقم بإضافة أي مواعيد خاصة مدفوعة بعد.
-                </p>
-              </div>
+              !privateSlotsLoadError && !privateReloadWarning ? (
+                <div className="p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-2xl space-y-2">
+                  <CalendarCheck2 className="w-8 h-8 text-[#CBD5E1] mx-auto" />
+                  <p className="text-xs font-bold text-[#64748B]">
+                    لم تقم بإضافة أي مواعيد خاصة مدفوعة بعد.
+                  </p>
+                </div>
+              ) : null
             ) : (
               <div className="divide-y divide-[#F1F5F9]">
                 {privateSlots.map((slot) => {
@@ -3094,12 +3769,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                             type="button"
                             onClick={() => {
                               setEditingPrivateSlot(slot);
+                              setEditPrivateFieldErrors({});
                               setEditSlotDate(slot.slotDate);
                               const st = slot.startTime.substring(0, 5);
                               setEditSlotStart(st);
                               setEditSlotDuration(slot.durationMinutes);
                               setEditSlotEnd(addMinutesToTimeStr(st, slot.durationMinutes));
                               setEditSlotPrice(slot.priceAmount);
+                              setEditSlotPriceInput(String(slot.priceAmount));
                               setEditSlotTimezone(slot.timezone || 'Africa/Cairo');
 
                               const slotAllowed = Array.isArray(slot.allowedSpecializations)
@@ -3267,7 +3944,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                 </div>
               </div>
 
-              <form onSubmit={handleCreateGroup} className="space-y-5">
+              <form onSubmit={handleCreateGroup} noValidate className="space-y-5">
                 {/* STEP A (1): الاسم والتخصص والوصف */}
                 {groupWizardStep === 1 && (
                   <div className="space-y-4">
@@ -3287,11 +3964,29 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           id="group-title-input"
                           type="text"
                           value={groupTitle}
-                          onChange={(e) => setGroupTitle(e.target.value)}
+                          onChange={(e) => {
+                            setGroupTitle(e.target.value);
+                            if (groupFieldErrors.title) {
+                              setGroupFieldErrors((prev) => ({ ...prev, title: undefined }));
+                            }
+                          }}
                           placeholder="مثال: مراجعة وشرح تأسيس الرياضيات - الصف الرابع"
                           required
-                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                          className={`w-full h-11 px-3 rounded-xl border text-xs focus:border-[#0D4E8B] outline-none ${
+                            groupFieldErrors.title
+                              ? 'border-rose-400 bg-rose-50/40'
+                              : 'border-[#CBD5E1]'
+                          }`}
                         />
+                        {groupFieldErrors.title && (
+                          <p
+                            role="alert"
+                            className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{groupFieldErrors.title}</span>
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-1">
@@ -3304,7 +3999,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                         <select
                           id="group-spec-select"
                           value={groupSpecId}
-                          onChange={(e) => setGroupSpecId(e.target.value)}
+                          onChange={(e) => {
+                            setGroupSpecId(e.target.value);
+                            if (groupFieldErrors.spec) {
+                              setGroupFieldErrors((prev) => ({ ...prev, spec: undefined }));
+                            }
+                          }}
                           required
                           className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none bg-white"
                         >
@@ -3314,6 +4014,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                             </option>
                           ))}
                         </select>
+                        {groupFieldErrors.spec && (
+                          <p
+                            role="alert"
+                            className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{groupFieldErrors.spec}</span>
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -3367,11 +4076,30 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           type="number"
                           min={2}
                           max={20}
+                          step={1}
                           value={groupMaxStudents}
-                          onChange={(e) => setGroupMaxStudents(Number(e.target.value))}
+                          onChange={(e) => {
+                            setGroupMaxStudents(Number(e.target.value));
+                            if (groupFieldErrors.maxStudents) {
+                              setGroupFieldErrors((prev) => ({ ...prev, maxStudents: undefined }));
+                            }
+                          }}
                           required
-                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
+                          className={`w-full h-11 px-3 rounded-xl border text-xs font-bold focus:border-[#0D4E8B] outline-none ${
+                            groupFieldErrors.maxStudents
+                              ? 'border-rose-400 bg-rose-50/40'
+                              : 'border-[#CBD5E1]'
+                          }`}
                         />
+                        {groupFieldErrors.maxStudents && (
+                          <p
+                            role="alert"
+                            className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{groupFieldErrors.maxStudents}</span>
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-1">
@@ -3385,12 +4113,36 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                           id="group-price-input"
                           type="number"
                           min={0}
-                          step={10}
-                          value={groupPricePerStudent}
-                          onChange={(e) => setGroupPricePerStudent(Number(e.target.value))}
+                          max={100000}
+                          step={1}
+                          value={groupPriceInput}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setGroupPriceInput(val);
+                            const num = Number(val);
+                            if (val.trim() !== '' && Number.isFinite(num)) {
+                              setGroupPricePerStudent(num);
+                            }
+                            if (groupFieldErrors.price) {
+                              setGroupFieldErrors((prev) => ({ ...prev, price: undefined }));
+                            }
+                          }}
                           required
-                          className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold focus:border-[#0D4E8B] outline-none"
+                          className={`w-full h-11 px-3 rounded-xl border text-xs font-bold focus:border-[#0D4E8B] outline-none ${
+                            groupFieldErrors.price
+                              ? 'border-rose-400 bg-rose-50/40'
+                              : 'border-[#CBD5E1]'
+                          }`}
                         />
+                        {groupFieldErrors.price && (
+                          <p
+                            role="alert"
+                            className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{groupFieldErrors.price}</span>
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-1">
@@ -3776,18 +4528,76 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
           {/* Groups Cards List */}
           <div className="space-y-4">
+            {groupsReloadWarning && (
+              <div
+                role="alert"
+                className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">تم الحفظ، لكن تعذر تحديث القائمة</span>
+                    <p className="text-xs text-amber-900">{groupsReloadWarning}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadGroups()}
+                  disabled={isLoadingGroups}
+                  className="px-4 py-2 min-h-[40px] rounded-xl bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {isLoadingGroups ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  <span>إعادة تحميل القائمة</span>
+                </button>
+              </div>
+            )}
+
+            {groupsLoadError && (
+              <div
+                role="alert"
+                className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">فشل تحميل قائمة المجموعات التعليمية</span>
+                    <p className="text-xs text-rose-800">{groupsLoadError}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadGroups()}
+                  disabled={isLoadingGroups}
+                  className="px-4 py-2 min-h-[40px] rounded-xl bg-white hover:bg-rose-100 border border-rose-300 text-rose-800 text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {isLoadingGroups ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  <span>إعادة تحميل القائمة</span>
+                </button>
+              </div>
+            )}
+
             {isLoadingGroups ? (
               <div className="p-8 text-center text-xs text-[#64748B] flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>جاري تحميل المجموعات...</span>
               </div>
             ) : groups.length === 0 ? (
-              <div className="bg-white p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-3xl space-y-2">
-                <Users className="w-8 h-8 text-[#CBD5E1] mx-auto" />
-                <p className="text-xs font-bold text-[#64748B]">
-                  لم تقم بإنشاء أي مجموعات تعليمية بعد.
-                </p>
-              </div>
+              !groupsLoadError && !groupsReloadWarning ? (
+                <div className="bg-white p-8 text-center border-2 border-dashed border-[#CBD5E1] rounded-3xl space-y-2">
+                  <Users className="w-8 h-8 text-[#CBD5E1] mx-auto" />
+                  <p className="text-xs font-bold text-[#64748B]">
+                    لم تقم بإنشاء أي مجموعات تعليمية بعد.
+                  </p>
+                </div>
+              ) : null
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {groups.map((group) => {
@@ -4231,11 +5041,36 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                     id="edit-private-price-input"
                     type="number"
                     min={0}
-                    value={editSlotPrice}
-                    onChange={(e) => setEditSlotPrice(Number(e.target.value))}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-200 font-mono focus:border-[#0D4E8B] focus:outline-none"
+                    max={100000}
+                    step={1}
+                    value={editSlotPriceInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditSlotPriceInput(val);
+                      const num = Number(val);
+                      if (val.trim() !== '' && Number.isFinite(num)) {
+                        setEditSlotPrice(num);
+                      }
+                      if (editPrivateFieldErrors.price) {
+                        setEditPrivateFieldErrors((prev) => ({ ...prev, price: undefined }));
+                      }
+                    }}
+                    className={`w-full h-11 px-3 rounded-xl border font-mono focus:border-[#0D4E8B] focus:outline-none ${
+                      editPrivateFieldErrors.price
+                        ? 'border-rose-400 bg-rose-50/40'
+                        : 'border-slate-200'
+                    }`}
                     required
                   />
+                  {editPrivateFieldErrors.price && (
+                    <p
+                      role="alert"
+                      className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{editPrivateFieldErrors.price}</span>
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

@@ -317,14 +317,14 @@ export const TutorApplicationService = {
           }
           validatedRate = null;
         } else {
-          if (!/^-?[0-9]+(\.[0-9]+)?$/.test(rateStr)) {
-            throw new Error('قيمة سعر الحصة المقترح غير صالحة: يجب إدخال رقم صحيح أكبر من الصفر.');
+          if (!/^-?[0-9]+$/.test(rateStr)) {
+            throw new Error('قيمة سعر الحصة المقترح غير صالحة: يجب إدخال رقم صحيح بدون كسور (من 1 إلى 100000).');
           }
-          const parsedRate = Number(rateStr);
-          if (!Number.isFinite(parsedRate) || parsedRate <= 0 || parsedRate > 100000) {
-            throw new Error('قيمة سعر الحصة المقترح غير صالحة: يجب أن تكون أكبر من 0 وأقل من أو تساوي 100000.');
+          const parsedRate = parseInt(rateStr, 10);
+          if (!Number.isFinite(parsedRate) || parsedRate < 1 || parsedRate > 100000) {
+            throw new Error('قيمة سعر الحصة المقترح غير صالحة: يجب أن تكون رقمًا صحيحًا من 1 إلى 100000.');
           }
-          validatedRate = Math.round(parsedRate);
+          validatedRate = parsedRate;
         }
       } else if (isSubmit) {
         throw new Error('قيمة سعر الحصة المقترح مطلوبة ولا يمكن إغفالها عند إرسال الطلب للمراجعة.');

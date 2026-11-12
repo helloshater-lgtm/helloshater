@@ -1416,7 +1416,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
     // 4. Academic & Experience
     if (!formData.academicDegree.trim() || formData.academicDegree.trim().length < 4) {
-      newErrors.academicDegree = 'يرجى توضيح المؤهل الأكاديمي والتخصص والجامعة بدقة';
+      newErrors.academicDegree = 'يرجى كتابة المؤهل الأكاديمي (٤ أحرف على الأقل، مثل: بكالوريوس تجارة أو بكالوريوس تربية)';
     }
 
     if (!formData.experienceYears) {
@@ -1430,7 +1430,7 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
     }
 
     if (!formData.bioAndMethodology.trim() || formData.bioAndMethodology.trim().length < 15) {
-      newErrors.bioAndMethodology = 'يرجى كتابة نبذة واضحة (١٥ حرفاً على الأقل) تصف طريقتك في الشرح وتبسيط المعلومة للطلاب';
+      newErrors.bioAndMethodology = `النبذة قصيرة جدًا (${formData.bioAndMethodology.trim().length} حرفًا): يرجى كتابة ١٥ حرفًا على الأقل تصف طريقتك في الشرح وتبسيط المعلومة للطلاب`;
     }
 
     if (formData.portfolioUrl.trim()) {
@@ -1445,14 +1445,21 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
     }
 
     // 5. Pricing & Availability
-    const rateNum = Number(formData.suggestedHourlyRate);
-    if (!formData.suggestedHourlyRate || isNaN(rateNum) || rateNum <= 0 || rateNum > 100000) {
-      newErrors.suggestedHourlyRate = 'يرجى إدخال أجر مقترح منطقي للحصة';
+    const rawRateStr = String(formData.suggestedHourlyRate ?? '')
+      .trim()
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+    const rateNum = Number(rawRateStr);
+    if (!rawRateStr) {
+      newErrors.suggestedHourlyRate = 'يرجى إدخال سعر الحصة المقترح (رقم صحيح من ١ إلى ١٠٠٠٠٠)';
+    } else if (!/^-?[0-9]+$/.test(rawRateStr) || !Number.isInteger(rateNum)) {
+      newErrors.suggestedHourlyRate = 'سعر الحصة يجب أن يكون رقمًا صحيحًا بدون كسور (مثل 127 أو 175)';
+    } else if (isNaN(rateNum) || rateNum < 1 || rateNum > 100000) {
+      newErrors.suggestedHourlyRate = 'سعر الحصة المقترح يجب أن يكون رقمًا صحيحًا بين ١ و ١٠٠٠٠٠';
     }
 
     const durationNum = Number(formData.sessionDurationMinutes);
     if (!Number.isInteger(durationNum) || durationNum < 15 || durationNum > 180) {
-      newErrors.sessionDurationMinutes = 'مدة الحصة يجب أن تكون بين ١٥ و ١٨٠ دقيقة';
+      newErrors.sessionDurationMinutes = 'مدة الحصة يجب أن تكون رقمًا صحيحًا بين ١٥ و ١٨٠ دقيقة';
     }
 
     if (formData.availableDays.length === 0) {
@@ -2589,15 +2596,26 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Academic Degree */}
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-xs font-bold text-[#1F2A44] block">
-                  المؤهل الأكاديمي والتخصص والجامعة <span className="text-red-500">*</span>
-                </label>
+              <div id="form-field-academicDegree" className="space-y-1.5 sm:col-span-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <label className="text-xs font-bold text-[#1F2A44] block">
+                    المؤهل الأكاديمي والتخصص والجامعة <span className="text-red-500">*</span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-mono font-bold ${
+                      formData.academicDegree.trim().length >= 4
+                        ? 'text-emerald-700'
+                        : 'text-amber-600'
+                    }`}
+                  >
+                    {formData.academicDegree.trim().length} حرفًا (الحد الأدنى: ٤ أحرف)
+                  </span>
+                </div>
                 <input
                   type="text"
                   value={formData.academicDegree}
                   onChange={(e) => handleInputChange('academicDegree', e.target.value)}
-                  placeholder="مثال: بكالوريوس تربية — قسم لغة إنجليزية — جامعة عين شمس (تقدير جيد جداً)"
+                  placeholder="مثال: بكالوريوس تجارة، أو بكالوريوس تربية — قسم لغة إنجليزية — جامعة عين شمس"
                   className={`w-full h-11 px-3.5 rounded-xl bg-[#F8F9FC] border text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] focus:bg-white transition-all ${
                     errors.academicDegree ? 'border-red-400 bg-red-50/30' : 'border-[#CBD5E1]'
                   }`}
@@ -2703,9 +2721,20 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
 
             {/* Bio and Teaching Methodology */}
             <div id="form-field-bioAndMethodology" className="space-y-1.5 pt-1">
-              <label className="text-xs font-bold text-[#1F2A44] block">
-                نبذة قصيرة عن خبرتك وأسلوبك في الشرح وتبسيط المعلومة: <span className="text-red-500">*</span>
-              </label>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label className="text-xs font-bold text-[#1F2A44] block">
+                  نبذة عن خبرتك وأسلوبك في الشرح وتبسيط المعلومة: <span className="text-red-500">*</span>
+                </label>
+                <span
+                  className={`text-[11px] font-mono font-bold ${
+                    formData.bioAndMethodology.trim().length >= 15
+                      ? 'text-emerald-700'
+                      : 'text-amber-600'
+                  }`}
+                >
+                  {formData.bioAndMethodology.trim().length} حرفًا (الحد المطلوب: ١٥ حرفًا على الأقل)
+                </span>
+              </div>
               <textarea
                 rows={3}
                 value={formData.bioAndMethodology}
@@ -2781,16 +2810,20 @@ export const TutorRegistrationView: React.FC<TutorRegistrationViewProps> = ({
                 <div className="relative">
                   <input
                     type="number"
-                    min="50"
-                    step="10"
+                    min="1"
+                    max="100000"
+                    step="1"
                     value={formData.suggestedHourlyRate}
                     onChange={(e) => handleInputChange('suggestedHourlyRate', e.target.value)}
-                    placeholder="مثال: 150"
+                    placeholder="مثال: 127 أو 175"
                     className={`w-full h-11 px-3 rounded-xl bg-[#F8F9FC] border text-xs sm:text-sm font-bold text-[#1F2A44] focus:outline-none focus:ring-2 focus:ring-[#0D4E8B] ${
                       errors.suggestedHourlyRate ? 'border-red-400 bg-red-50/30' : 'border-[#CBD5E1]'
                     }`}
                   />
                 </div>
+                <span className="text-[11px] text-[#64748B] block">
+                  رقم صحيح بدون كسور (من ١ إلى ١٠٠٠٠٠)
+                </span>
                 {errors.suggestedHourlyRate && (
                   <p className="text-[11px] text-red-600 font-bold flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0" />
