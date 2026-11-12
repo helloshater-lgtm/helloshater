@@ -84,8 +84,8 @@ CREATE POLICY "Approved tutors delete own self-service avatar"
 CREATE TABLE IF NOT EXISTS public.tutor_profile_edit_history (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tutor_id TEXT NOT NULL REFERENCES public.tutors(id) ON DELETE CASCADE,
-  edited_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  source TEXT NOT NULL DEFAULT 'tutor_portal',
+  changed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  source TEXT NOT NULL DEFAULT 'tutor',
   old_headline TEXT,
   new_headline TEXT,
   old_help_child_quote TEXT,
@@ -197,7 +197,7 @@ BEGIN
 
     INSERT INTO public.tutor_profile_edit_history (
       tutor_id,
-      edited_by,
+      changed_by,
       source,
       old_headline,
       new_headline,
@@ -209,7 +209,7 @@ BEGIN
     ) VALUES (
       v_tutor_id,
       v_user_id,
-      'tutor_portal',
+      'tutor',
       v_tutor.headline,
       v_headline,
       v_tutor.help_child_quote,
@@ -411,8 +411,7 @@ $$;
 -- ============================================================================
 -- Verifies that the uploaded file exists in `storage.objects` under
 -- `bucket_id = 'tutor-avatars'` and path `self-service/<auth.uid()>/<filename>`,
--- updates `tutors.avatar_url` directly without altering `is_published`, and
--- supersedes any old pending avatar drafts for this tutor.
+-- and updates `tutors.avatar_url` directly and independently of `tutor_profile_drafts`.
 CREATE OR REPLACE FUNCTION public.tutor_update_profile_avatar(
   p_storage_path TEXT,
   p_public_url TEXT DEFAULT NULL
@@ -420,7 +419,7 @@ CREATE OR REPLACE FUNCTION public.tutor_update_profile_avatar(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, storage
+SET search_path = public, auth, storage, pg_temp
 AS $$
 DECLARE
   v_user_id UUID;
@@ -431,23 +430,35 @@ DECLARE
   v_obj_exists BOOLEAN := FALSE;
 BEGIN
   v_user_id := auth.uid();
+
   IF v_user_id IS NULL THEN
-    RAISE EXCEPTION 'يرجى تسجيل الدخول لتحديث الصورة الشخصية.';
+    RAISE EXCEPTION
+      'يرجى تسجيل الدخول لتحديث الصورة الشخصية.';
   END IF;
 
   v_tutor_id := public.get_current_tutor_id();
+
   IF v_tutor_id IS NULL THEN
-    RAISE EXCEPTION 'حسابك غير مرتبط بملف معلم معتمد في منصة شاطر.';
+    RAISE EXCEPTION
+      'حسابك غير مرتبط بملف معلم معتمد في منصة شاطر.';
   END IF;
 
-  v_clean_path := BTRIM(COALESCE(p_storage_path, ''));
-  v_expected_prefix := 'self-service/' || v_user_id::text || '/';
+  v_clean_path := BTRIM(
+    COALESCE(p_storage_path, '')
+  );
+
+  v_expected_prefix :=
+    'self-service/' || v_user_id::text || '/';
 
   IF v_clean_path = ''
      OR strpos(v_clean_path, '..') > 0
      OR strpos(v_clean_path, v_expected_prefix) <> 1
-     OR v_clean_path !~* ('^self-service/' || v_user_id::text || '/[a-z0-9._-]+\.(jpg|jpeg|png|webp)$') THEN
-    RAISE EXCEPTION 'مسار ملف الصورة غير صالح أو لا يخص حسابك.';
+     OR v_clean_path !~* (
+       '^self-service/' || v_user_id::text ||
+       '/[a-z0-9._-]+\.(jpg|jpeg|png|webp)$'
+     ) THEN
+    RAISE EXCEPTION
+      'مسار ملف الصورة غير صالح أو لا يخص حسابك.';
   END IF;
 
   SELECT EXISTS (
@@ -455,17 +466,39 @@ BEGIN
     FROM storage.objects o
     WHERE o.bucket_id = 'tutor-avatars'
       AND o.name = v_clean_path
-  ) INTO v_obj_exists;
+      AND o.metadata->>'mimetype' IN (
+        'image/jpeg', 'image/png', 'image/webp'
+      )
+      AND (o.metadata->>'size')::BIGINT
+        BETWEEN 1 AND 2097152
+  )
+  INTO v_obj_exists;
 
   IF NOT v_obj_exists THEN
-    RAISE EXCEPTION 'لم يتم العثور على ملف الصورة المرفوعة في وحدة التخزين. يرجى إعادة رفع الصورة والمحاولة مرة أخرى.';
+    RAISE EXCEPTION
+      'لم يتم العثور على صورة صالحة في وحدة التخزين. أعد رفع الصورة والمحاولة.';
   END IF;
 
-  v_clean_url := BTRIM(COALESCE(p_public_url, ''));
+  v_clean_url := BTRIM(
+    COALESCE(p_public_url, '')
+  );
+
   IF v_clean_url = ''
-     OR v_clean_url !~* '^https?://'
-     OR strpos(v_clean_url, '/storage/v1/object/public/tutor-avatars/' || v_clean_path) = 0 THEN
-    RAISE EXCEPTION 'الرابط العام للصورة غير صالح أو لا يطابق المسار المرفوع.';
+     OR char_length(v_clean_url) > 1000
+     OR v_clean_url !~*
+       '^https://[a-z0-9.-]+(:[0-9]+)?/storage/v1/object/public/tutor-avatars/'
+     OR RIGHT(
+       v_clean_url,
+       LENGTH(
+         '/storage/v1/object/public/tutor-avatars/' ||
+         v_clean_path
+       )
+     ) <> (
+       '/storage/v1/object/public/tutor-avatars/' ||
+       v_clean_path
+     ) THEN
+    RAISE EXCEPTION
+      'الرابط العام للصورة غير صالح أو لا يطابق المسار المرفوع.';
   END IF;
 
   PERFORM public.acquire_tutor_lock(v_tutor_id);
@@ -479,15 +512,6 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'ملف المعلم غير موجود.';
   END IF;
-
-  -- Mark any old pending avatar drafts as approved/superseded so they never block future edits
-  UPDATE public.tutor_profile_drafts
-  SET
-    status = 'approved',
-    reviewed_at = NOW(),
-    updated_at = NOW()
-  WHERE tutor_id = v_tutor_id
-    AND status IN ('pending_review', 'needs_revision', 'draft');
 
   RETURN jsonb_build_object(
     'success', TRUE,
@@ -1456,8 +1480,8 @@ GRANT EXECUTE ON FUNCTION public.admin_revert_tutor_profile_edit(UUID) TO authen
 REVOKE ALL ON FUNCTION public.tutor_update_profile_pricing(INTEGER, TEXT, INTEGER) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.tutor_update_profile_pricing(INTEGER, TEXT, INTEGER) TO authenticated;
 
-REVOKE ALL ON FUNCTION public.tutor_update_profile_avatar(TEXT, TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.tutor_update_profile_avatar(TEXT, TEXT) TO authenticated;
+REVOKE ALL ON FUNCTION public.tutor_update_profile_avatar(TEXT, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tutor_update_profile_avatar(TEXT, TEXT) TO authenticated, service_role;
 
 REVOKE ALL ON FUNCTION public.tutor_create_slot(DATE, TIME, TIME, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.tutor_create_slot(DATE, TIME, TIME, TEXT) TO authenticated;
