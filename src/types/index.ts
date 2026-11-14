@@ -404,6 +404,11 @@ export interface TutorPortalContext {
     rating?: number;
     reviewsCount?: number;
     curriculumTags?: string[];
+    qualifications?: TutorQualification[];
+    methodologyPillars?: MethodologyPillar[];
+    whatHappensInTrial?: TrialStep[];
+    subjectsTaughtSummary?: Tutor['subjectsTaughtSummary'];
+    targetStudentCases?: string[];
   };
   pendingDraft: TutorProfileDraft | null;
   application: {

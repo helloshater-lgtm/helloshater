@@ -537,7 +537,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       setPrivateDurationMinutes(updatedPricing.sessionDurationMinutes);
 
       setPricingSaveSuccess(
-        `تم حفظ سعرك (${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة — ${updatedPricing.sessionDurationMinutes} دقيقة) وتحديث ملفك المنشور مباشرةً وأصبح هو السعر الافتراضي لمواعيدك الخاصة الجديدة.`
+        context?.tutor.isPublished
+          ? `تم حفظ سعرك (${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة — ${updatedPricing.sessionDurationMinutes} دقيقة) وتحديث ملفك المنشور مباشرةً وأصبح هو السعر الافتراضي لمواعيدك الخاصة الجديدة.`
+          : `تم حفظ سعرك (${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة — ${updatedPricing.sessionDurationMinutes} دقيقة) في ملفك وظهوره فورًا في لوحتك وفي المعاينة الخاصة (ملفك قيد التجهيز وغير ظاهر لأولياء الأمور).`
       );
     } catch (err: any) {
       const msg = err?.message || 'تعذر حفظ السعر ومدة الحصة.';
@@ -603,7 +605,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         }
 
         setSuccessMessage(
-          `تم حفظ ونشر ${actualAddedCount} موعد تجريبي بنجاح وظهوره في قائمة المواعيد المسجلة!`
+          context?.tutor.isPublished
+            ? `تم حفظ ونشر ${actualAddedCount} موعد تجريبي بنجاح وظهوره في قائمة المواعيد المسجلة!`
+            : `تم حفظ ${actualAddedCount} موعد تجريبي بنجاح وظهوره فورًا في لوحتك وفي المعاينة الخاصة!`
         );
         setTimeout(() => setSuccessMessage(null), 5000);
       } catch (reloadErr: any) {
@@ -790,7 +794,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         }
 
         setSuccessMessage(
-          `تم حفظ ونشر ${actualInsertedCount} موعد خاص بنجاح بسعر ${parsedSlotPrice} ${activeCurrency} (${specsNotice}) وظهورها في قائمة مواعيدك المسجلة!`
+          context?.tutor.isPublished
+            ? `تم حفظ ونشر ${actualInsertedCount} موعد خاص بنجاح بسعر ${parsedSlotPrice} ${activeCurrency} (${specsNotice}) وظهورها في قائمة مواعيدك المسجلة!`
+            : `تم حفظ ${actualInsertedCount} موعد خاص بنجاح بسعر ${parsedSlotPrice} ${activeCurrency} (${specsNotice}) وظهورها فورًا في لوحتك وفي المعاينة الخاصة!`
         );
         setTimeout(() => setSuccessMessage(null), 6000);
       } catch (reloadErr: any) {
@@ -1197,8 +1203,12 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
         setSuccessMessage(
           isEditingExistingGroup
-            ? 'تم تحديث بيانات المجموعة ونشرها مباشرة بنجاح.'
-            : 'تم إنشاء المجموعة التعليمية ونشرها مباشرة بنجاح؛ أصبحت متاحة الآن للتسجيل في ملفك العام.'
+            ? context?.tutor.isPublished
+              ? 'تم تحديث بيانات المجموعة ونشرها مباشرة بنجاح.'
+              : 'تم تحديث بيانات المجموعة بنجاح وظهورها فورًا في لوحتك وفي المعاينة الخاصة.'
+            : context?.tutor.isPublished
+            ? 'تم إنشاء المجموعة التعليمية ونشرها مباشرة بنجاح؛ أصبحت متاحة الآن للتسجيل في ملفك العام.'
+            : 'تم إنشاء المجموعة التعليمية وحفظها بنجاح؛ ظهرت فورًا في لوحتك وفي المعاينة الخاصة.'
         );
         setTimeout(() => setSuccessMessage(null), 5000);
       } catch (reloadErr: any) {
@@ -1298,7 +1308,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
       setSelectedAvatarFile(null);
       setSelectedAvatarPreviewUrl(null);
-      setAvatarSaveSuccess('تم حفظ صورتك الشخصية ونشرها في ملفك مباشرة بنجاح!');
+      setAvatarSaveSuccess(
+        context?.tutor.isPublished
+          ? 'تم حفظ صورتك الشخصية وتحديث ملفك المنشور مباشرة بنجاح!'
+          : 'تم حفظ صورتك الشخصية في ملفك بنجاح وظهرت فورًا في لوحتك وفي المعاينة الخاصة (ملفك قيد التجهيز وغير ظاهر لأولياء الأمور حتى النشر).'
+      );
     } catch (err: any) {
       // Keep the current published avatar intact and display a clear Arabic error message
       setAvatarSaveError(
@@ -1372,7 +1386,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       if (res.changed === false) {
         setTextSaveSuccess('لا توجد تعديلات جديدة.');
       } else {
-        setTextSaveSuccess('تم حفظ النبذة وتحديث ملفك المنشور مباشرةً.');
+        setTextSaveSuccess(
+          context?.tutor.isPublished
+            ? 'تم حفظ النبذة وتحديث ملفك المنشور مباشرةً.'
+            : 'تم حفظ النبذة في ملفك بنجاح وظهرت فورًا في لوحتك وفي المعاينة الخاصة.'
+        );
       }
     } catch (err: any) {
       // Preserve typed text in state and display error clearly
@@ -1606,6 +1624,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   ];
 
   const completedStepsCount = readinessSteps.filter((s) => s.completed).length;
+  const missingProfileItems = readinessSteps.filter((s) => !s.completed);
   const profileStrengthPercent = Math.round((completedStepsCount / readinessSteps.length) * 100);
 
   const futurePrivateBookedCount = privateSlots.filter(
@@ -1621,6 +1640,22 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
   // Parent Preview Mode ("شوف ملفك زي ولي الأمر")
   if (isPreviewMode && previewTutorData) {
+    const livePreviewTutor: Tutor = {
+      ...previewTutorData,
+      name: tutor.name,
+      honorific: tutor.honorific || previewTutorData.honorific || 'أ.',
+      headline: tutor.headline || '',
+      avatarUrl: tutor.avatarUrl || '',
+      isPublished: Boolean(tutor.isPublished),
+      hourlyRateMin: Number(tutor.hourlyRateMin) || 0,
+      hourlyRateMax: Number(tutor.hourlyRateMax) || 0,
+      currency: tutor.currency || 'ج.م',
+      sessionDurationMinutes: Number(tutor.sessionDurationMinutes) || 50,
+      trialDurationMinutes: Number(tutor.trialDurationMinutes) || 20,
+      helpChildQuote: tutor.helpChildQuote || '',
+      helpChildSummary: tutor.helpChildSummary || '',
+    };
+
     return (
       <div className="w-full space-y-4 pb-12" dir="rtl">
         <div className="bg-[#1F2A44] text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs font-bold sticky top-0 z-50 shadow-md">
@@ -1631,7 +1666,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <span className={tutor.isPublished ? 'text-emerald-400' : 'text-amber-400'}>
               {tutor.isPublished
                 ? 'ملفك منشور للزوار'
-                : 'ملفك غير منشور حالياً (معاينة خاصة بك بدون نشر)'}
+                : 'ملفك قيد التجهيز وغير ظاهر لأولياء الأمور (معاينة خاصة بك بدون نشر)'}
             </span>
           </div>
 
@@ -1646,7 +1681,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         </div>
 
         <TutorProfileView
-          tutor={previewTutorData}
+          tutor={livePreviewTutor}
           previewTrialSlots={trialSlots}
           previewPrivateSlots={privateSlots}
           previewGroups={groups}
@@ -1689,7 +1724,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
                     : 'bg-amber-50 text-amber-800 border border-amber-200'
                 }`}
               >
-                {tutor.isPublished ? 'ملفك منشور ومتاح للحجز' : 'ملف غير منشور للجمهور'}
+                {tutor.isPublished
+                  ? 'ملفك منشور ومتاح للحجز'
+                  : 'ملفك قيد التجهيز وغير ظاهر لأولياء الأمور'}
               </span>
             </div>
             <p className="text-xs text-[#64748B] mt-1 line-clamp-1">
@@ -1733,6 +1770,66 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         </div>
       </div>
 
+      {/* 1.05 Preparation Status & Missing Profile Items Banner when unpublished */}
+      {!tutor.isPublished && (
+        <div
+          role="region"
+          aria-label="حالة تجهيز الملف والبيانات الناقصة"
+          className="bg-amber-50/90 rounded-3xl p-4 sm:p-5 border border-amber-200 shadow-xs space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h2 className="font-['Cairo'] text-sm sm:text-base font-extrabold text-amber-950">
+                  ملفك قيد التجهيز وغير ظاهر لأولياء الأمور
+                </h2>
+                <p className="text-xs text-amber-900 leading-relaxed">
+                  يمكنك الآن حفظ صورتك ونبذتك وأسعارك ومواعيدك ومجموعاتك بحرية، وتظهر تعديلاتك ومواعيدك المحفوظة فورًا داخل لوحتك وفي «شوف ملفك زي ولي الأمر»، بينما يظل ملفك ومواعيدك غير متاحين للجمهور والحجز حتى استكمال البيانات والنشر.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {missingProfileItems.length > 0 ? (
+            <div className="p-3.5 rounded-2xl bg-white border border-amber-200 space-y-2.5">
+              <span className="text-xs font-bold text-[#1F2A44] block">
+                البيانات الناقصة لاستكمال تجهيز ملفك قبل النشر ({missingProfileItems.length}):
+              </span>
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {missingProfileItems.map((item) => (
+                  <li
+                    key={item.key}
+                    className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-amber-50/60 border border-amber-200/80 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-bold text-[#1F2A44] block">{item.title}</span>
+                      <span className="text-[11px] text-[#64748B] block">{item.statusText}</span>
+                    </div>
+                    {item.key !== 'specializations' && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(item.targetTab)}
+                        className="px-3 py-1.5 min-h-[36px] rounded-lg bg-[#0D4E8B] hover:bg-[#003767] text-white text-[11px] font-bold shrink-0 cursor-pointer"
+                      >
+                        {item.actionLabel}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>
+                اكتملت جميع عناصر تجهيز ملفك الخمسة (الصورة، النبذة، السعر، التخصصات، والمواعيد المتاحة) — ملفك جاهز للنشر من قِبل الإدارة.
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 1.1 Quick Action Buttons Bar («صورتي ونبذتي» — «سعري ومدة الحصة» — «إضافة موعد» — «إنشاء مجموعة») */}
       <div className="bg-white rounded-3xl p-4 sm:p-5 border border-[#E2E8F0] shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1746,7 +1843,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             </span>
           </div>
           <span className="text-[11px] text-[#64748B]">
-            تعديلاتك تظهر مباشرة في ملفك المنشور فور الحفظ دون انتظار مراجعة إدارية
+            {tutor.isPublished
+              ? 'تعديلاتك تظهر مباشرة في ملفك المنشور فور الحفظ دون انتظار مراجعة إدارية'
+              : 'تعديلاتك ومواعيدك تُحفظ وتظهر فورًا في لوحتك وفي المعاينة الخاصة دون نشر تلقائي'}
           </span>
         </div>
 

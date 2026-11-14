@@ -103,6 +103,13 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   } | null>(null);
   const [isBioExpanded, setIsBioExpanded] = useState(false);
 
+  const isPreviewMode =
+    previewTrialSlots !== undefined ||
+    previewPrivateSlots !== undefined ||
+    previewGroups !== undefined;
+  const isUnpublishedProfile = tutor.isPublished === false;
+  const [previewBookingNotice, setPreviewBookingNotice] = useState<string | null>(null);
+
   // Active tab in the compact booking widget
   const [activeBookingTab, setActiveBookingTab] = useState<BookingTabType>('trial');
 
@@ -238,6 +245,12 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       return;
     }
 
+    if (isUnpublishedProfile) {
+      setRawTrialSlots([]);
+      setIsLoadingTrialSlots(false);
+      return;
+    }
+
     let isMounted = true;
     setIsLoadingTrialSlots(true);
     DataService.getTutorAvailableSlots(tutor.id)
@@ -254,7 +267,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [tutor.id, previewTrialSlots]);
+  }, [tutor.id, previewTrialSlots, isUnpublishedProfile]);
 
   // Initialize earliest trial date & first slot automatically when validTrialSlots load
   useEffect(() => {
@@ -292,9 +305,16 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
           (g) =>
             !g.adminSuspended &&
             (g.status === 'open' || g.status === 'in_progress') &&
-            (g.reviewStatus === undefined || g.reviewStatus === 'approved')
+            (g.reviewStatus === undefined || g.reviewStatus === 'approved' || g.isPublished)
         )
       );
+      setIsLoadingOffers(false);
+      return;
+    }
+
+    if (isUnpublishedProfile) {
+      setRawPrivateSlots([]);
+      setPublicGroups([]);
       setIsLoadingOffers(false);
       return;
     }
@@ -495,6 +515,14 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   };
 
   const openTrialWhatsAppModal = () => {
+    if (isUnpublishedProfile || isPreviewMode) {
+      setPreviewBookingNotice(
+        isUnpublishedProfile
+          ? 'ملفك قيد التجهيز وغير ظاهر لأولياء الأمور — هذه معاينة خاصة بك، ويظل الحجز غير متاح للجمهور حتى استكمال متطلبات الملف ونشره.'
+          : 'هذه معاينة خاصة لملفك كما يراه ولي الأمر. ملفك منشور حالياً ومتاح للحجز للزوار.'
+      );
+      return;
+    }
     setModalContext({
       requestType: 'trial',
       track: detectedTrack as 'school' | 'quran',
@@ -508,6 +536,14 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   };
 
   const handleBookPrivateSlot = (slot: TutorPrivateSlot) => {
+    if (isUnpublishedProfile || isPreviewMode) {
+      setPreviewBookingNotice(
+        isUnpublishedProfile
+          ? 'ملفك قيد التجهيز وغير ظاهر لأولياء الأمور — هذه معاينة خاصة بك، ويظل الحجز غير متاح للجمهور حتى استكمال متطلبات الملف ونشره.'
+          : 'هذه معاينة خاصة لملفك كما يراه ولي الأمر. ملفك منشور حالياً ومتاح للحجز للزوار.'
+      );
+      return;
+    }
     const specs = Array.isArray(slot.allowedSpecializations)
       ? slot.allowedSpecializations
       : [];
@@ -566,6 +602,14 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   };
 
   const handleBookGroup = (group: TutorGroup) => {
+    if (isUnpublishedProfile || isPreviewMode) {
+      setPreviewBookingNotice(
+        isUnpublishedProfile
+          ? 'ملفك قيد التجهيز وغير ظاهر لأولياء الأمور — هذه معاينة خاصة بك، ويظل الحجز غير متاح للجمهور حتى استكمال متطلبات الملف ونشره.'
+          : 'هذه معاينة خاصة لملفك كما يراه ولي الأمر. ملفك منشور حالياً ومتاح للحجز للزوار.'
+      );
+      return;
+    }
     trackBookingSlotSelected({
       tutorId: tutor.id,
       groupId: group.id,
@@ -614,6 +658,14 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     contextNote: string,
     reqType: 'private' | 'group' = 'private'
   ) => {
+    if (isUnpublishedProfile || isPreviewMode) {
+      setPreviewBookingNotice(
+        isUnpublishedProfile
+          ? 'ملفك قيد التجهيز وغير ظاهر لأولياء الأمور — هذه معاينة خاصة بك، ويظل الحجز غير متاح للجمهور حتى استكمال متطلبات الملف ونشره.'
+          : 'هذه معاينة خاصة لملفك كما يراه ولي الأمر. ملفك منشور حالياً ومتاح للحجز للزوار.'
+      );
+      return;
+    }
     const url = buildInterestRegistrationWhatsAppUrl({
       track: detectedTrack as 'school' | 'quran',
       stageName: isSchool ? stageName : undefined,
@@ -673,6 +725,27 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     privateDayWindowStart,
     privateDayWindowStart + DAYS_WINDOW_SIZE
   );
+
+  if (!isPreviewMode && isUnpublishedProfile) {
+    return (
+      <div className="max-w-xl mx-auto my-12 p-6 sm:p-8 bg-white rounded-3xl border border-[#E2E8F0] shadow-xs text-center space-y-4" dir="rtl">
+        <Info className="w-10 h-10 text-amber-600 mx-auto" />
+        <h2 className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
+          ملف المعلم قيد التجهيز وغير متاح للعرض العام أو الحجز حالياً
+        </h2>
+        <p className="text-xs sm:text-sm text-[#535E7B] leading-relaxed">
+          هذا الملف لم يُنشر بعد لأولياء الأمور. يرجى العودة لقائمة المعلمين المنشورين لاختيار معلم متاح للحجز.
+        </p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold transition-colors cursor-pointer"
+        >
+          العودة لاختيار معلم
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full pb-24 lg:pb-16 animate-fade-in">
@@ -1108,6 +1181,48 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                   {activeTimezoneLabel}
                 </span>
               </div>
+
+              {isPreviewMode && (
+                <div className="p-3 rounded-xl bg-[#F0F5FA] border border-[#D1DCFE] space-y-1.5 text-xs">
+                  <div className="font-bold text-[#0D4E8B] flex items-center justify-between flex-wrap gap-1">
+                    <span>ملخص مواعيدك المحفوظة في المعاينة الخاصة:</span>
+                    <span>
+                      {toArabicDigits(validTrialSlots.length)} تجريبي •{' '}
+                      {toArabicDigits(validPrivateSlots.length)} خاص •{' '}
+                      {toArabicDigits(publicGroups.length)} مجموعة
+                    </span>
+                  </div>
+                  {validPrivateSlots.length > 0 && (
+                    <div className="text-[11px] text-[#1F2A44] flex flex-wrap items-center gap-1.5">
+                      <span>أقرب حصة خاصة محفوظة:</span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveBookingTab('private')}
+                        className="font-bold text-[#0D4E8B] underline cursor-pointer"
+                      >
+                        {formatSlotDateArabic(validPrivateSlots[0].slotDate).dayName}{' '}
+                        {formatSlotDateArabic(validPrivateSlots[0].slotDate).shortDate} —{' '}
+                        {formatTimeArabic12h(validPrivateSlots[0].startTime)} بسعر{' '}
+                        {validPrivateSlots[0].priceAmount} {validPrivateSlots[0].currency}
+                      </button>
+                    </div>
+                  )}
+                  {isUnpublishedProfile && (
+                    <p className="text-[11px] text-amber-800 font-bold">
+                      ملفك قيد التجهيز وغير ظاهر لأولياء الأمور (الحجز متوقف للجمهور قبل النشر).
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {previewBookingNotice && (
+                <div
+                  role="status"
+                  className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold leading-relaxed"
+                >
+                  {previewBookingNotice}
+                </div>
+              )}
 
               {/* 3 Clear Tabs: تجربة مجانية | حصة خاصة | مجموعات */}
               <div

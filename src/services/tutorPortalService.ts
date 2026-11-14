@@ -822,39 +822,17 @@ export const TutorPortalService = {
   },
 
   /**
-   * 6.4 Build full Tutor object for "شوف ملفك زي ولي الأمر" preview
-   * Works even if the tutor profile is currently unpublished (!isPublished) and never publishes it.
+   * 6.4 Build full Tutor object for "شوف ملفك زي ولي الأمر" private preview
+   * Strictly uses authenticated tutor portal data (tutor_get_portal_context + tutor_get_my_specializations)
+   * without relying on public visitor functions/tables, and works when is_published = false without publishing.
    */
   async getMyPreviewTutor(
     contextTutor: TutorPortalContext['tutor'],
     specializations: ApprovedSpecializationItem[]
   ): Promise<Tutor> {
-    const tutorId = contextTutor.id;
-
-    const [pillarsRes, qualRes, trialRes, summaryRes] = await Promise.all([
-      supabase
-        .from('tutor_methodology_pillars')
-        .select('*')
-        .eq('tutor_id', tutorId)
-        .order('display_order', { ascending: true }),
-      supabase
-        .from('tutor_qualifications')
-        .select('*')
-        .eq('tutor_id', tutorId)
-        .order('display_order', { ascending: true }),
-      supabase
-        .from('tutor_trial_steps')
-        .select('*')
-        .eq('tutor_id', tutorId)
-        .order('step_number', { ascending: true }),
-      supabase
-        .from('tutor_subjects_taught_summary')
-        .select('*')
-        .eq('tutor_id', tutorId)
-        .order('display_order', { ascending: true }),
-    ]);
-
     const offerings: TutorOffering[] = [];
+    const synthesizedSummary: Tutor['subjectsTaughtSummary'] = [];
+
     for (const spec of specializations) {
       if (spec.track === 'school' && spec.stageId && spec.gradeId && spec.subjectId && spec.curriculumId) {
         offerings.push({
@@ -864,22 +842,37 @@ export const TutorPortalService = {
           subjectId: spec.subjectId,
           curriculumType: spec.curriculumId as any,
         });
+        synthesizedSummary.push({
+          title: spec.subjectName || spec.label,
+          gradesRange: spec.gradeName || spec.stageName || '',
+          curriculumNote: spec.curriculumName || '',
+          icon: 'book',
+        });
       } else if (spec.track === 'quran' && spec.ageGroupId && spec.levelId) {
         offerings.push({
           track: 'quran',
           ageGroupId: spec.ageGroupId,
           levelId: spec.levelId,
         });
+        synthesizedSummary.push({
+          title: spec.levelName || spec.label,
+          gradesRange: spec.ageGroupName || '',
+          curriculumNote: 'مسار القرآن الكريم والتأسيس',
+          icon: 'book',
+        });
+      } else if (spec.label) {
+        synthesizedSummary.push({
+          title: spec.label,
+          gradesRange: spec.gradeName || spec.ageGroupName || '',
+          curriculumNote: spec.curriculumName || '',
+          icon: 'book',
+        });
       }
     }
 
     const methodologyPillars =
-      pillarsRes.data && pillarsRes.data.length > 0
-        ? pillarsRes.data.map((p: any) => ({
-            title: p.title,
-            description: p.description,
-            iconName: p.icon_name || 'smile',
-          }))
+      Array.isArray(contextTutor.methodologyPillars) && contextTutor.methodologyPillars.length > 0
+        ? contextTutor.methodologyPillars
         : [
             {
               title: 'تبسيط المفاهيم الصعبة',
@@ -899,12 +892,8 @@ export const TutorPortalService = {
           ];
 
     const whatHappensInTrial =
-      trialRes.data && trialRes.data.length > 0
-        ? trialRes.data.map((t: any) => ({
-            stepNumber: t.step_number,
-            title: t.title,
-            description: t.description,
-          }))
+      Array.isArray(contextTutor.whatHappensInTrial) && contextTutor.whatHappensInTrial.length > 0
+        ? contextTutor.whatHappensInTrial
         : [
             {
               stepNumber: 1,
@@ -928,19 +917,15 @@ export const TutorPortalService = {
             },
           ];
 
-    const qualifications = (qualRes.data || []).map((q: any) => ({
-      title: q.title,
-      institution: q.institution,
-      verified: Boolean(q.verified),
-      notes: q.notes || undefined,
-    }));
+    const qualifications =
+      Array.isArray(contextTutor.qualifications) && contextTutor.qualifications.length > 0
+        ? contextTutor.qualifications
+        : [];
 
-    const subjectsTaughtSummary = (summaryRes.data || []).map((s: any) => ({
-      title: s.title,
-      gradesRange: s.grades_range || '',
-      curriculumNote: s.curriculum_note || '',
-      icon: (s.icon_name || 'book') as any,
-    }));
+    const subjectsTaughtSummary =
+      Array.isArray(contextTutor.subjectsTaughtSummary) && contextTutor.subjectsTaughtSummary.length > 0
+        ? contextTutor.subjectsTaughtSummary
+        : synthesizedSummary;
 
     return {
       id: contextTutor.id,
@@ -964,6 +949,7 @@ export const TutorPortalService = {
       helpChildQuote: contextTutor.helpChildQuote || '',
       helpChildSummary: contextTutor.helpChildSummary || '',
       methodologyPillars,
+      targetStudentCases: contextTutor.targetStudentCases || [],
       subjectsTaughtSummary,
       whatHappensInTrial,
       qualifications,

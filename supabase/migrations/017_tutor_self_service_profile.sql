@@ -726,8 +726,299 @@ DROP FUNCTION IF EXISTS public.tutor_create_group(TEXT, TEXT, TEXT, INTEGER, INT
 DROP FUNCTION IF EXISTS public.tutor_update_group(UUID, TEXT, TEXT, INTEGER, INTEGER, TEXT, TEXT, INTEGER, INTEGER, DATE, DATE, TEXT, JSONB, TEXT, TEXT, TEXT);
 
 -- ============================================================================
--- 7. Grants & Function Access Lockdown
+-- 7. Separate Tutor Profile Preparation from Public Publication
+--    - tutor_get_portal_context returns full profile details for authenticated
+--      approved & active tutors even when is_published = FALSE.
+--    - Tutors can SELECT their own sub-tables regardless of is_published.
+--    - Slots & groups cannot be booked while tutors.is_published = FALSE.
 -- ============================================================================
+
+CREATE OR REPLACE FUNCTION public.tutor_get_portal_context()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, pg_temp
+AS $$
+DECLARE
+  v_uid UUID;
+  v_tutor_id TEXT;
+  v_tutor RECORD;
+  v_app RECORD;
+  v_draft RECORD;
+  v_pillars JSONB;
+  v_quals JSONB;
+  v_trial_steps JSONB;
+  v_subjects_summary JSONB;
+BEGIN
+  v_uid := auth.uid();
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'يجب تسجيل الدخول للوصول إلى بوابة المعلم.';
+  END IF;
+
+  -- Check if explicitly deactivated in tutor_account_links
+  IF EXISTS (
+    SELECT 1
+    FROM public.tutor_account_links tal
+    WHERE tal.user_id = v_uid
+      AND tal.is_active = FALSE
+  ) THEN
+    RAISE EXCEPTION 'تم إيقاف تفعيل حساب المعلم المرتبط بهذا البريد.';
+  END IF;
+
+  v_tutor_id := public.get_current_tutor_id();
+  IF v_tutor_id IS NULL THEN
+    RAISE EXCEPTION 'حسابك غير مرتبط بطلب معتمد أو ملف معلم مفعل في منصة شاطر.';
+  END IF;
+
+  SELECT *
+  INTO v_tutor
+  FROM public.tutors
+  WHERE id = v_tutor_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ملف المعلم المرتبط بحسابك غير موجود.';
+  END IF;
+
+  SELECT *
+  INTO v_app
+  FROM public.tutor_applications
+  WHERE applicant_tutor_id = v_tutor_id
+    AND status = 'approved'
+  ORDER BY updated_at DESC
+  LIMIT 1;
+
+  SELECT *
+  INTO v_draft
+  FROM public.tutor_profile_drafts
+  WHERE tutor_id = v_tutor_id
+    AND status IN ('pending_review', 'needs_revision', 'draft')
+  ORDER BY created_at DESC
+  LIMIT 1;
+
+  SELECT COALESCE(
+    jsonb_agg(
+      jsonb_build_object(
+        'title', p.title,
+        'description', p.description,
+        'iconName', COALESCE(p.icon_name, 'smile')
+      )
+      ORDER BY p.display_order ASC
+    ),
+    '[]'::jsonb
+  )
+  INTO v_pillars
+  FROM public.tutor_methodology_pillars p
+  WHERE p.tutor_id = v_tutor_id;
+
+  SELECT COALESCE(
+    jsonb_agg(
+      jsonb_build_object(
+        'title', q.title,
+        'institution', q.institution,
+        'verified', COALESCE(q.verified, FALSE),
+        'notes', q.notes
+      )
+      ORDER BY q.display_order ASC
+    ),
+    '[]'::jsonb
+  )
+  INTO v_quals
+  FROM public.tutor_qualifications q
+  WHERE q.tutor_id = v_tutor_id;
+
+  SELECT COALESCE(
+    jsonb_agg(
+      jsonb_build_object(
+        'stepNumber', ts.step_number,
+        'title', ts.title,
+        'description', ts.description
+      )
+      ORDER BY ts.step_number ASC
+    ),
+    '[]'::jsonb
+  )
+  INTO v_trial_steps
+  FROM public.tutor_trial_steps ts
+  WHERE ts.tutor_id = v_tutor_id;
+
+  SELECT COALESCE(
+    jsonb_agg(
+      jsonb_build_object(
+        'title', ss.title,
+        'gradesRange', COALESCE(ss.grades_range, ''),
+        'curriculumNote', COALESCE(ss.curriculum_note, ''),
+        'icon', COALESCE(ss.icon_name, 'book')
+      )
+      ORDER BY ss.display_order ASC
+    ),
+    '[]'::jsonb
+  )
+  INTO v_subjects_summary
+  FROM public.tutor_subjects_taught_summary ss
+  WHERE ss.tutor_id = v_tutor_id;
+
+  RETURN jsonb_build_object(
+    'tutor', jsonb_build_object(
+      'id', v_tutor.id,
+      'name', v_tutor.name,
+      'honorific', v_tutor.honorific,
+      'headline', v_tutor.headline,
+      'avatarUrl', COALESCE(v_tutor.avatar_url, ''),
+      'helpChildQuote', v_tutor.help_child_quote,
+      'helpChildSummary', v_tutor.help_child_summary,
+      'isPublished', COALESCE(v_tutor.is_published, FALSE),
+      'yearsOfExperience', v_tutor.years_of_experience,
+      'experienceBadgeText', v_tutor.experience_badge_text,
+      'verifiedCredentials', COALESCE(v_tutor.verified_credentials, FALSE),
+      'hourlyRateMin', v_tutor.hourly_rate_min,
+      'hourlyRateMax', v_tutor.hourly_rate_max,
+      'currency', v_tutor.currency,
+      'sessionDurationMinutes', v_tutor.session_duration_minutes,
+      'trialDurationMinutes', v_tutor.trial_duration_minutes,
+      'rating', v_tutor.rating,
+      'reviewsCount', v_tutor.reviews_count,
+      'curriculumTags', v_tutor.curriculum_tags,
+      'methodologyPillars', v_pillars,
+      'qualifications', v_quals,
+      'whatHappensInTrial', v_trial_steps,
+      'subjectsTaughtSummary', v_subjects_summary
+    ),
+    'pendingDraft', CASE
+      WHEN v_draft.id IS NOT NULL THEN jsonb_build_object(
+        'id', v_draft.id,
+        'tutorId', v_draft.tutor_id,
+        'headline', v_draft.headline,
+        'avatarUrl', v_draft.avatar_url,
+        'helpChildQuote', v_draft.help_child_quote,
+        'helpChildSummary', v_draft.help_child_summary,
+        'status', v_draft.status,
+        'adminNotes', v_draft.admin_notes,
+        'submittedAt', v_draft.submitted_at,
+        'reviewedAt', v_draft.reviewed_at
+      )
+      ELSE NULL
+    END,
+    'application', CASE
+      WHEN v_app.id IS NOT NULL THEN jsonb_build_object(
+        'id', v_app.id,
+        'referenceCode', v_app.reference_code,
+        'status', v_app.status,
+        'adminNotes', v_app.admin_notes,
+        'approvedAt', v_app.reviewed_at
+      )
+      ELSE NULL
+    END
+  );
+END;
+$$;
+
+-- Allow authenticated tutor to read their own profile sub-tables even when is_published = FALSE
+DROP POLICY IF EXISTS "Tutors can read own methodology pillars" ON public.tutor_methodology_pillars;
+CREATE POLICY "Tutors can read own methodology pillars"
+  ON public.tutor_methodology_pillars
+  FOR SELECT
+  TO authenticated
+  USING (tutor_id = public.get_current_tutor_id());
+
+DROP POLICY IF EXISTS "Tutors can read own qualifications" ON public.tutor_qualifications;
+CREATE POLICY "Tutors can read own qualifications"
+  ON public.tutor_qualifications
+  FOR SELECT
+  TO authenticated
+  USING (tutor_id = public.get_current_tutor_id());
+
+DROP POLICY IF EXISTS "Tutors can read own trial steps" ON public.tutor_trial_steps;
+CREATE POLICY "Tutors can read own trial steps"
+  ON public.tutor_trial_steps
+  FOR SELECT
+  TO authenticated
+  USING (tutor_id = public.get_current_tutor_id());
+
+DROP POLICY IF EXISTS "Tutors can read own subjects summary" ON public.tutor_subjects_taught_summary;
+CREATE POLICY "Tutors can read own subjects summary"
+  ON public.tutor_subjects_taught_summary
+  FOR SELECT
+  TO authenticated
+  USING (tutor_id = public.get_current_tutor_id());
+
+DROP POLICY IF EXISTS "Tutors can read own school offerings" ON public.tutor_school_offerings;
+CREATE POLICY "Tutors can read own school offerings"
+  ON public.tutor_school_offerings
+  FOR SELECT
+  TO authenticated
+  USING (tutor_id = public.get_current_tutor_id());
+
+DROP POLICY IF EXISTS "Tutors can read own quran offerings" ON public.tutor_quran_offerings;
+CREATE POLICY "Tutors can read own quran offerings"
+  ON public.tutor_quran_offerings
+  FOR SELECT
+  TO authenticated
+  USING (tutor_id = public.get_current_tutor_id());
+
+-- Block booking/enrollment on unpublished tutors (while allowing tutors to manage unbooked slots)
+CREATE OR REPLACE FUNCTION public.enforce_published_tutor_for_booking()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_is_published BOOLEAN;
+BEGIN
+  IF TG_TABLE_NAME = 'tutor_available_slots' THEN
+    IF NEW.is_booked = TRUE AND COALESCE(OLD.is_booked, FALSE) = FALSE THEN
+      SELECT is_published INTO v_is_published FROM public.tutors WHERE id = NEW.tutor_id;
+      IF COALESCE(v_is_published, FALSE) = FALSE THEN
+        RAISE EXCEPTION 'لا يمكن تأكيد حجز موعد تجريبي لمعلم غير منشور للجمهور (ملف المعلم قيد التجهيز).';
+      END IF;
+    END IF;
+    RETURN NEW;
+  ELSIF TG_TABLE_NAME = 'tutor_private_bookings' THEN
+    IF NEW.status IN ('pending', 'confirmed') THEN
+      SELECT is_published INTO v_is_published FROM public.tutors WHERE id = NEW.tutor_id;
+      IF COALESCE(v_is_published, FALSE) = FALSE THEN
+        RAISE EXCEPTION 'لا يمكن الحجز لمعلم غير منشور للجمهور (ملف المعلم قيد التجهيز).';
+      END IF;
+    END IF;
+    RETURN NEW;
+  ELSIF TG_TABLE_NAME = 'tutor_group_enrollments' THEN
+    IF NEW.status IN ('pending', 'confirmed') THEN
+      SELECT is_published INTO v_is_published FROM public.tutors WHERE id = NEW.tutor_id;
+      IF COALESCE(v_is_published, FALSE) = FALSE THEN
+        RAISE EXCEPTION 'لا يمكن التسجيل في مجموعة لمعلم غير منشور للجمهور (ملف المعلم قيد التجهيز).';
+      END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_published_tutor_trial_booking ON public.tutor_available_slots;
+CREATE TRIGGER trg_enforce_published_tutor_trial_booking
+  BEFORE UPDATE ON public.tutor_available_slots
+  FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_published_tutor_for_booking();
+
+DROP TRIGGER IF EXISTS trg_enforce_published_tutor_private_booking ON public.tutor_private_bookings;
+CREATE TRIGGER trg_enforce_published_tutor_private_booking
+  BEFORE INSERT OR UPDATE ON public.tutor_private_bookings
+  FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_published_tutor_for_booking();
+
+DROP TRIGGER IF EXISTS trg_enforce_published_tutor_group_enrollment ON public.tutor_group_enrollments;
+CREATE TRIGGER trg_enforce_published_tutor_group_enrollment
+  BEFORE INSERT OR UPDATE ON public.tutor_group_enrollments
+  FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_published_tutor_for_booking();
+
+-- ============================================================================
+-- 8. Grants & Function Access Lockdown
+-- ============================================================================
+REVOKE ALL ON FUNCTION public.tutor_get_portal_context() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.tutor_get_portal_context() TO authenticated, service_role;
+
 REVOKE ALL ON FUNCTION public.tutor_update_profile_text(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.tutor_update_profile_text(TEXT, TEXT, TEXT) TO authenticated;
 
@@ -748,4 +1039,5 @@ GRANT EXECUTE ON FUNCTION public.tutor_create_slot(DATE, TIME, TIME, TEXT) TO au
 
 REVOKE ALL ON FUNCTION public.tutor_update_trial_slot(UUID, DATE, TIME, TIME, TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.tutor_update_trial_slot(UUID, DATE, TIME, TIME, TEXT) TO authenticated, service_role;
+
 
