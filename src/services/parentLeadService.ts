@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { SHATIR_CONFIG } from '../config/shatirConfig';
 import {
   isAnalyticsConsentGranted,
   isMarketingConsentGranted,
@@ -111,6 +112,9 @@ export function captureInitialAttribution(): void {
     ] as const;
 
     for (const key of paramNames) {
+      if (key === 'fbclid' && !SHATIR_CONFIG.metaPixelEnabled) {
+        continue;
+      }
       const val = searchParams.get(key)?.trim();
       if (val) {
         window.sessionStorage.setItem(ATTR_KEYS[key], val);
@@ -159,7 +163,8 @@ export function getSavedAttributionForPayload(): VisitAttributionData {
     captureInitialAttribution();
 
     const analyticsConsentGranted = isAnalyticsConsentGranted();
-    const marketingConsentGranted = isMarketingConsentGranted();
+    const canSendFbclid =
+      Boolean(SHATIR_CONFIG.metaPixelEnabled) && isMarketingConsentGranted();
 
     return {
       utmSource: window.sessionStorage.getItem(ATTR_KEYS.utm_source) || null,
@@ -168,7 +173,7 @@ export function getSavedAttributionForPayload(): VisitAttributionData {
       utmContent: window.sessionStorage.getItem(ATTR_KEYS.utm_content) || null,
       utmTerm: window.sessionStorage.getItem(ATTR_KEYS.utm_term) || null,
       gclid: analyticsConsentGranted ? window.sessionStorage.getItem(ATTR_KEYS.gclid) || null : null,
-      fbclid: marketingConsentGranted ? window.sessionStorage.getItem(ATTR_KEYS.fbclid) || null : null,
+      fbclid: canSendFbclid ? window.sessionStorage.getItem(ATTR_KEYS.fbclid) || null : null,
       landingPage: window.sessionStorage.getItem(ATTR_KEYS.landing_page) || null,
       referrer: window.sessionStorage.getItem(ATTR_KEYS.referrer) || null,
     };

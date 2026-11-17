@@ -8,9 +8,9 @@
  * - Deduplication for React renders and SPA hash changes
  */
 
-import { SearchCriteria } from '../types';
+import { SearchCriteria, Tutor } from '../types';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
-import { MetaPixelService } from './metaPixelService';
+import { MetaPixelService, PublicOrExcludedAppView } from './metaPixelService';
 
 declare global {
   interface Window {
@@ -403,6 +403,12 @@ export function trackParentLeadSubmitted(params: {
   track?: 'school' | 'quran' | null;
   request_type: 'trial' | 'private' | 'group' | 'recommendation';
   referenceCode?: string | null;
+  tutor?: Tutor | null;
+  tutorEligibleForMeta?: boolean;
+  quranAgeGroupId?: string | null;
+  quranLevelId?: string | null;
+  isPreview?: boolean;
+  view?: PublicOrExcludedAppView;
 }): void {
   sendGAEvent('parent_lead_submitted', {
     track: params.track || undefined,
@@ -414,6 +420,12 @@ export function trackParentLeadSubmitted(params: {
       referenceCode: params.referenceCode,
       track: params.track,
       requestType: params.request_type,
+      tutor: params.tutor,
+      tutorEligibleForMeta: params.tutorEligibleForMeta,
+      quranAgeGroupId: params.quranAgeGroupId,
+      quranLevelId: params.quranLevelId,
+      isPreview: params.isPreview,
+      view: params.view,
     });
   }
 }

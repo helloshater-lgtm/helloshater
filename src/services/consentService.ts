@@ -5,6 +5,8 @@
  * 2. Meta Pixel / Ad Measurement (marketing / ad_storage) -> localStorage key 'shatir_meta_consent'
  */
 
+import { SHATIR_CONFIG } from '../config/shatirConfig';
+
 export type ConsentDecision = 'granted' | 'denied';
 export type StoredConsentValue = ConsentDecision | 'unset';
 
@@ -55,17 +57,21 @@ export function isMarketingConsentGranted(): boolean {
 
 export function needsConsentPrompt(): boolean {
   const prefs = getConsentPreferences();
+  if (!SHATIR_CONFIG.metaPixelEnabled) {
+    return prefs.analytics === 'unset';
+  }
   return prefs.analytics === 'unset' || prefs.marketing === 'unset';
 }
 
 function syncGtagConsent(analytics: ConsentDecision, marketing: ConsentDecision): void {
   if (typeof window === 'undefined' || typeof window.gtag !== 'function') return;
+  const effectiveMarketing: ConsentDecision = SHATIR_CONFIG.metaPixelEnabled ? marketing : 'denied';
   try {
     window.gtag('consent', 'update', {
       analytics_storage: analytics,
-      ad_storage: marketing,
-      ad_user_data: marketing,
-      ad_personalization: marketing,
+      ad_storage: effectiveMarketing,
+      ad_user_data: effectiveMarketing,
+      ad_personalization: effectiveMarketing,
     });
   } catch {
     // Ignore gtag failure

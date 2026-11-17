@@ -82,7 +82,7 @@ export default function App() {
   const [savedResults, setSavedResults] = useState<Tutor[]>([]);
   const [savedScrollPosition, setSavedScrollPosition] = useState<number>(0);
   const [marketingConsentGranted, setMarketingConsentGranted] = useState<boolean>(() =>
-    isMarketingConsentGranted()
+    Boolean(SHATIR_CONFIG.metaPixelEnabled) && isMarketingConsentGranted()
   );
 
   // Taxonomy for profile breadcrumbs
@@ -112,9 +112,12 @@ export default function App() {
       setQuranLevels(qLvls);
     });
 
-    MetaPixelService.syncConsentState(isMarketingConsentGranted());
+    MetaPixelService.syncConsentState(
+      Boolean(SHATIR_CONFIG.metaPixelEnabled) && isMarketingConsentGranted()
+    );
     const unsubscribeConsent = subscribeConsentChanges((prefs) => {
-      const granted = prefs.marketing === 'granted';
+      const granted =
+        Boolean(SHATIR_CONFIG.metaPixelEnabled) && prefs.marketing === 'granted';
       setMarketingConsentGranted(granted);
       MetaPixelService.syncConsentState(granted);
     });
@@ -272,33 +275,63 @@ export default function App() {
     }
   }, [currentView, selectedTutorId]);
 
-  // Meta Pixel PageView tracking (strictly public parent routes only, gated by marketing consent)
+  // Meta Pixel PageView tracking (gated by feature toggle, marketing consent, and strict non-Quran isolation)
   useEffect(() => {
-    if (!marketingConsentGranted) return;
+    if (!SHATIR_CONFIG.metaPixelEnabled || !marketingConsentGranted) return;
 
     if (currentView === 'home') {
       MetaPixelService.resetTutorViewTracking();
-      MetaPixelService.trackPageView({ path: '/', view: 'home' });
+      MetaPixelService.trackPageView({
+        path: '/',
+        view: 'home',
+        criteria: savedCriteria,
+      });
     } else if (currentView === 'privacy') {
       MetaPixelService.resetTutorViewTracking();
-      MetaPixelService.trackPageView({ path: '/#privacy', view: 'privacy' });
+      MetaPixelService.trackPageView({
+        path: '/#privacy',
+        view: 'privacy',
+        criteria: savedCriteria,
+      });
     } else if (currentView === 'terms') {
       MetaPixelService.resetTutorViewTracking();
-      MetaPixelService.trackPageView({ path: '/#terms', view: 'terms' });
-    } else if (currentView === 'tutor-profile' && selectedTutorId) {
       MetaPixelService.trackPageView({
-        path: `/#tutor/${selectedTutorId}`,
-        view: 'tutor-profile',
+        path: '/#terms',
+        view: 'terms',
+        criteria: savedCriteria,
       });
+    } else if (currentView === 'tutor-profile') {
+      // Do NOT send /#tutor/<id> PageView before loaded tutor passes strict school-only eligibility check
+      if (
+        !isTutorLoading &&
+        currentTutor &&
+        selectedTutorId &&
+        currentTutor.id === selectedTutorId &&
+        currentTutor.isPublished === true
+      ) {
+        MetaPixelService.trackPageView({
+          path: `/#tutor/${selectedTutorId}`,
+          view: 'tutor-profile',
+          tutor: currentTutor,
+          criteria: savedCriteria,
+        });
+      }
     } else {
       // Excluded views: join-as-tutor, tutor-dashboard, admin
       MetaPixelService.resetTutorViewTracking();
     }
-  }, [currentView, selectedTutorId, marketingConsentGranted]);
+  }, [
+    currentView,
+    selectedTutorId,
+    isTutorLoading,
+    currentTutor,
+    savedCriteria,
+    marketingConsentGranted,
+  ]);
 
-  // Meta Pixel ViewContent tracking (only after a published tutor profile loads on the public view)
+  // Meta Pixel ViewContent tracking (only after a published pure-school tutor profile loads)
   useEffect(() => {
-    if (!marketingConsentGranted) return;
+    if (!SHATIR_CONFIG.metaPixelEnabled || !marketingConsentGranted) return;
     if (
       currentView !== 'tutor-profile' ||
       isTutorLoading ||
@@ -310,24 +343,19 @@ export default function App() {
       return;
     }
 
-    const tutorTrack: 'school' | 'quran' = currentTutor.offerings.some(
-      (o) => o.track === 'school'
-    )
-      ? 'school'
-      : 'quran';
-
     MetaPixelService.trackViewContent({
+      tutor: currentTutor,
       tutorId: currentTutor.id,
-      track: tutorTrack,
-      isPublished: true,
       isPreview: false,
       view: 'tutor-profile',
+      criteria: savedCriteria,
     });
   }, [
     currentView,
     selectedTutorId,
     isTutorLoading,
     currentTutor,
+    savedCriteria,
     marketingConsentGranted,
   ]);
 

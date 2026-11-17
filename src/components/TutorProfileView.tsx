@@ -2102,6 +2102,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
         requestType={modalContext?.requestType || 'trial'}
         track={modalContext?.track ?? (detectedTrack as 'school' | 'quran')}
         tutorId={tutor.id}
+        tutor={tutor}
+        isPreview={isPreviewMode || isUnpublishedProfile}
         courseOptionId={
           modalContext ? modalContext.courseOptionId : isSchool ? criteria?.courseOptionId || null : null
         }

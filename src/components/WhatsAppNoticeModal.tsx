@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { BookingWhatsAppPayload, buildTrialBookingWhatsAppUrl } from '../config/shatirConfig';
+import { Tutor } from '../types';
 import {
   MessageCircle,
   Check,
@@ -33,6 +34,9 @@ interface WhatsAppNoticeModalProps {
   requestType?: ParentLeadRequestType;
   track?: ParentLeadTrack;
   tutorId?: string | null;
+  tutor?: Tutor | null;
+  tutorEligibleForMeta?: boolean;
+  isPreview?: boolean;
   courseOptionId?: string | null;
   quranAgeGroupId?: string | null;
   quranLevelId?: string | null;
@@ -47,6 +51,9 @@ export const WhatsAppNoticeModal: React.FC<WhatsAppNoticeModalProps> = ({
   requestType = 'trial',
   track,
   tutorId = null,
+  tutor = undefined,
+  tutorEligibleForMeta,
+  isPreview = false,
   courseOptionId = null,
   quranAgeGroupId = null,
   quranLevelId = null,
@@ -199,6 +206,11 @@ export const WhatsAppNoticeModal: React.FC<WhatsAppNoticeModalProps> = ({
       track: resolvedTrack,
       request_type: requestType,
       referenceCode: outcome.referenceCode,
+      tutor,
+      tutorEligibleForMeta,
+      quranAgeGroupId,
+      quranLevelId,
+      isPreview,
     });
     setReferenceCode(outcome.referenceCode);
     setFallbackNotice(null);

@@ -19,7 +19,8 @@ export const SHATIR_CONFIG = {
   // Central Google Analytics 4 Measurement ID
   gaMeasurementId: 'G-CGL8XBRE0J',
 
-  // Central Meta Pixel ID
+  // Central Meta Pixel ID & temporary feature toggle (keep disabled until path isolation review completes)
+  metaPixelEnabled: false,
   metaPixelId: RAW_META_PIXEL_ID || '1515074777348342',
 
   // Platform Guarantee & Trust messaging

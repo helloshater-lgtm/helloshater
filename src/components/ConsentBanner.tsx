@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { SHATIR_CONFIG } from '../config/shatirConfig';
 import {
   getConsentPreferences,
   needsConsentPrompt,
@@ -10,6 +11,7 @@ import { MetaPixelService } from '../services/metaPixelService';
 import { ShieldCheck, X } from 'lucide-react';
 
 export const ConsentBanner: React.FC = () => {
+  const metaPixelEnabled = Boolean(SHATIR_CONFIG.metaPixelEnabled);
   const [isVisible, setIsVisible] = useState(false);
   const [isSettingsMode, setIsSettingsMode] = useState(false);
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
@@ -18,8 +20,8 @@ export const ConsentBanner: React.FC = () => {
   useEffect(() => {
     const prefs = getConsentPreferences();
     setAnalyticsEnabled(prefs.analytics === 'granted');
-    setMarketingEnabled(prefs.marketing === 'granted');
-    MetaPixelService.syncConsentState(prefs.marketing === 'granted');
+    setMarketingEnabled(metaPixelEnabled && prefs.marketing === 'granted');
+    MetaPixelService.syncConsentState(metaPixelEnabled && prefs.marketing === 'granted');
 
     if (needsConsentPrompt()) {
       setIsSettingsMode(false);
@@ -29,7 +31,7 @@ export const ConsentBanner: React.FC = () => {
     const unsubscribe = subscribeOpenConsentSettings(() => {
       const latest = getConsentPreferences();
       setAnalyticsEnabled(latest.analytics === 'granted');
-      setMarketingEnabled(latest.marketing === 'granted');
+      setMarketingEnabled(metaPixelEnabled && latest.marketing === 'granted');
       setIsSettingsMode(true);
       setIsVisible(true);
     });
@@ -37,12 +39,12 @@ export const ConsentBanner: React.FC = () => {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [metaPixelEnabled]);
 
   const handleSaveCustom = () => {
     saveConsentPreferences({
       analytics: analyticsEnabled ? 'granted' : 'denied',
-      marketing: marketingEnabled ? 'granted' : 'denied',
+      marketing: metaPixelEnabled && marketingEnabled ? 'granted' : 'denied',
     });
     setIsVisible(false);
     setIsSettingsMode(false);
@@ -50,10 +52,10 @@ export const ConsentBanner: React.FC = () => {
 
   const handleAcceptAll = () => {
     setAnalyticsEnabled(true);
-    setMarketingEnabled(true);
+    setMarketingEnabled(metaPixelEnabled);
     saveConsentPreferences({
       analytics: 'granted',
-      marketing: 'granted',
+      marketing: metaPixelEnabled ? 'granted' : 'denied',
     });
     setIsVisible(false);
     setIsSettingsMode(false);
@@ -106,8 +108,9 @@ export const ConsentBanner: React.FC = () => {
         </div>
 
         <p className="leading-relaxed text-[#535E7B]">
-          نحترم خصوصيتك. يمكنك التحكم بصورة مستقلة في تفعيل الإحصاءات وقياس الإعلانات دون إرسال
-          أي بيانات شخصية، والاطلاع على{' '}
+          {metaPixelEnabled
+            ? 'نحترم خصوصيتك. يمكنك التحكم بصورة مستقلة في تفعيل الإحصاءات وقياس الإعلانات دون إرسال أي بيانات شخصية، والاطلاع على '
+            : 'نحترم خصوصيتك. يمكنك التحكم في تفعيل إحصاءات الاستخدام غير الشخصية لتحسين تجربة المنصة، والاطلاع على '}
           <a
             href="#privacy"
             onClick={() => {
@@ -120,7 +123,7 @@ export const ConsentBanner: React.FC = () => {
           .
         </p>
 
-        {/* Independent Toggles: Analytics vs Ads Measurement */}
+        {/* Toggles */}
         <div className="space-y-2 pt-0.5">
           <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#F8FAFD] border border-[#E2E8F0] hover:border-[#CBD5E1] cursor-pointer select-none transition-colors">
             <input
@@ -139,22 +142,33 @@ export const ConsentBanner: React.FC = () => {
             </span>
           </label>
 
-          <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#F8FAFD] border border-[#E2E8F0] hover:border-[#CBD5E1] cursor-pointer select-none transition-colors">
-            <input
-              type="checkbox"
-              checked={marketingEnabled}
-              onChange={(e) => setMarketingEnabled(e.target.checked)}
-              className="w-4 h-4 mt-0.5 rounded border-[#CBD5E1] text-[#0D4E8B] focus:ring-[#0D4E8B] shrink-0 cursor-pointer"
-            />
-            <span className="flex-1 leading-snug">
+          {metaPixelEnabled ? (
+            <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#F8FAFD] border border-[#E2E8F0] hover:border-[#CBD5E1] cursor-pointer select-none transition-colors">
+              <input
+                type="checkbox"
+                checked={marketingEnabled}
+                onChange={(e) => setMarketingEnabled(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded border-[#CBD5E1] text-[#0D4E8B] focus:ring-[#0D4E8B] shrink-0 cursor-pointer"
+              />
+              <span className="flex-1 leading-snug">
+                <span className="block font-['Cairo'] font-bold text-[#1F2A44]">
+                  قياس الإعلانات (Meta Pixel)
+                </span>
+                <span className="block text-[11px] text-[#64748B] mt-0.5">
+                  قياس فاعلية الإعلانات بأحداث محدودة دون أسماء أو هواتف أو بيانات أطفال.
+                </span>
+              </span>
+            </label>
+          ) : isSettingsMode ? (
+            <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-[11px] text-[#64748B] leading-snug">
               <span className="block font-['Cairo'] font-bold text-[#1F2A44]">
-                قياس الإعلانات (Meta Pixel)
+                قياس الإعلانات (Meta Pixel) — متوقف مؤقتًا
               </span>
-              <span className="block text-[11px] text-[#64748B] mt-0.5">
-                قياس فاعلية الإعلانات بأحداث محدودة دون أسماء أو هواتف أو بيانات أطفال.
+              <span className="block mt-0.5">
+                التتبع الإعلاني عبر Meta متوقف حاليًا من إعدادات المنصة ولا يتم تحميله أو إرسال أي بيانات أو أحداث عبره.
               </span>
-            </span>
-          </label>
+            </div>
+          ) : null}
         </div>
 
         {/* Actions */}
@@ -164,7 +178,7 @@ export const ConsentBanner: React.FC = () => {
             onClick={handleRejectOrWithdrawAll}
             className="min-h-[38px] px-3 py-1.5 rounded-xl border border-[#CBD5E1] hover:bg-[#F8F9FC] text-[#64748B] hover:text-[#1F2A44] font-['Cairo'] font-bold text-xs transition-colors cursor-pointer"
           >
-            {isSettingsMode ? 'رفض / سحب الكل' : 'رفض الكل'}
+            {isSettingsMode ? 'رفض / سحب الكل' : metaPixelEnabled ? 'رفض الكل' : 'رفض'}
           </button>
 
           <button
@@ -180,7 +194,7 @@ export const ConsentBanner: React.FC = () => {
             onClick={handleAcceptAll}
             className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs shadow-2xs transition-colors cursor-pointer"
           >
-            موافق على الكل
+            {metaPixelEnabled ? 'موافق على الكل' : 'موافق'}
           </button>
         </div>
       </div>

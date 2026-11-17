@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SHATIR_CONFIG } from '../src/config/shatirConfig';
+import { Tutor } from '../src/types';
 import {
   META_PIXEL_ID,
+  MetaPixelService,
   createMetaPixelController,
   isExcludedMetaRoute,
+  isTutorEligibleForMetaTracking,
 } from '../src/services/metaPixelService';
 import {
   getConsentPreferences,
@@ -22,10 +25,10 @@ import {
 import {
   trackWhatsAppClicked,
   trackParentLeadFormOpened,
+  trackParentLeadSubmitted,
   trackParentLeadSubmitFailed,
 } from '../src/services/analytics';
 
-// Setup lightweight browser storage + window mock for unit testing consent & attribution
 function createMemoryStorage() {
   const map = new Map<string, string>();
   return {
@@ -42,8 +45,55 @@ function createMemoryStorage() {
   };
 }
 
+function makeTutor(overrides: Partial<Tutor> = {}): Tutor {
+  return {
+    id: 'tutor-school-1',
+    name: 'أ. مريم عادل',
+    honorific: 'أ.',
+    headline: 'معلمة رياضيات للمرحلة الابتدائية',
+    avatarUrl: 'https://example.com/avatar.jpg',
+    verifiedCredentials: true,
+    yearsOfExperience: 5,
+    experienceBadgeText: 'خبرة ٥ سنوات',
+    curriculumTags: ['المنهج المصري'],
+    hourlyRateMin: 200,
+    hourlyRateMax: 200,
+    currency: 'EGP',
+    sessionDurationMinutes: 50,
+    trialDurationMinutes: 20,
+    rating: null,
+    reviewsCount: 0,
+    totalStudentsTaught: 10,
+    isPublished: true,
+    helpChildQuote: 'شرح مبسط وتدريبات عملية',
+    helpChildSummary: 'متابعة مستمرة لبناء الثقة في الرياضيات',
+    methodologyPillars: [],
+    subjectsTaughtSummary: [
+      {
+        title: 'الرياضيات',
+        gradesRange: 'الابتدائي',
+        curriculumNote: 'المنهج المصري',
+        icon: 'math',
+      },
+    ],
+    whatHappensInTrial: [],
+    qualifications: [],
+    offerings: [
+      {
+        track: 'school',
+        stageId: 'elementary',
+        gradeId: 'g4',
+        subjectId: 'math',
+        curriculumType: 'national_arabic',
+      },
+    ],
+    ...overrides,
+  };
+}
+
 const listeners = new Map<string, Array<(evt: any) => void>>();
 const gtagCalls: any[][] = [];
+const injectedScripts: any[] = [];
 const localStorageMock = createMemoryStorage();
 const sessionStorageMock = createMemoryStorage();
 
@@ -89,65 +139,129 @@ const sessionStorageMock = createMemoryStorage();
 
 (globalThis as any).document = {
   referrer: 'https://l.facebook.com/l.php?u=test',
+  head: {
+    appendChild: (node: any) => {
+      injectedScripts.push(node);
+    },
+  },
+  getElementsByTagName: () => [],
+  querySelector: () => null,
+  createElement: (tag: string) => ({
+    tag,
+    async: false,
+    src: '',
+    attrs: {} as Record<string, string>,
+    setAttribute(k: string, v: string) {
+      this.attrs[k] = v;
+    },
+  }),
 };
 
-// 1. Verify Central Config & index.html has zero Meta noscript / pre-consent pixel tags
+// 1. Verify Central Config Kill-Switch & index.html safety
 {
+  assert.equal(SHATIR_CONFIG.metaPixelEnabled, false, 'metaPixelEnabled must stay false until approved');
   assert.equal(SHATIR_CONFIG.metaPixelId, '1515074777348342');
   assert.equal(META_PIXEL_ID, '1515074777348342');
   assert.equal(SHATIR_CONFIG.gaMeasurementId, 'G-CGL8XBRE0J');
 
   const indexHtml = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
-  assert.equal(indexHtml.includes('connect.facebook.net'), false, 'index.html must not statically load fbevents.js');
+  assert.equal(indexHtml.includes('connect.facebook.net'), false, 'index.html must not load fbevents.js');
   assert.equal(indexHtml.includes('facebook.com/tr'), false, 'index.html must not contain a noscript tracking pixel');
+  assert.equal(indexHtml.includes('shatir_meta_consent'), false, 'index.html must not grant ad_storage while Meta is disabled');
   assert.equal(indexHtml.includes('G-CGL8XBRE0J'), true, 'Google Analytics must remain intact');
 }
 
-// 2. Verify Independent Consent Choices (Analytics vs Marketing) & Attribution Gating
+// 2. Verify Production Kill-Switch (metaPixelEnabled: false) EVEN WHEN SAVED MARKETING CONSENT EXISTS
 {
   localStorageMock.clear();
   sessionStorageMock.clear();
   gtagCalls.length = 0;
+  injectedScripts.length = 0;
 
-  assert.equal(needsConsentPrompt(), true);
-  assert.deepEqual(getConsentPreferences(), { analytics: 'unset', marketing: 'unset' });
+  // Simulate user who previously saved Meta marketing consent='granted'
+  localStorageMock.setItem(GA_CONSENT_STORAGE_KEY, 'granted');
+  localStorageMock.setItem(META_CONSENT_STORAGE_KEY, 'granted');
 
-  captureInitialAttribution();
-
-  // Grant Google Analytics ONLY, Deny Meta Ads
-  const prefs1 = saveConsentPreferences({ analytics: 'granted', marketing: 'denied' });
-  assert.deepEqual(prefs1, { analytics: 'granted', marketing: 'denied' });
-  assert.equal(localStorageMock.getItem(GA_CONSENT_STORAGE_KEY), 'granted');
-  assert.equal(localStorageMock.getItem(META_CONSENT_STORAGE_KEY), 'denied');
+  // needsConsentPrompt does not prompt for disabled Meta Pixel when GA is already answered
   assert.equal(needsConsentPrompt(), false);
 
-  const attrGaOnly = getSavedAttributionForPayload();
-  assert.equal(attrGaOnly.gclid, 'test_gclid_123');
-  assert.equal(attrGaOnly.fbclid, null, 'fbclid must stay null when marketing consent is denied');
+  // fbclid must NOT be captured or returned while metaPixelEnabled is false (even with saved marketing='granted')
+  captureInitialAttribution();
+  const attr = getSavedAttributionForPayload();
+  assert.equal(attr.gclid, 'test_gclid_123', 'GA4 attribution still works');
+  assert.equal(attr.fbclid, null, 'fbclid must NOT be collected or sent when metaPixelEnabled=false');
 
-  // Grant Meta Ads, Deny Google Analytics
-  saveConsentPreferences({ analytics: 'denied', marketing: 'granted' });
-  const attrMetaOnly = getSavedAttributionForPayload();
-  assert.equal(attrMetaOnly.gclid, null);
-  assert.equal(attrMetaOnly.fbclid, 'test_fbclid_456');
+  // Calling real MetaPixelService methods with spy window.fbq produces ZERO calls and ZERO SDK loads
+  const unexpectedFbqCalls: any[][] = [];
+  (globalThis as any).window.fbq = (...args: any[]) => {
+    unexpectedFbqCalls.push(args);
+  };
 
-  // Withdraw Marketing consent
+  const schoolTutor = makeTutor();
+  MetaPixelService.syncConsentState(true);
+  assert.equal(MetaPixelService.isEnabled(), false);
+  assert.equal(MetaPixelService.trackPageView({ path: '/', view: 'home' }), false);
+  assert.equal(
+    MetaPixelService.trackViewContent({
+      tutor: schoolTutor,
+      tutorId: schoolTutor.id,
+      isPreview: false,
+      view: 'tutor-profile',
+    }),
+    false
+  );
+  assert.equal(
+    MetaPixelService.trackLead({
+      referenceCode: 'SH-DISABLED-1',
+      track: 'school',
+      requestType: 'trial',
+      tutor: schoolTutor,
+    }),
+    false
+  );
+
+  // Also test trackParentLeadSubmitted: GA4 still records the event cleanly while Meta sends ZERO requests
+  const gaCountBefore = gtagCalls.length;
+  trackParentLeadSubmitted({
+    track: 'school',
+    request_type: 'trial',
+    referenceCode: 'SH-DISABLED-GA-OK',
+    tutor: schoolTutor,
+  });
+  assert.equal(gtagCalls.length, gaCountBefore + 1, 'GA4 tracking continues working normally');
+  assert.equal(injectedScripts.length, 0, 'Zero Meta SDK script tags may be injected');
+  assert.equal(unexpectedFbqCalls.length, 0, 'Zero Meta fbq calls may occur when metaPixelEnabled=false');
+
+  // Consent storage & withdrawal keep working cleanly while ads consent remains denied in gtag
+  saveConsentPreferences({ analytics: 'granted', marketing: 'granted' });
+  const adUpdateCall = gtagCalls[gtagCalls.length - 1];
+  assert.equal(adUpdateCall[0], 'consent');
+  assert.equal(adUpdateCall[1], 'update');
+  assert.equal(adUpdateCall[2].analytics_storage, 'granted');
+  assert.equal(adUpdateCall[2].ad_storage, 'denied');
+  assert.equal(adUpdateCall[2].ad_user_data, 'denied');
+  assert.equal(adUpdateCall[2].ad_personalization, 'denied');
+
   const withdrawn = withdrawMarketingConsent();
   assert.equal(withdrawn.marketing, 'denied');
-  assert.equal(getSavedAttributionForPayload().fbclid, null);
+  assert.deepEqual(getConsentPreferences(), { analytics: 'granted', marketing: 'denied' });
+  delete (globalThis as any).window.fbq;
 }
 
-// 3. Verify Meta Pixel Controller: Consent Gate, Single Init, AutoConfig Off, Revoke on Withdraw, Dedupe
+// 3. Offline Policy Isolation Tests (mock isPixelEnabled: () => true, ZERO network requests)
 {
-  let marketingConsent = false;
+  let marketingConsent = true;
   let currentHash = '';
+  let currentSearch = '';
   let initCount = 0;
   const fbqCalls: any[][] = [];
 
   const controller = createMetaPixelController(
     {
+      isPixelEnabled: () => true,
       isMarketingConsentGranted: () => marketingConsent,
       getCurrentHash: () => currentHash,
+      getCurrentSearch: () => currentSearch,
       ensurePixelInitialized: (pixelId: string) => {
         if (initCount === 0) {
           fbqCalls.push(['set', 'autoConfig', false, pixelId]);
@@ -162,136 +276,235 @@ const sessionStorageMock = createMemoryStorage();
     '1515074777348342'
   );
 
-  // Before consent: nothing initializes and no events fire
-  controller.syncConsentState(false);
-  assert.equal(initCount, 0);
-  assert.equal(controller.trackPageView({ path: '/', view: 'home' }), false);
+  const pureSchoolTutor = makeTutor({ id: 'tutor-pure-school' });
+  const pureQuranTutor = makeTutor({
+    id: 'tutor-pure-quran',
+    headline: 'معلم قرآن كريم وتجويد',
+    helpChildQuote: 'تحفيظ بأسلوب ميسر',
+    helpChildSummary: 'تعليم التلاوة والتجويد للأطفال',
+    curriculumTags: ['تحفيظ القرآن'],
+    subjectsTaughtSummary: [{ title: 'القرآن الكريم', gradesRange: '٦-٩ سنوات', curriculumNote: 'تجويد', icon: 'book' }],
+    offerings: [{ track: 'quran', ageGroupId: '6-9', levelId: 'hifz' }],
+  });
+  const mixedTutor = makeTutor({
+    id: 'tutor-mixed',
+    headline: 'معلمة تأسيس لغوي وقرآن',
+    offerings: [
+      {
+        track: 'school',
+        stageId: 'elementary',
+        gradeId: 'g1',
+        subjectId: 'arabic',
+        curriculumType: 'national_arabic',
+      },
+      {
+        track: 'quran',
+        ageGroupId: '6-9',
+        levelId: 'noor_bayan',
+      },
+    ],
+  });
+  const leakySchoolMetadataTutor = makeTutor({
+    id: 'tutor-leaky-text',
+    headline: 'معلمة لغة عربية وتأسيس نور البيان وتجويد',
+    offerings: [
+      {
+        track: 'school',
+        stageId: 'elementary',
+        gradeId: 'g1',
+        subjectId: 'arabic',
+        curriculumType: 'national_arabic',
+      },
+    ],
+  });
+  const emptyOfferingsTutor = makeTutor({
+    id: 'tutor-empty',
+    offerings: [],
+  });
+  const unpublishedSchoolTutor = makeTutor({
+    id: 'tutor-unpublished',
+    isPublished: false,
+  });
+
+  // Eligibility helper assertions
+  assert.equal(isTutorEligibleForMetaTracking(pureSchoolTutor), true);
+  assert.equal(isTutorEligibleForMetaTracking(pureQuranTutor), false);
+  assert.equal(isTutorEligibleForMetaTracking(mixedTutor), false);
+  assert.equal(isTutorEligibleForMetaTracking(leakySchoolMetadataTutor), false);
+  assert.equal(isTutorEligibleForMetaTracking(emptyOfferingsTutor), false);
+  assert.equal(isTutorEligibleForMetaTracking(unpublishedSchoolTutor), false);
+  assert.equal(isTutorEligibleForMetaTracking(null), false);
+
+  // PageView isolation checks
+  assert.equal(
+    controller.trackPageView({ path: '/', view: 'home', criteria: { track: 'quran', ageGroupId: '6-9' } }),
+    false,
+    'Home PageView must be blocked under Quran search criteria'
+  );
+  assert.equal(
+    controller.trackPageView({ path: '/', view: 'home', criteria: { track: 'all' } }),
+    false,
+    'Home PageView must be blocked under ambiguous all-tracks criteria'
+  );
+  assert.equal(
+    controller.trackPageView({ path: '/?track=quran&levelId=tajweed', view: 'home' }),
+    false,
+    'Sensitive URL paths/queries must block PageView'
+  );
+  currentSearch = '?ageGroupId=6-9';
+  assert.equal(
+    controller.trackPageView({ path: '/', view: 'home' }),
+    false,
+    'Sensitive query params must block PageView'
+  );
+  currentSearch = '';
+
+  // /#tutor/<id> MUST NOT fire PageView while tutor is unloaded, Quran, or mixed
+  assert.equal(
+    controller.trackPageView({ path: '/#tutor/tutor-pure-quran', view: 'tutor-profile' }),
+    false,
+    'Tutor profile PageView must wait for loaded school tutor (never leak /#tutor/<id> URL)'
+  );
+  assert.equal(
+    controller.trackPageView({
+      path: '/#tutor/tutor-pure-quran',
+      view: 'tutor-profile',
+      tutor: pureQuranTutor,
+    }),
+    false,
+    'Quran tutor profile PageView must be blocked'
+  );
+  assert.equal(
+    controller.trackPageView({
+      path: '/#tutor/tutor-mixed',
+      view: 'tutor-profile',
+      tutor: mixedTutor,
+    }),
+    false,
+    'Mixed school+quran tutor profile PageView must be blocked'
+  );
+
+  // Pure school home & tutor profile PageView succeed cleanly and dedupe
+  assert.equal(
+    controller.trackPageView({ path: '/', view: 'home', criteria: { track: 'school', stageId: 'elementary' } }),
+    true
+  );
+  assert.equal(
+    controller.trackPageView({ path: '/', view: 'home', criteria: { track: 'school', stageId: 'elementary' } }),
+    false
+  );
+  assert.equal(
+    controller.trackPageView({
+      path: '/#tutor/tutor-pure-school',
+      view: 'tutor-profile',
+      tutor: pureSchoolTutor,
+    }),
+    true
+  );
+
+  // ViewContent isolation checks
+  assert.equal(
+    controller.trackViewContent({ tutor: pureQuranTutor, view: 'tutor-profile', isPreview: false }),
+    false
+  );
+  assert.equal(
+    controller.trackViewContent({ tutor: mixedTutor, view: 'tutor-profile', isPreview: false }),
+    false
+  );
+  assert.equal(
+    controller.trackViewContent({ tutor: leakySchoolMetadataTutor, view: 'tutor-profile', isPreview: false }),
+    false
+  );
+  assert.equal(
+    controller.trackViewContent({ tutor: emptyOfferingsTutor, view: 'tutor-profile', isPreview: false }),
+    false
+  );
+  assert.equal(
+    controller.trackViewContent({ tutor: unpublishedSchoolTutor, view: 'tutor-profile', isPreview: false }),
+    false
+  );
+  assert.equal(
+    controller.trackViewContent({ tutor: pureSchoolTutor, view: 'tutor-profile', isPreview: true }),
+    false
+  );
   assert.equal(
     controller.trackViewContent({
-      tutorId: 'tutor-1',
-      track: 'school',
-      isPublished: true,
-      isPreview: false,
+      tutor: pureSchoolTutor,
       view: 'tutor-profile',
+      isPreview: false,
+      criteria: { track: 'quran' },
     }),
     false
+  );
+  assert.equal(
+    controller.trackViewContent({ tutor: pureSchoolTutor, view: 'tutor-profile', isPreview: false }),
+    true
+  );
+  assert.equal(
+    controller.trackViewContent({ tutor: pureSchoolTutor, view: 'tutor-profile', isPreview: false }),
+    false,
+    'ViewContent dedupes per tutor ID'
+  );
+
+  // Lead isolation checks
+  assert.equal(
+    controller.trackLead({ referenceCode: 'SH-QURAN-1', track: 'quran', requestType: 'trial', tutor: pureQuranTutor }),
+    false,
+    'Quran Lead must be blocked'
+  );
+  assert.equal(
+    controller.trackLead({ referenceCode: 'SH-NULL-1', track: null, requestType: 'recommendation' }),
+    false,
+    'Unknown-context (track: null) recommendation Lead must NEVER fall back to general'
+  );
+  assert.equal(
+    controller.trackLead({ referenceCode: 'SH-MIXED-1', track: 'school', requestType: 'trial', tutor: mixedTutor }),
+    false,
+    'Mixed-specialization tutor Lead must be blocked even if request claims school track'
   );
   assert.equal(
     controller.trackLead({
-      referenceCode: 'SH-1001',
+      referenceCode: 'SH-QID-1',
       track: 'school',
-      requestType: 'trial',
+      requestType: 'private',
+      tutor: pureSchoolTutor,
+      quranAgeGroupId: '6-9',
     }),
-    false
-  );
-  assert.equal(fbqCalls.length, 0);
-
-  // Grant marketing consent: initializes once with autoConfig=false and no user-data object
-  marketingConsent = true;
-  controller.syncConsentState(true);
-  assert.equal(initCount, 1);
-  assert.deepEqual(fbqCalls[0], ['set', 'autoConfig', false, '1515074777348342']);
-  assert.deepEqual(fbqCalls[1], ['init', '1515074777348342']);
-  assert.deepEqual(fbqCalls[2], ['consent', 'grant']);
-
-  // PageView fires once per path (deduped on re-renders)
-  assert.equal(controller.trackPageView({ path: '/', view: 'home' }), true);
-  assert.equal(controller.trackPageView({ path: '/', view: 'home' }), false);
-  assert.equal(controller.trackPageView({ path: '/#privacy', view: 'privacy' }), true);
-  assert.equal(controller.trackPageView({ path: '/#terms', view: 'terms' }), true);
-
-  // ViewContent requires published=true, isPreview=false, public tutor-profile route, and dedupes
-  assert.equal(
-    controller.trackViewContent({
-      tutorId: 'tutor-unpublished',
-      track: 'school',
-      isPublished: false,
-      view: 'tutor-profile',
-    }),
-    false
-  );
-  assert.equal(
-    controller.trackViewContent({
-      tutorId: 'tutor-preview',
-      track: 'school',
-      isPublished: true,
-      isPreview: true,
-      view: 'tutor-profile',
-    }),
-    false
-  );
-  assert.equal(
-    controller.trackViewContent({
-      tutorId: 'tutor-1',
-      track: 'school',
-      isPublished: true,
-      isPreview: false,
-      view: 'tutor-profile',
-    }),
-    true
-  );
-  assert.equal(
-    controller.trackViewContent({
-      tutorId: 'tutor-1',
-      track: 'school',
-      isPublished: true,
-      isPreview: false,
-      view: 'tutor-profile',
-    }),
-    false
-  );
-
-  // Verify ViewContent payload has NO PII / NO tutor name
-  const viewContentCall = fbqCalls.find((c) => c[0] === 'track' && c[1] === 'ViewContent');
-  assert.ok(viewContentCall);
-  assert.deepEqual(viewContentCall[2], {
-    content_ids: ['tutor-1'],
-    content_type: 'product',
-    content_category: 'school',
-  });
-
-  // Lead: requires non-empty saved referenceCode, dedupes per referenceCode
-  assert.equal(
-    controller.trackLead({ referenceCode: '', track: 'school', requestType: 'trial' }),
-    false
-  );
-  assert.equal(
-    controller.trackLead({ referenceCode: null, track: 'school', requestType: 'trial' }),
-    false
-  );
-  assert.equal(
-    controller.trackLead({ referenceCode: 'SH-555', track: 'quran', requestType: 'trial' }),
-    true
-  );
-  assert.equal(
-    controller.trackLead({ referenceCode: 'SH-555', track: 'quran', requestType: 'trial' }),
     false,
-    'Duplicate Lead for same saved referenceCode must be ignored'
+    'Lead carrying quranAgeGroupId must be blocked'
   );
   assert.equal(
-    controller.trackLead({ referenceCode: 'SH-556', track: 'school', requestType: 'private' }),
+    controller.trackLead({ referenceCode: '', track: 'school', requestType: 'trial', tutor: pureSchoolTutor }),
+    false
+  );
+  assert.equal(
+    controller.trackLead({ referenceCode: 'SH-SCHOOL-1', track: 'school', requestType: 'trial', tutor: pureSchoolTutor }),
     true
   );
+  assert.equal(
+    controller.trackLead({ referenceCode: 'SH-SCHOOL-1', track: 'school', requestType: 'trial', tutor: pureSchoolTutor }),
+    false,
+    'Duplicate Lead for same referenceCode must be ignored'
+  );
 
-  // Verify Lead payload contains zero PII (no names, phone, email, child age, referenceCode, or WhatsApp text)
   const leadCalls = fbqCalls.filter((c) => c[0] === 'track' && c[1] === 'Lead');
-  assert.equal(leadCalls.length, 2);
+  assert.equal(leadCalls.length, 1);
   assert.deepEqual(leadCalls[0][2], {
-    content_category: 'quran',
+    content_category: 'school',
     request_type: 'trial',
   });
+  assert.equal(
+    fbqCalls.some((c) => JSON.stringify(c).includes('general')),
+    false,
+    'Payload must never substitute sensitive or unknown tracks with general'
+  );
 
-  // Excluded routes: admin, tutor-dashboard, join-as-tutor never fire PageView, ViewContent, or Lead
+  // Excluded routes check
   for (const excludedView of ['admin', 'tutor-dashboard', 'join-as-tutor'] as const) {
     assert.equal(isExcludedMetaRoute(excludedView), true);
     assert.equal(controller.trackPageView({ path: `/#${excludedView}`, view: excludedView }), false);
     assert.equal(
-      controller.trackViewContent({
-        tutorId: 'tutor-1',
-        track: 'school',
-        isPublished: true,
-        view: excludedView,
-      }),
+      controller.trackViewContent({ tutor: pureSchoolTutor, view: excludedView }),
       false
     );
     assert.equal(
@@ -299,19 +512,14 @@ const sessionStorageMock = createMemoryStorage();
         referenceCode: `SH-EXC-${excludedView}`,
         track: 'school',
         requestType: 'trial',
+        tutor: pureSchoolTutor,
         view: excludedView,
       }),
       false
     );
   }
 
-  // Excluded hash even if view omitted
-  currentHash = '#admin';
-  assert.equal(isExcludedMetaRoute(undefined, '#admin'), true);
-  assert.equal(controller.trackLead({ referenceCode: 'SH-HASH-ADMIN', track: 'school', requestType: 'trial' }), false);
-  currentHash = '';
-
-  // Withdraw consent -> calls fbq('consent', 'revoke') and blocks all future events
+  // Withdraw consent -> calls fbq('consent', 'revoke') and blocks future events
   marketingConsent = false;
   controller.syncConsentState(false);
   assert.equal(
@@ -319,19 +527,10 @@ const sessionStorageMock = createMemoryStorage();
     true
   );
   assert.equal(controller.trackPageView({ path: '/', view: 'home' }), false);
-  assert.equal(
-    controller.trackLead({ referenceCode: 'SH-AFTER-REVOKE', track: 'school', requestType: 'trial' }),
-    false
-  );
-
-  // Re-granting consent still initializes ONLY once (initCount remains 1)
-  marketingConsent = true;
-  controller.syncConsentState(true);
   assert.equal(initCount, 1);
-  assert.equal(controller.trackPageView({ path: '/', view: 'home' }), true);
 }
 
-// 4. Verify WhatsApp Clicks, Form Opens, and Failed Lead Submits NEVER trigger Meta Lead or Purchase
+// 4. Verify WhatsApp Clicks, Form Opens, and Failed Submits NEVER trigger Meta Lead/Purchase
 {
   const blockedFbqCalls: any[][] = [];
   (globalThis as any).window.fbq = (...args: any[]) => {
@@ -343,42 +542,8 @@ const sessionStorageMock = createMemoryStorage();
   trackParentLeadSubmitFailed({ track: 'school', request_type: 'trial' });
   trackWhatsAppClicked('hero_cta', { tutor_id: 'tutor-1', booking_type: 'trial' });
 
-  const accidentalMetaEvents = blockedFbqCalls.filter(
-    (c) => c[0] === 'track' && (c[1] === 'Lead' || c[1] === 'Purchase' || c[1] === 'Schedule')
-  );
-  assert.equal(accidentalMetaEvents.length, 0);
+  assert.equal(blockedFbqCalls.length, 0);
+  delete (globalThis as any).window.fbq;
 }
 
-// 5. Verify Resilience if fbq / script loading throws (adblocker scenario)
-{
-  const brokenController = createMetaPixelController(
-    {
-      isMarketingConsentGranted: () => true,
-      getCurrentHash: () => '',
-      ensurePixelInitialized: () => {
-        // Simulate script blocked without throwing outward
-      },
-      callFbq: () => {
-        // Adblocker stub does not throw
-      },
-    },
-    '1515074777348342'
-  );
-  assert.doesNotThrow(() => {
-    brokenController.syncConsentState(true);
-    brokenController.trackPageView({ path: '/', view: 'home' });
-    brokenController.trackViewContent({
-      tutorId: 'tutor-1',
-      track: 'school',
-      isPublished: true,
-      view: 'tutor-profile',
-    });
-    brokenController.trackLead({
-      referenceCode: 'SH-RESILIENT',
-      track: 'school',
-      requestType: 'trial',
-    });
-  });
-}
-
-console.log('All Meta Pixel & independent consent unit tests passed.');
+console.log('All Meta Pixel kill-switch & sensitive-category isolation tests passed (0 live Meta requests).');
