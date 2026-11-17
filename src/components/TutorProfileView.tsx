@@ -72,6 +72,7 @@ interface TutorProfileViewProps {
   previewTrialSlots?: TutorAvailableSlot[];
   previewPrivateSlots?: TutorPrivateSlot[];
   previewGroups?: TutorGroup[];
+  initialFocusBooking?: boolean;
 }
 
 type BookingTabType = 'trial' | 'private' | 'groups';
@@ -89,6 +90,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   previewTrialSlots,
   previewPrivateSlots,
   previewGroups,
+  initialFocusBooking = false,
 }) => {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -404,9 +406,12 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   );
 
   const hasCriteria = Boolean(criteria);
-  const detectedTrack =
-    criteria?.track ||
-    (tutor.offerings.some((o) => o.track === 'school') ? 'school' : 'quran');
+  const detectedTrack: 'school' | 'quran' =
+    criteria?.track === 'school' || criteria?.track === 'quran'
+      ? criteria.track
+      : tutor.offerings.some((o) => o.track === 'school')
+      ? 'school'
+      : 'quran';
   const isSchool = detectedTrack === 'school';
 
   const primarySubjectName =
@@ -702,6 +707,18 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
+
+  useEffect(() => {
+    if (!initialFocusBooking || isUnpublishedProfile) return;
+    setActiveBookingTab('trial');
+    const timer = window.setTimeout(() => {
+      document.getElementById('booking-widget-section')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [initialFocusBooking, tutor.id, isUnpublishedProfile]);
 
   // Bio text combination without fabrication
   const primaryBioText = (tutor.helpChildSummary || tutor.helpChildQuote || '').trim();

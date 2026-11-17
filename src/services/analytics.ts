@@ -167,11 +167,18 @@ export function trackParentSearchSubmitted(criteria: SearchCriteria): void {
       curriculum_id: criteria.curriculumType,
       subject_id: criteria.subjectId,
     });
-  } else {
+  } else if (criteria.track === 'quran') {
     sendGAEvent('parent_search_submitted', {
       track: 'quran',
       quran_age_group_id: criteria.ageGroupId,
       quran_level_id: criteria.levelId,
+    });
+  } else {
+    sendGAEvent('parent_search_submitted', {
+      track: 'all',
+      stage_id: criteria.stageId,
+      curriculum_id: criteria.curriculumType,
+      subject_id: criteria.subjectId,
     });
   }
 }
@@ -204,9 +211,12 @@ export function trackNoCourseOptionsShown(
  * Deduplicated per criteria.
  */
 export function trackNoTutorsShown(criteria: SearchCriteria): void {
-  const searchKey = criteria.track === 'school'
-    ? `school_${criteria.stageId}_${criteria.gradeId}_${criteria.curriculumType}_${criteria.subjectId}`
-    : `quran_${criteria.ageGroupId}_${criteria.levelId}`;
+  const searchKey =
+    criteria.track === 'school'
+      ? `school_${criteria.stageId}_${criteria.gradeId}_${criteria.curriculumType}_${criteria.subjectId || criteria.subjectIds?.join(',')}`
+      : criteria.track === 'quran'
+      ? `quran_${criteria.ageGroupId}_${criteria.levelId}`
+      : `all_${criteria.stageId}_${criteria.curriculumType}_${criteria.subjectId || criteria.subjectIds?.join(',')}`;
 
   if (lastNoTutorsSearchKey === searchKey) return;
   lastNoTutorsSearchKey = searchKey;
@@ -219,11 +229,18 @@ export function trackNoTutorsShown(criteria: SearchCriteria): void {
       curriculum_id: criteria.curriculumType,
       subject_id: criteria.subjectId,
     });
-  } else {
+  } else if (criteria.track === 'quran') {
     sendGAEvent('no_tutors_shown', {
       track: 'quran',
       quran_age_group_id: criteria.ageGroupId,
       quran_level_id: criteria.levelId,
+    });
+  } else {
+    sendGAEvent('no_tutors_shown', {
+      track: 'all',
+      stage_id: criteria.stageId,
+      curriculum_id: criteria.curriculumType,
+      subject_id: criteria.subjectId,
     });
   }
 }

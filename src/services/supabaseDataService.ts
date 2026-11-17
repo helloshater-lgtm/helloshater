@@ -9,6 +9,10 @@ import {
   filterValidAvailableTrialSlots,
 } from '../utils/formatters';
 import {
+  selectFeaturedShowcaseTutors,
+  matchesSimplifiedSearchCriteria,
+} from '../utils/publicShowcase';
+import {
   Stage,
   Grade,
   Subject,
@@ -18,6 +22,8 @@ import {
   Tutor,
   TutorOffering,
   TutorAvailableSlot,
+  TutorPrivateSlot,
+  SearchCriteria,
 } from '../types';
 
 export interface SupabaseConnectionTestResult {
@@ -563,6 +569,7 @@ export const SupabaseDataService = {
       honorific: row.honorific || 'أ.',
       headline: row.headline || '',
       avatarUrl: row.avatar_url || '',
+      isPublished: Boolean(row.is_published),
       verifiedCredentials: hasVerifiedQualification,
       yearsOfExperience: row.years_of_experience || 0,
       experienceBadgeText:
@@ -698,6 +705,7 @@ export const SupabaseDataService = {
           });
           return {
             id: row.id,
+            tutorId,
             specializationLabel: cleanLabel,
             allowedSpecializations:
               normalized.length > 0
@@ -712,6 +720,9 @@ export const SupabaseDataService = {
             durationMinutes: Number(row.duration_minutes),
             priceAmount: Number(row.price_amount),
             currency: row.currency || 'ج.م',
+            isAvailable: true,
+            isBooked: false,
+            adminSuspended: false,
           };
         });
       }
@@ -720,6 +731,194 @@ export const SupabaseDataService = {
     } catch {
       return [];
     }
+  },
+
+  /**
+   * 9.1 Curated Featured Ready Tutors for Homepage
+   * Returns published, complete tutors who separately have >= 1 future available
+   * 20-min trial slot AND >= 1 future available paid private (1:1) slot.
+   */
+  async getFeaturedReadyTutors(
+    limit = 3
+  ): Promise<{ tutors: Tutor[]; totalReadyCount: number }> {
+    const { data: tutorsData, error: tutorsError } = await supabase
+      .from('tutors')
+      .select('*')
+      .eq('is_published', true)
+      .order('rating', { ascending: false, nullsFirst: false });
+
+    if (tutorsError) {
+      throw new Error('تعذر تحميل قائمة المعلمين الجاهزين حاليًا. يرجى المحاولة مرة أخرى.');
+    }
+    if (!tutorsData || tutorsData.length === 0) {
+      return { tutors: [], totalReadyCount: 0 };
+    }
+
+    const tutorIds = tutorsData.map((t) => t.id);
+
+    const [
+      pillarsRes,
+      qualRes,
+      trialRes,
+      summaryRes,
+      schoolOffRes,
+      quranOffRes,
+      trialSlotsPerTutor,
+      privateSlotsPerTutor,
+    ] = await Promise.all([
+      supabase
+        .from('tutor_methodology_pillars')
+        .select('*')
+        .in('tutor_id', tutorIds)
+        .order('display_order', { ascending: true }),
+      supabase
+        .from('tutor_qualifications')
+        .select('*')
+        .in('tutor_id', tutorIds)
+        .order('display_order', { ascending: true }),
+      supabase
+        .from('tutor_trial_steps')
+        .select('*')
+        .in('tutor_id', tutorIds)
+        .order('step_number', { ascending: true }),
+      supabase
+        .from('tutor_subjects_taught_summary')
+        .select('*')
+        .in('tutor_id', tutorIds)
+        .order('display_order', { ascending: true }),
+      supabase
+        .from('v_tutor_school_offerings')
+        .select('*')
+        .in('tutor_id', tutorIds)
+        .eq('course_is_active', true),
+      supabase
+        .from('tutor_quran_offerings')
+        .select('*')
+        .in('tutor_id', tutorIds),
+      Promise.all(
+        tutorIds.map(async (tid) => {
+          const { data: rpcData, error: rpcError } = await supabase.rpc('get_public_tutor_slots', {
+            p_tutor_id: tid,
+          });
+          if (rpcError) {
+            throw rpcError;
+          }
+          const slots: TutorAvailableSlot[] = (Array.isArray(rpcData) ? rpcData : []).map((row: any) => ({
+            id: row.id,
+            tutorId: row.tutor_id,
+            slotDate: row.slot_date,
+            startTime: row.start_time,
+            endTime: row.end_time,
+            timezone: row.timezone || 'Africa/Cairo',
+            isAvailable: row.is_available,
+            isBooked: false,
+            adminSuspended: false,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          }));
+          return { tutorId: tid, slots };
+        })
+      ),
+      Promise.all(
+        tutorIds.map(async (tid) => {
+          const { data: rpcData, error: rpcError } = await supabase.rpc(
+            'get_public_tutor_private_slots',
+            { p_tutor_id: tid }
+          );
+          if (rpcError) {
+            throw rpcError;
+          }
+          const slots: TutorPrivateSlot[] = (Array.isArray(rpcData) ? rpcData : []).map((row: any) => {
+            const normalized = normalizeSlotAllowedSpecializations(row).map((sp) => ({
+              ...sp,
+              label: resolveSpecializationLabel({
+                specializationLabel: sp.label,
+                quranAgeGroupId: sp.ageGroupId,
+                quranLevelId: sp.levelId,
+              }),
+            }));
+            const cleanLabel = resolveSpecializationLabel({
+              specializationLabel: row.specialization_label,
+              quranAgeGroupId: row.quran_age_group_id,
+              quranLevelId: row.quran_level_id,
+            });
+            return {
+              id: row.id,
+              tutorId: tid,
+              specializationLabel: cleanLabel,
+              allowedSpecializations:
+                normalized.length > 0
+                  ? normalized
+                  : cleanLabel
+                  ? [{ id: `legacy-${row.id}`, track: 'school', label: cleanLabel }]
+                  : [],
+              slotDate: row.slot_date,
+              startTime: row.start_time,
+              endTime: row.end_time,
+              timezone: row.timezone || 'Africa/Cairo',
+              durationMinutes: Number(row.duration_minutes),
+              priceAmount: Number(row.price_amount),
+              currency: row.currency || 'ج.م',
+              isAvailable: true,
+              isBooked: false,
+              adminSuspended: false,
+            };
+          });
+          return { tutorId: tid, slots };
+        })
+      ),
+    ]);
+
+    if (schoolOffRes.error) throw schoolOffRes.error;
+    if (quranOffRes.error) throw quranOffRes.error;
+
+    const trialMap = new Map<string, TutorAvailableSlot[]>();
+    trialSlotsPerTutor.forEach((entry) => trialMap.set(entry.tutorId, entry.slots));
+
+    const privateMap = new Map<string, TutorPrivateSlot[]>();
+    privateSlotsPerTutor.forEach((entry) => privateMap.set(entry.tutorId, entry.slots));
+
+    const candidates = tutorsData.map((row) => {
+      const tutor = this.mapDatabaseRowToTutor(
+        row,
+        pillarsRes.data?.filter((p) => p.tutor_id === row.id) || [],
+        qualRes.data?.filter((q) => q.tutor_id === row.id) || [],
+        trialRes.data?.filter((t) => t.tutor_id === row.id) || [],
+        summaryRes.data?.filter((s) => s.tutor_id === row.id) || [],
+        schoolOffRes.data?.filter((o) => o.tutor_id === row.id) || [],
+        quranOffRes.data?.filter((q) => q.tutor_id === row.id) || []
+      );
+      return {
+        tutor,
+        trialSlots: trialMap.get(row.id) || [],
+        privateSlots: privateMap.get(row.id) || [],
+      };
+    });
+
+    return selectFeaturedShowcaseTutors(candidates, limit);
+  },
+
+  /**
+   * 9.2 Flexible Public Search supporting both exact full selections and simplified homepage filters
+   */
+  async searchByCriteria(criteria: SearchCriteria): Promise<Tutor[]> {
+    if (criteria.track === 'school' && criteria.gradeId && criteria.subjectId && criteria.curriculumType) {
+      return this.searchSchoolTutors({
+        gradeId: criteria.gradeId,
+        subjectId: criteria.subjectId,
+        curriculumId: criteria.curriculumType,
+      });
+    }
+
+    if (criteria.track === 'quran' && criteria.ageGroupId && criteria.levelId) {
+      return this.searchQuranTutors({
+        ageGroupId: criteria.ageGroupId,
+        levelId: criteria.levelId,
+      });
+    }
+
+    const publishedTutors = await this.getPublishedTutors();
+    return publishedTutors.filter((tutor) => matchesSimplifiedSearchCriteria(tutor, criteria));
   },
 
   /**

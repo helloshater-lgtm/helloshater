@@ -56,36 +56,24 @@ export const DataService = {
   },
 
   /**
-   * Search Tutors matching exact criteria from live Supabase database.
-   * School track matches (grade_id + subject_id + curriculum_id) via school_course_options and tutor_school_offerings.
-   * Quran track matches (age_group_id + level_id) via tutor_quran_offerings.
+   * Search Tutors matching exact or simplified criteria from live Supabase database.
    * Returns ONLY published tutors (is_published = true).
    */
   async searchTutors(criteria: SearchCriteria, simulateError = false): Promise<Tutor[]> {
     if (simulateError) {
       throw new Error('حدث انقطاع مؤقت في الاتصال أثناء جلب المعلمين.');
     }
+    return SupabaseDataService.searchByCriteria(criteria);
+  },
 
-    if (criteria.track === 'school') {
-      const { gradeId, subjectId, curriculumType } = criteria;
-      if (!gradeId || !subjectId || !curriculumType) {
-        return [];
-      }
-      return SupabaseDataService.searchSchoolTutors({
-        gradeId,
-        subjectId,
-        curriculumId: curriculumType,
-      });
-    } else {
-      const { ageGroupId, levelId } = criteria;
-      if (!ageGroupId || !levelId) {
-        return [];
-      }
-      return SupabaseDataService.searchQuranTutors({
-        ageGroupId,
-        levelId,
-      });
-    }
+  /**
+   * Fetch curated published tutors who are profile-complete and have BOTH upcoming
+   * 20-min trial slots AND upcoming paid private (1:1) slots available separately.
+   */
+  async getFeaturedReadyTutors(
+    limit = 3
+  ): Promise<{ tutors: Tutor[]; totalReadyCount: number }> {
+    return SupabaseDataService.getFeaturedReadyTutors(limit);
   },
 
   /**

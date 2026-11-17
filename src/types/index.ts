@@ -130,12 +130,16 @@ export interface Tutor {
   openGroupsCount?: number;
 }
 
+export type SearchTrackType = TrackType | 'all';
+
 export interface SearchCriteria {
-  track: TrackType;
+  track: SearchTrackType;
   // School parameters
   stageId?: StageId | '';
   gradeId?: string;
   subjectId?: string;
+  subjectIds?: string[];
+  subjectDisplayLabel?: string;
   curriculumType?: CurriculumType | '';
   courseOptionId?: string | null;
   // Quran parameters

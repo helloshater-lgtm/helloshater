@@ -23,12 +23,14 @@ import {
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { WhatsAppFloatingButton } from './components/WhatsAppFloatingButton';
+import { WhatsAppNoticeModal } from './components/WhatsAppNoticeModal';
 import { HomeView } from './components/HomeView';
 import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
 import { LegalPagesView } from './components/LegalPagesView';
 import { ConsentBanner } from './components/ConsentBanner';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
+import { SHATIR_CONFIG } from './config/shatirConfig';
 import {
   trackPageView,
   trackTutorProfileOpened,
@@ -62,6 +64,8 @@ const DEFAULT_DOCUMENT_TITLE =
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
   const [selectedTutorId, setSelectedTutorId] = useState<string | null>(null);
+  const [focusTutorBooking, setFocusTutorBooking] = useState<boolean>(false);
+  const [isHelpModalOpen, setIsHelpModalOpen] = useState<boolean>(false);
   const [currentTutor, setCurrentTutor] = useState<Tutor | null>(null);
   const [isTutorLoading, setIsTutorLoading] = useState<boolean>(false);
   const [tutorNotFound, setTutorNotFound] = useState<boolean>(false);
@@ -291,12 +295,16 @@ export default function App() {
     }
   }, [selectedTutorId]);
 
-  // Handle Tutor Card Click from Search Results
-  const handleSelectTutor = (tutorId: string) => {
+  // Handle Tutor Card Click from Search Results or Featured Showcase
+  const handleSelectTutor = (
+    tutorId: string,
+    options?: { focusBooking?: boolean }
+  ) => {
     if (typeof document !== 'undefined') {
       document.body.style.overflow = '';
     }
     setSavedScrollPosition(window.scrollY);
+    setFocusTutorBooking(Boolean(options?.focusBooking));
     setSelectedTutorId(tutorId);
     setCurrentView('tutor-profile');
     window.location.hash = `#tutor/${tutorId}`;
@@ -309,6 +317,7 @@ export default function App() {
       document.body.style.overflow = '';
     }
     setSelectedTutorId(null);
+    setFocusTutorBooking(false);
     setCurrentTutor(null);
     setCurrentView('home');
     window.location.hash = '';
@@ -317,7 +326,7 @@ export default function App() {
       if (savedScrollPosition > 0) {
         window.scrollTo({ top: savedScrollPosition, behavior: 'smooth' });
       } else {
-        const resultsEl = document.getElementById('results-section');
+        const resultsEl = document.getElementById('search-results-section');
         if (resultsEl) {
           resultsEl.scrollIntoView({ behavior: 'smooth' });
         }
@@ -326,7 +335,7 @@ export default function App() {
   };
 
   const handleScrollToSelector = () => {
-    document.getElementById('tutor-selector-section')?.scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('tutor-selector')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const handleSaveSearchState = (criteria: SearchCriteria, results: Tutor[]) => {
@@ -337,10 +346,16 @@ export default function App() {
   // Labels for Profile View Breadcrumbs
   const stageName = stages.find((s) => s.id === savedCriteria?.stageId)?.name;
   const gradeName = grades.find((g) => g.id === savedCriteria?.gradeId)?.name || savedCriteria?.gradeId;
-  const subjectName = subjects.find((s) => s.id === savedCriteria?.subjectId)?.name;
+  const subjectName =
+    savedCriteria?.subjectDisplayLabel ||
+    subjects.find((s) => s.id === savedCriteria?.subjectId)?.name;
   const curriculumName = curricula.find((c) => c.id === savedCriteria?.curriculumType)?.name;
   const quranAgeName = quranAges.find((a) => a.id === savedCriteria?.ageGroupId)?.name;
   const quranLevelName = quranLevels.find((l) => l.id === savedCriteria?.levelId)?.name;
+
+  const generalHelpWhatsAppUrl = `https://wa.me/${SHATIR_CONFIG.adminWhatsAppNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+    'السلام عليكم فريق شاطر كلاسيز، أحتاج مساعدة في اختيار المعلم المناسب لطفلي وتنسيق حصة تجريبية مجانية.'
+  )}`;
 
   return (
     <div className="min-h-screen bg-[#F8F9FC] text-[#1F2A44] flex flex-col font-['Tajawal'] antialiased selection:bg-[#0D4E8B]/15 selection:text-[#0D4E8B]">
@@ -349,6 +364,7 @@ export default function App() {
         currentView={currentView}
         onNavigate={handleNavigate}
         onScrollToSelector={handleScrollToSelector}
+        onOpenHelpModal={() => setIsHelpModalOpen(true)}
         tutorNavStatus={tutorNavStatus}
       />
 
@@ -358,6 +374,7 @@ export default function App() {
           <HomeView
             onSelectTutor={handleSelectTutor}
             onNavigateToJoin={() => handleNavigate('join-as-tutor')}
+            onOpenHelpModal={() => setIsHelpModalOpen(true)}
             savedCriteria={savedCriteria}
             savedResults={savedResults}
             onSaveCriteria={handleSaveSearchState}
@@ -382,6 +399,7 @@ export default function App() {
                 curriculumName={curriculumName}
                 quranAgeName={quranAgeName}
                 quranLevelName={quranLevelName}
+                initialFocusBooking={focusTutorBooking}
               />
             ) : tutorNotFound ? (
               <div className="max-w-md mx-auto my-16 px-6 py-10 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center space-y-4">
@@ -461,6 +479,17 @@ export default function App() {
 
       {/* Google Consent Mode Banner */}
       <ConsentBanner />
+
+      {/* Global Recommendation / Help WhatsApp Lead Modal */}
+      <WhatsAppNoticeModal
+        isOpen={isHelpModalOpen}
+        onClose={() => setIsHelpModalOpen(false)}
+        requestType="recommendation"
+        track={null}
+        tutorId={null}
+        customWhatsAppUrl={generalHelpWhatsAppUrl}
+        whatsappAnalyticsSource="help_me_choose_cta"
+      />
 
       {/* Persistent Floating WhatsApp Action Button */}
       <WhatsAppFloatingButton hideOnMobileSticky={currentView === 'tutor-profile'} />
