@@ -9,6 +9,7 @@ import {
 } from '../../types';
 import { AdminAuthService } from '../../services/adminAuthService';
 import { AdminService, AdminTutorListItem } from '../../services/adminService';
+import { AdminEditorTabTarget } from '../../utils/tutorReadinessAndContact';
 import { AdminLoginView } from './AdminLoginView';
 import { AdminTutorsListView } from './AdminTutorsListView';
 import { AdminTutorEditorView } from './AdminTutorEditorView';
@@ -56,6 +57,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   // Sub-Views: 'list' | 'edit' | 'new' | 'preview' | 'app-detail'
   const [currentMode, setCurrentMode] = useState<'list' | 'edit' | 'new' | 'preview' | 'app-detail'>('list');
   const [selectedTutorId, setSelectedTutorId] = useState<string | null>(null);
+  const [editorInitialTab, setEditorInitialTab] = useState<AdminEditorTabTarget>('basics');
   const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
 
   // Data states
@@ -194,8 +196,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   };
 
   // Handle Edit Tutor
-  const handleEditTutor = async (tutorId: string) => {
+  const handleEditTutor = async (tutorId: string, initialTab: AdminEditorTabTarget = 'basics') => {
     setSelectedTutorId(tutorId);
+    setEditorInitialTab(initialTab);
     setIsEditorLoading(true);
     setGlobalError(null);
     try {
@@ -214,6 +217,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   const handleNewTutor = () => {
     setSelectedTutorId(null);
     setEditorDetail(null);
+    setEditorInitialTab('basics');
     setActiveTab('tutors');
     setCurrentMode('new');
   };
@@ -784,7 +788,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div className="space-y-0.5">
             <span className="font-bold block">تنبيه:</span>
-            <span>{globalError}</span>
+            <span className="whitespace-pre-line leading-relaxed">{globalError}</span>
           </div>
         </div>
       )}
@@ -876,6 +880,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
         <AdminTutorEditorView
           initialDetail={editorDetail}
           isNew={currentMode === 'new'}
+          initialTab={editorInitialTab}
           onBack={() => {
             setCurrentMode('list');
             loadTutors();

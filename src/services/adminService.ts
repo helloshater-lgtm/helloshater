@@ -6,6 +6,8 @@ import {
   MethodologyPillar,
   TrialStep,
   TutorAvailableSlot,
+  TutorPrivateSlot,
+  ApprovedSpecializationItem,
   SchoolCourseOptionDetail,
   AdminTutorFullDetail,
   AdminTutorSavePayload,
@@ -36,6 +38,42 @@ import {
   validateAndResolveSchoolSpecializations,
   validateAndResolveQuranSpecializations,
 } from '../utils/formatters';
+import {
+  ResolvedTutorAdminContact,
+  TutorInitialQualityReviewRecord,
+  TutorProfileReadinessEvaluation,
+  TutorReadinessPolicyConfig,
+  DEFAULT_TUTOR_READINESS_POLICY,
+  resolveTutorAdminContact,
+  evaluateTutorProfileReadiness,
+  assertTutorReadyForInitialPublish,
+} from '../utils/tutorReadinessAndContact';
+
+const QUALITY_REVIEWS_STORAGE_KEY = 'shatir_admin_quality_reviews_v1';
+const READINESS_POLICY_STORAGE_KEY = 'shatir_admin_readiness_policy_v1';
+
+function loadLocalQualityReviewsMap(): Record<string, TutorInitialQualityReviewRecord> {
+  if (typeof window === 'undefined' || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(QUALITY_REVIEWS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalQualityReviewRecord(record: TutorInitialQualityReviewRecord): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const map = loadLocalQualityReviewsMap();
+    map[record.tutorId] = record;
+    window.localStorage.setItem(QUALITY_REVIEWS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 export interface AdminTutorListItem {
   id: string;
@@ -43,6 +81,8 @@ export interface AdminTutorListItem {
   honorific: string;
   headline: string;
   avatarUrl: string;
+  helpChildQuote: string;
+  helpChildSummary: string;
   hourlyRateMin: number;
   hourlyRateMax: number;
   currency: string;
@@ -53,19 +93,167 @@ export interface AdminTutorListItem {
   reviewsCount: number;
   offeringsCount: number;
   availableSlotsCount: number;
+  validTrialSlotsCount: number;
+  validPaidPrivateSlotsCount: number;
+  validTrialSlots: TutorAvailableSlot[];
+  validPaidPrivateSlots: TutorPrivateSlot[];
+  activeSpecializations: ApprovedSpecializationItem[];
+  tracks: ('school' | 'quran')[];
+  subjectIds: string[];
+  stageIds: string[];
+  gradeIds: string[];
+  curriculumIds: string[];
+  quranLevelIds: string[];
+  quranAgeGroupIds: string[];
+  contact: ResolvedTutorAdminContact;
+  qualityReview: TutorInitialQualityReviewRecord | null;
+  readiness: TutorProfileReadinessEvaluation;
   createdAt: string;
   updatedAt: string;
 }
 
 export const AdminService = {
   /**
-   * 1. Get all tutors (both published and unpublished) with search and stats
+   * 0. Get & Save Configurable Readiness Policy
    */
-  async getTutorsList(searchQuery?: string): Promise<AdminTutorListItem[]> {
+  getReadinessPolicy(): TutorReadinessPolicyConfig {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return DEFAULT_TUTOR_READINESS_POLICY;
+    }
+    try {
+      const raw = window.localStorage.getItem(READINESS_POLICY_STORAGE_KEY);
+      if (!raw) return DEFAULT_TUTOR_READINESS_POLICY;
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_TUTOR_READINESS_POLICY,
+        ...parsed,
+        minTrialSlots: Math.max(1, Number(parsed?.minTrialSlots ?? DEFAULT_TUTOR_READINESS_POLICY.minTrialSlots)),
+        minPaidPrivateSlots: Math.max(
+          1,
+          Number(parsed?.minPaidPrivateSlots ?? DEFAULT_TUTOR_READINESS_POLICY.minPaidPrivateSlots)
+        ),
+        minDistinctCoverageDays: Math.max(
+          1,
+          Number(parsed?.minDistinctCoverageDays ?? DEFAULT_TUTOR_READINESS_POLICY.minDistinctCoverageDays)
+        ),
+        upcomingWindowDays: Math.max(
+          1,
+          Number(parsed?.upcomingWindowDays ?? DEFAULT_TUTOR_READINESS_POLICY.upcomingWindowDays)
+        ),
+        indicativeRangesByCurrency: {
+          ...DEFAULT_TUTOR_READINESS_POLICY.indicativeRangesByCurrency,
+          ...(parsed?.indicativeRangesByCurrency || {}),
+        },
+      };
+    } catch {
+      return DEFAULT_TUTOR_READINESS_POLICY;
+    }
+  },
+
+  saveReadinessPolicy(policy: TutorReadinessPolicyConfig): TutorReadinessPolicyConfig {
+    const normalized: TutorReadinessPolicyConfig = {
+      ...DEFAULT_TUTOR_READINESS_POLICY,
+      ...policy,
+      minTrialSlots: Math.max(1, Math.round(Number(policy.minTrialSlots) || 1)),
+      minPaidPrivateSlots: Math.max(1, Math.round(Number(policy.minPaidPrivateSlots) || 1)),
+      minDistinctCoverageDays: Math.max(1, Math.round(Number(policy.minDistinctCoverageDays) || 1)),
+      upcomingWindowDays: Math.max(1, Math.round(Number(policy.upcomingWindowDays) || 14)),
+      indicativeRangesByCurrency: {
+        ...DEFAULT_TUTOR_READINESS_POLICY.indicativeRangesByCurrency,
+        ...(policy.indicativeRangesByCurrency || {}),
+      },
+    };
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.setItem(READINESS_POLICY_STORAGE_KEY, JSON.stringify(normalized));
+      } catch {
+        // ignore
+      }
+    }
+    return normalized;
+  },
+
+  /**
+   * 0.1 Save Initial Human Quality Review for a Tutor (Avatar clarity & Price suitability)
+   */
+  async saveTutorInitialQualityReview(params: {
+    tutorId: string;
+    avatarQualityApproved: boolean;
+    approvedAvatarUrl: string;
+    priceQualityApproved: boolean;
+    approvedPriceAmount: number;
+    approvedCurrency: string;
+    approvedDurationMinutes: number;
+    reviewNotes?: string;
+  }): Promise<TutorInitialQualityReviewRecord> {
+    const nowIso = new Date().toISOString();
+    const record: TutorInitialQualityReviewRecord = {
+      tutorId: params.tutorId,
+      avatarQualityApproved: Boolean(params.avatarQualityApproved),
+      approvedAvatarUrl: params.approvedAvatarUrl.trim() || null,
+      priceQualityApproved: Boolean(params.priceQualityApproved),
+      approvedPriceAmount: Number(params.approvedPriceAmount) || null,
+      approvedCurrency: params.approvedCurrency.trim() || null,
+      approvedDurationMinutes: Number(params.approvedDurationMinutes) || null,
+      reviewNotes: params.reviewNotes?.trim() || null,
+      reviewedAt: nowIso,
+    };
+
+    // Always persist in local storage first for immediate consistency
+    saveLocalQualityReviewRecord(record);
+
+    // Attempt server-side RPC persistence (from migration 019)
+    try {
+      const { error: rpcErr } = await supabase.rpc('admin_save_tutor_quality_review', {
+        p_tutor_id: params.tutorId,
+        p_avatar_quality_approved: record.avatarQualityApproved,
+        p_approved_avatar_url: record.approvedAvatarUrl,
+        p_price_quality_approved: record.priceQualityApproved,
+        p_approved_price_amount: record.approvedPriceAmount,
+        p_approved_currency: record.approvedCurrency,
+        p_approved_duration_minutes: record.approvedDurationMinutes,
+        p_review_notes: record.reviewNotes,
+      });
+
+      if (rpcErr) {
+        // Fallback: try direct upsert into tutor_quality_reviews table if RPC is not yet created
+        await supabase.from('tutor_quality_reviews').upsert(
+          {
+            tutor_id: params.tutorId,
+            avatar_quality_approved: record.avatarQualityApproved,
+            approved_avatar_url: record.approvedAvatarUrl,
+            price_quality_approved: record.priceQualityApproved,
+            approved_price_amount: record.approvedPriceAmount,
+            approved_currency: record.approvedCurrency,
+            approved_duration_minutes: record.approvedDurationMinutes,
+            review_notes: record.reviewNotes,
+            reviewed_at: nowIso,
+            updated_at: nowIso,
+          },
+          { onConflict: 'tutor_id' }
+        );
+      }
+    } catch {
+      // Gracefully keep local storage state if migration 019 hasn't been run in SQL editor yet
+    }
+
+    return record;
+  },
+
+  /**
+   * 1. Get all tutors (both published and unpublished) with bulk-fetched offerings,
+   * future trial & paid private slots, limited contact fields, and unified 6/6 readiness evaluation.
+   */
+  async getTutorsList(
+    searchQuery?: string,
+    policyOverride?: TutorReadinessPolicyConfig
+  ): Promise<AdminTutorListItem[]> {
+    const policy = policyOverride || this.getReadinessPolicy();
+
     let query = supabase
       .from('tutors')
       .select(
-        'id, name, honorific, headline, avatar_url, hourly_rate_min, hourly_rate_max, session_duration_minutes, trial_duration_minutes, currency, is_published, rating, reviews_count, created_at, updated_at'
+        'id, name, honorific, headline, avatar_url, help_child_quote, help_child_summary, hourly_rate_min, hourly_rate_max, session_duration_minutes, trial_duration_minutes, currency, is_published, rating, reviews_count, created_at, updated_at'
       )
       .order('updated_at', { ascending: false });
 
@@ -83,60 +271,660 @@ export const AdminService = {
       return [];
     }
 
-    const tutorIds = tutorsData.map((t) => t.id);
+    const tutorIds = tutorsData.map((t: any) => String(t.id));
 
-    // Fetch counts for school offerings, quran offerings, and available slots via secure RPC
-    const [schoolOfferingsRes, quranOfferingsRes, slotCountsRpcRes] = await Promise.all([
-      supabase.from('tutor_school_offerings').select('tutor_id').in('tutor_id', tutorIds),
-      supabase.from('tutor_quran_offerings').select('tutor_id').in('tutor_id', tutorIds),
-      supabase.rpc('admin_get_tutors_slot_counts', { p_tutor_ids: tutorIds }),
+    // Bulk-fetch all required readiness, taxonomy, slots, and limited contact data in parallel (no N+1 queries)
+    const [
+      schoolOfferingsRes,
+      quranOfferingsRes,
+      courseOptionsRes,
+      gradesRes,
+      stagesRes,
+      subjectsRes,
+      curriculaRes,
+      quranAgesRes,
+      quranLevelsRes,
+      trialSlotsRes,
+      privateSlotsRes,
+      privateInfoContactRes,
+      approvedAppsContactRes,
+      qualityReviewsRes,
+    ] = await Promise.all([
+      supabase
+        .from('tutor_school_offerings')
+        .select('tutor_id, course_option_id')
+        .in('tutor_id', tutorIds),
+      supabase
+        .from('tutor_quran_offerings')
+        .select('tutor_id, age_group_id, level_id')
+        .in('tutor_id', tutorIds),
+      supabase
+        .from('school_course_options')
+        .select('id, grade_id, subject_id, curriculum_id, is_active')
+        .eq('is_active', true),
+      supabase
+        .from('educational_grades')
+        .select('id, stage_id, name, is_active')
+        .eq('is_active', true),
+      supabase
+        .from('educational_stages')
+        .select('id, name, is_active')
+        .eq('is_active', true),
+      supabase
+        .from('subjects')
+        .select('id, name, is_active')
+        .eq('is_active', true),
+      supabase
+        .from('curriculum_types')
+        .select('id, name, is_active')
+        .eq('is_active', true),
+      supabase
+        .from('quran_age_groups')
+        .select('id, name, is_active')
+        .eq('is_active', true),
+      supabase
+        .from('quran_levels')
+        .select('id, name, is_active')
+        .eq('is_active', true),
+      // Trial slots: fetch future/available slots via RPC or table
+      supabase
+        .from('tutor_available_slots')
+        .select('id, tutor_id, slot_date, start_time, end_time, timezone, is_available, is_booked, admin_suspended')
+        .in('tutor_id', tutorIds)
+        .eq('is_available', true),
+      // Paid Private slots
+      supabase
+        .from('tutor_private_slots')
+        .select(
+          'id, tutor_id, specialization_label, offering_course_option_id, quran_age_group_id, quran_level_id, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency, is_available, is_booked, admin_suspended'
+        )
+        .in('tutor_id', tutorIds)
+        .eq('is_available', true),
+      // Limited contact fields ONLY (never select national_id_number, payout_details, or internal_notes in list view)
+      supabase
+        .from('tutor_private_info')
+        .select('tutor_id, country_code, whatsapp_number, phone_number')
+        .in('tutor_id', tutorIds),
+      // Approved applications explicitly linked via applicant_tutor_id
+      supabase
+        .from('tutor_applications')
+        .select('applicant_tutor_id, status, country_code, whatsapp_number, phone, updated_at')
+        .in('applicant_tutor_id', tutorIds)
+        .eq('status', 'approved')
+        .order('updated_at', { ascending: false }),
+      // Optional server-side quality review table (from migration 019)
+      supabase
+        .from('tutor_quality_reviews')
+        .select('*')
+        .in('tutor_id', tutorIds),
     ]);
 
-    const offeringCounts: Record<string, number> = {};
-    (schoolOfferingsRes.data || []).forEach((row: any) => {
-      offeringCounts[row.tutor_id] = (offeringCounts[row.tutor_id] || 0) + 1;
-    });
-    (quranOfferingsRes.data || []).forEach((row: any) => {
-      offeringCounts[row.tutor_id] = (offeringCounts[row.tutor_id] || 0) + 1;
-    });
+    // Check if any critical readiness data source failed to load
+    const readinessLoadErrors: string[] = [];
+    if (schoolOfferingsRes.error) {
+      readinessLoadErrors.push(`التخصصات المدرسية (${schoolOfferingsRes.error.message})`);
+    }
+    if (quranOfferingsRes.error) {
+      readinessLoadErrors.push(`تخصصات القرآن (${quranOfferingsRes.error.message})`);
+    }
+    if (
+      courseOptionsRes.error ||
+      gradesRes.error ||
+      stagesRes.error ||
+      subjectsRes.error ||
+      curriculaRes.error ||
+      quranAgesRes.error ||
+      quranLevelsRes.error
+    ) {
+      readinessLoadErrors.push('الجداول المرجعية للمواد والمراحل');
+    }
 
-    const slotCounts: Record<string, number> = {};
-    if (!slotCountsRpcRes.error && slotCountsRpcRes.data) {
-      (slotCountsRpcRes.data as any[]).forEach((row: any) => {
-        slotCounts[row.tutor_id] = Number(row.available_slots_count || 0);
-      });
-    } else {
-      // Fallback in case RPC is not yet created
-      const slotsRes = await supabase
+    // Handle trial slots fallback if `admin_suspended` column was not yet migrated
+    let resolvedTrialSlotsRows: any[] = [];
+    if (trialSlotsRes.error) {
+      const fallbackTrialRes = await supabase
         .from('tutor_available_slots')
-        .select('tutor_id')
+        .select('id, tutor_id, slot_date, start_time, end_time, timezone, is_available, is_booked')
         .in('tutor_id', tutorIds)
         .eq('is_available', true);
+      if (fallbackTrialRes.error) {
+        readinessLoadErrors.push(`المواعيد التجريبية (${fallbackTrialRes.error.message})`);
+      } else {
+        resolvedTrialSlotsRows = fallbackTrialRes.data || [];
+      }
+    } else {
+      resolvedTrialSlotsRows = trialSlotsRes.data || [];
+    }
 
-      (slotsRes.data || []).forEach((row: any) => {
-        slotCounts[row.tutor_id] = (slotCounts[row.tutor_id] || 0) + 1;
+    // Handle private slots fallback if `admin_suspended` column was not yet migrated
+    let resolvedPrivateSlotsRows: any[] = [];
+    if (privateSlotsRes.error) {
+      const fallbackPrivateRes = await supabase
+        .from('tutor_private_slots')
+        .select(
+          'id, tutor_id, specialization_label, offering_course_option_id, quran_age_group_id, quran_level_id, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency, is_available, is_booked'
+        )
+        .in('tutor_id', tutorIds)
+        .eq('is_available', true);
+      if (fallbackPrivateRes.error) {
+        readinessLoadErrors.push(`المواعيد الخاصة المدفوعة (${fallbackPrivateRes.error.message})`);
+      } else {
+        resolvedPrivateSlotsRows = fallbackPrivateRes.data || [];
+      }
+    } else {
+      resolvedPrivateSlotsRows = privateSlotsRes.data || [];
+    }
+
+    const hasBatchEvaluationError = readinessLoadErrors.length > 0;
+    const batchEvaluationErrorMessage = hasBatchEvaluationError
+      ? `تعذر تقييم الجاهزية بسبب فشل جلب: ${readinessLoadErrors.join('، ')}`
+      : null;
+
+    // Build active reference lookup maps
+    const stagesMap = new Map<string, { id: string; name: string }>();
+    (stagesRes.data || []).forEach((s: any) => {
+      if (s.is_active !== false) stagesMap.set(String(s.id), { id: String(s.id), name: String(s.name) });
+    });
+
+    const gradesMap = new Map<string, { id: string; stageId: string; name: string }>();
+    (gradesRes.data || []).forEach((g: any) => {
+      if (g.is_active !== false && stagesMap.has(String(g.stage_id))) {
+        gradesMap.set(String(g.id), {
+          id: String(g.id),
+          stageId: String(g.stage_id),
+          name: String(g.name),
+        });
+      }
+    });
+
+    const subjectsMap = new Map<string, { id: string; name: string }>();
+    (subjectsRes.data || []).forEach((s: any) => {
+      if (s.is_active !== false) subjectsMap.set(String(s.id), { id: String(s.id), name: String(s.name) });
+    });
+
+    const curriculaMap = new Map<string, { id: string; name: string }>();
+    (curriculaRes.data || []).forEach((c: any) => {
+      if (c.is_active !== false) curriculaMap.set(String(c.id), { id: String(c.id), name: String(c.name) });
+    });
+
+    const activeCourseOptionsMap = new Map<string, SchoolCourseOptionDetail>();
+    (courseOptionsRes.data || []).forEach((co: any) => {
+      if (co.is_active === false) return;
+      const grade = gradesMap.get(String(co.grade_id));
+      const subject = subjectsMap.get(String(co.subject_id));
+      const curriculum = curriculaMap.get(String(co.curriculum_id));
+      if (!grade || !subject || !curriculum) return;
+      const stage = stagesMap.get(grade.stageId);
+      if (!stage) return;
+
+      activeCourseOptionsMap.set(String(co.id), {
+        id: String(co.id),
+        gradeId: grade.id,
+        gradeName: grade.name,
+        stageId: stage.id,
+        stageName: stage.name,
+        subjectId: subject.id,
+        subjectName: subject.name,
+        curriculumId: curriculum.id,
+        curriculumName: curriculum.name,
+        isActive: true,
+      });
+    });
+
+    const activeQuranAgesMap = new Map<string, string>();
+    (quranAgesRes.data || []).forEach((a: any) => {
+      if (a.is_active !== false) activeQuranAgesMap.set(String(a.id), String(a.name));
+    });
+
+    const activeQuranLevelsMap = new Map<string, string>();
+    (quranLevelsRes.data || []).forEach((l: any) => {
+      if (l.is_active !== false) activeQuranLevelsMap.set(String(l.id), String(l.name));
+    });
+
+    // Group active specializations per tutor
+    const specsByTutor = new Map<string, ApprovedSpecializationItem[]>();
+    (schoolOfferingsRes.data || []).forEach((row: any) => {
+      const tutorId = String(row.tutor_id);
+      const opt = activeCourseOptionsMap.get(String(row.course_option_id));
+      if (!opt) return;
+      const list = specsByTutor.get(tutorId) || [];
+      list.push({
+        id: `school:${opt.id}`,
+        track: 'school',
+        label: `${opt.subjectName} — ${opt.gradeName} (${opt.curriculumName})`,
+        courseOptionId: opt.id,
+        stageId: opt.stageId,
+        stageName: opt.stageName,
+        gradeId: opt.gradeId,
+        gradeName: opt.gradeName,
+        subjectId: opt.subjectId,
+        subjectName: opt.subjectName,
+        curriculumId: opt.curriculumId,
+        curriculumName: opt.curriculumName,
+      });
+      specsByTutor.set(tutorId, list);
+    });
+
+    (quranOfferingsRes.data || []).forEach((row: any) => {
+      const tutorId = String(row.tutor_id);
+      const ageId = String(row.age_group_id);
+      const levelId = String(row.level_id);
+      const ageName = activeQuranAgesMap.get(ageId);
+      const levelName = activeQuranLevelsMap.get(levelId);
+      if (!ageName || !levelName) return;
+      const list = specsByTutor.get(tutorId) || [];
+      list.push({
+        id: `quran:${ageId}:${levelId}`,
+        track: 'quran',
+        label: `${levelName} — ${ageName}`,
+        ageGroupId: ageId,
+        ageGroupName: ageName,
+        levelId,
+        levelName,
+      });
+      specsByTutor.set(tutorId, list);
+    });
+
+    // Group trial slots per tutor
+    const trialSlotsByTutor = new Map<string, TutorAvailableSlot[]>();
+    resolvedTrialSlotsRows.forEach((s: any) => {
+      const tutorId = String(s.tutor_id);
+      const list = trialSlotsByTutor.get(tutorId) || [];
+      list.push({
+        id: String(s.id),
+        tutorId,
+        slotDate: String(s.slot_date),
+        startTime: String(s.start_time),
+        endTime: String(s.end_time),
+        timezone: String(s.timezone || 'Africa/Cairo'),
+        isAvailable: Boolean(s.is_available),
+        isBooked: Boolean(s.is_booked),
+        adminSuspended: Boolean(s.admin_suspended),
+      });
+      trialSlotsByTutor.set(tutorId, list);
+    });
+
+    // Group private slots per tutor
+    const privateSlotsByTutor = new Map<string, TutorPrivateSlot[]>();
+    resolvedPrivateSlotsRows.forEach((s: any) => {
+      const tutorId = String(s.tutor_id);
+      const list = privateSlotsByTutor.get(tutorId) || [];
+      list.push({
+        id: String(s.id),
+        tutorId,
+        specializationLabel: String(s.specialization_label || ''),
+        offeringCourseOptionId: s.offering_course_option_id || null,
+        quranAgeGroupId: s.quran_age_group_id || null,
+        quranLevelId: s.quran_level_id || null,
+        slotDate: String(s.slot_date),
+        startTime: String(s.start_time),
+        endTime: String(s.end_time),
+        timezone: String(s.timezone || 'Africa/Cairo'),
+        durationMinutes: Number(s.duration_minutes || 50),
+        priceAmount: Number(s.price_amount ?? 0),
+        currency: String(s.currency || 'ج.م'),
+        isAvailable: Boolean(s.is_available),
+        isBooked: Boolean(s.is_booked),
+        adminSuspended: Boolean(s.admin_suspended),
+      });
+      privateSlotsByTutor.set(tutorId, list);
+    });
+
+    // Contact maps
+    const privateContactByTutor = new Map<
+      string,
+      { countryCode?: string | null; whatsappNumber?: string | null; phoneNumber?: string | null }
+    >();
+    (privateInfoContactRes.data || []).forEach((row: any) => {
+      privateContactByTutor.set(String(row.tutor_id), {
+        countryCode: row.country_code,
+        whatsappNumber: row.whatsapp_number,
+        phoneNumber: row.phone_number,
+      });
+    });
+
+    const approvedAppContactByTutor = new Map<
+      string,
+      {
+        applicantTutorId: string;
+        status: string;
+        countryCode?: string | null;
+        whatsappNumber?: string | null;
+        phone?: string | null;
+      }
+    >();
+    (approvedAppsContactRes.data || []).forEach((row: any) => {
+      const tId = String(row.applicant_tutor_id || '');
+      if (!tId || approvedAppContactByTutor.has(tId)) return; // Already sorted by updated_at DESC
+      approvedAppContactByTutor.set(tId, {
+        applicantTutorId: tId,
+        status: String(row.status || 'approved'),
+        countryCode: row.country_code,
+        whatsappNumber: row.whatsapp_number,
+        phone: row.phone,
+      });
+    });
+
+    // Quality review map (merge DB table + local storage)
+    const localQualityMap = loadLocalQualityReviewsMap();
+    const qualityReviewByTutor = new Map<string, TutorInitialQualityReviewRecord>();
+    Object.values(localQualityMap).forEach((rec) => {
+      if (rec && rec.tutorId) {
+        qualityReviewByTutor.set(rec.tutorId, rec);
+      }
+    });
+    if (!qualityReviewsRes.error && Array.isArray(qualityReviewsRes.data)) {
+      qualityReviewsRes.data.forEach((row: any) => {
+        const tId = String(row.tutor_id);
+        qualityReviewByTutor.set(tId, {
+          tutorId: tId,
+          avatarQualityApproved: Boolean(row.avatar_quality_approved),
+          approvedAvatarUrl: row.approved_avatar_url || null,
+          priceQualityApproved: Boolean(row.price_quality_approved),
+          approvedPriceAmount:
+            row.approved_price_amount !== null && row.approved_price_amount !== undefined
+              ? Number(row.approved_price_amount)
+              : null,
+          approvedCurrency: row.approved_currency || null,
+          approvedDurationMinutes:
+            row.approved_duration_minutes !== null && row.approved_duration_minutes !== undefined
+              ? Number(row.approved_duration_minutes)
+              : null,
+          reviewNotes: row.review_notes || null,
+          reviewedBy: row.reviewed_by || null,
+          reviewedAt: row.reviewed_at || row.updated_at || null,
+        });
       });
     }
 
-    return tutorsData.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      honorific: row.honorific || 'أ.',
-      headline: row.headline,
-      avatarUrl: row.avatar_url || '',
-      hourlyRateMin: row.hourly_rate_min || 0,
-      hourlyRateMax: row.hourly_rate_max || 0,
-      currency: row.currency || 'ج.م',
-      sessionDurationMinutes: row.session_duration_minutes || 50,
-      trialDurationMinutes: row.trial_duration_minutes || 20,
-      isPublished: Boolean(row.is_published),
-      rating: row.rating ? Number(row.rating) : 0,
-      reviewsCount: row.reviews_count || 0,
-      offeringsCount: offeringCounts[row.id] || 0,
-      availableSlotsCount: slotCounts[row.id] || 0,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+    const referenceNowMs = Date.now();
+
+    return tutorsData.map((row: any) => {
+      const tutorId = String(row.id);
+      const activeSpecs = specsByTutor.get(tutorId) || [];
+      const tutorTrials = trialSlotsByTutor.get(tutorId) || [];
+      const tutorPrivates = privateSlotsByTutor.get(tutorId) || [];
+
+      // For tutors that are already published in DB and haven't changed their avatar/price,
+      // if no explicit quality review row exists yet, treat their initial quality review as approved at initial publish time
+      let qualityReview = qualityReviewByTutor.get(tutorId) || null;
+      if (!qualityReview && row.is_published && row.avatar_url && Number(row.hourly_rate_min) > 0) {
+        qualityReview = {
+          tutorId,
+          avatarQualityApproved: true,
+          approvedAvatarUrl: String(row.avatar_url).trim(),
+          priceQualityApproved: true,
+          approvedPriceAmount: Number(row.hourly_rate_min),
+          approvedCurrency: String(row.currency || 'ج.م').trim(),
+          approvedDurationMinutes: Number(row.session_duration_minutes || 50),
+          reviewNotes: 'معتمد عند النشر السابق',
+          reviewedAt: row.updated_at || row.created_at,
+        };
+      }
+
+      const readiness = evaluateTutorProfileReadiness({
+        tutor: {
+          id: tutorId,
+          name: row.name,
+          headline: row.headline,
+          avatarUrl: row.avatar_url,
+          helpChildQuote: row.help_child_quote,
+          helpChildSummary: row.help_child_summary,
+          hourlyRateMin: row.hourly_rate_min,
+          hourlyRateMax: row.hourly_rate_max,
+          currency: row.currency || 'ج.م',
+          sessionDurationMinutes: row.session_duration_minutes || 50,
+          trialDurationMinutes: row.trial_duration_minutes || 20,
+          isPublished: Boolean(row.is_published),
+        },
+        activeSpecializationsCount: activeSpecs.length,
+        specializations: activeSpecs,
+        trialSlots: tutorTrials,
+        privateSlots: tutorPrivates,
+        evaluationError: hasBatchEvaluationError,
+        evaluationErrorMessage: batchEvaluationErrorMessage,
+        qualityReview,
+        policy,
+        referenceNowMs,
+      });
+
+      const contact = resolveTutorAdminContact({
+        tutorId,
+        privateInfo: privateContactByTutor.get(tutorId) || null,
+        linkedApprovedApplication: approvedAppContactByTutor.get(tutorId) || null,
+      });
+
+      // Extract deduplicated taxonomy filter arrays
+      const tracks = Array.from(new Set(activeSpecs.map((s) => s.track)));
+      const subjectIds = Array.from(
+        new Set(activeSpecs.filter((s) => s.track === 'school' && s.subjectId).map((s) => s.subjectId!))
+      );
+      const stageIds = Array.from(
+        new Set(activeSpecs.filter((s) => s.track === 'school' && s.stageId).map((s) => s.stageId!))
+      );
+      const gradeIds = Array.from(
+        new Set(activeSpecs.filter((s) => s.track === 'school' && s.gradeId).map((s) => s.gradeId!))
+      );
+      const curriculumIds = Array.from(
+        new Set(
+          activeSpecs.filter((s) => s.track === 'school' && s.curriculumId).map((s) => s.curriculumId!)
+        )
+      );
+      const quranLevelIds = Array.from(
+        new Set(activeSpecs.filter((s) => s.track === 'quran' && s.levelId).map((s) => s.levelId!))
+      );
+      const quranAgeGroupIds = Array.from(
+        new Set(
+          activeSpecs.filter((s) => s.track === 'quran' && s.ageGroupId).map((s) => s.ageGroupId!)
+        )
+      );
+
+      return {
+        id: tutorId,
+        name: row.name,
+        honorific: row.honorific || 'أ.',
+        headline: row.headline || '',
+        avatarUrl: row.avatar_url || '',
+        helpChildQuote: row.help_child_quote || '',
+        helpChildSummary: row.help_child_summary || '',
+        hourlyRateMin: row.hourly_rate_min || 0,
+        hourlyRateMax: row.hourly_rate_max || 0,
+        currency: row.currency || 'ج.م',
+        sessionDurationMinutes: row.session_duration_minutes || 50,
+        trialDurationMinutes: row.trial_duration_minutes || 20,
+        isPublished: Boolean(row.is_published),
+        rating: row.rating ? Number(row.rating) : 0,
+        reviewsCount: row.reviews_count || 0,
+        offeringsCount: activeSpecs.length,
+        availableSlotsCount:
+          readiness.validTrialSlotsCount + readiness.validPaidPrivateSlotsCount,
+        validTrialSlotsCount: readiness.validTrialSlotsCount,
+        validPaidPrivateSlotsCount: readiness.validPaidPrivateSlotsCount,
+        validTrialSlots: readiness.validTrialSlots,
+        validPaidPrivateSlots: readiness.validPaidPrivateSlots,
+        activeSpecializations: activeSpecs,
+        tracks,
+        subjectIds,
+        stageIds,
+        gradeIds,
+        curriculumIds,
+        quranLevelIds,
+        quranAgeGroupIds,
+        contact,
+        qualityReview,
+        readiness,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
+  },
+
+  /**
+   * 1.1 Evaluate a single tutor's readiness on-demand (used before publishing or inside AdminTutorEditorView)
+   */
+  async evaluateTutorReadinessById(
+    tutorId: string,
+    overrideFields?: Partial<{
+      name: string;
+      headline: string;
+      avatarUrl: string;
+      helpChildQuote: string;
+      helpChildSummary: string;
+      hourlyRateMin: number;
+      hourlyRateMax: number;
+      currency: string;
+      sessionDurationMinutes: number;
+      trialDurationMinutes: number;
+      isPublished: boolean;
+      activeSpecializationsCount: number;
+    }>
+  ): Promise<TutorProfileReadinessEvaluation> {
+    const items = await this.getTutorsList(undefined);
+    const existing = items.find((i) => i.id === tutorId);
+
+    if (!existing && !overrideFields) {
+      throw new Error(`تعذر العثور على ملف المعلم (${tutorId}) لتقييم جاهزية النشر.`);
+    }
+
+    const policy = this.getReadinessPolicy();
+    const localMap = loadLocalQualityReviewsMap();
+    const qualityReview = existing?.qualityReview || localMap[tutorId] || null;
+
+    return evaluateTutorProfileReadiness({
+      tutor: {
+        id: tutorId,
+        name: overrideFields?.name ?? existing?.name ?? '',
+        headline: overrideFields?.headline ?? existing?.headline ?? '',
+        avatarUrl: overrideFields?.avatarUrl ?? existing?.avatarUrl ?? '',
+        helpChildQuote: overrideFields?.helpChildQuote ?? existing?.helpChildQuote ?? '',
+        helpChildSummary: overrideFields?.helpChildSummary ?? existing?.helpChildSummary ?? '',
+        hourlyRateMin: overrideFields?.hourlyRateMin ?? existing?.hourlyRateMin ?? 0,
+        hourlyRateMax: overrideFields?.hourlyRateMax ?? existing?.hourlyRateMax ?? 0,
+        currency: overrideFields?.currency ?? existing?.currency ?? 'ج.م',
+        sessionDurationMinutes:
+          overrideFields?.sessionDurationMinutes ?? existing?.sessionDurationMinutes ?? 50,
+        trialDurationMinutes:
+          overrideFields?.trialDurationMinutes ?? existing?.trialDurationMinutes ?? 20,
+        isPublished: overrideFields?.isPublished ?? existing?.isPublished ?? false,
+      },
+      activeSpecializationsCount:
+        overrideFields?.activeSpecializationsCount ?? existing?.offeringsCount ?? 0,
+      specializations: existing?.activeSpecializations ?? [],
+      trialSlots: existing?.validTrialSlots ?? [],
+      privateSlots: existing?.validPaidPrivateSlots ?? [],
+      evaluationError: existing?.readiness.evaluationError ?? false,
+      evaluationErrorMessage: existing?.readiness.evaluationErrorMessage ?? null,
+      qualityReview,
+      policy,
+    });
+  },
+
+  /**
+   * 1.2 Get & Add Paid Private Slots for a Tutor by Admin
+   */
+  async getTutorPrivateSlotsForAdmin(tutorId: string): Promise<TutorPrivateSlot[]> {
+    const { data, error } = await supabase
+      .from('tutor_private_slots')
+      .select('*')
+      .eq('tutor_id', tutorId)
+      .order('slot_date', { ascending: true })
+      .order('start_time', { ascending: true });
+
+    if (error) {
+      throw new Error(`تعذر جلب المواعيد الخاصة للمعلم: ${error.message}`);
+    }
+
+    return (data || []).map((s: any) => ({
+      id: String(s.id),
+      tutorId: String(s.tutor_id),
+      specializationLabel: String(s.specialization_label || ''),
+      offeringCourseOptionId: s.offering_course_option_id || null,
+      quranAgeGroupId: s.quran_age_group_id || null,
+      quranLevelId: s.quran_level_id || null,
+      slotDate: String(s.slot_date),
+      startTime: String(s.start_time),
+      endTime: String(s.end_time),
+      timezone: String(s.timezone || 'Africa/Cairo'),
+      durationMinutes: Number(s.duration_minutes || 50),
+      priceAmount: Number(s.price_amount ?? 0),
+      currency: String(s.currency || 'ج.م'),
+      isAvailable: Boolean(s.is_available),
+      isBooked: Boolean(s.is_booked),
+      adminSuspended: Boolean(s.admin_suspended),
+      adminSuspensionNotes: s.admin_suspension_notes || null,
+      bookedAt: s.booked_at || null,
+      createdAt: s.created_at,
     }));
+  },
+
+  async addPrivateSlotForTutor(params: {
+    tutorId: string;
+    slotDate: string;
+    startTime: string;
+    endTime: string;
+    durationMinutes: number;
+    priceAmount: number;
+    currency: string;
+    timezone?: string;
+    specializationLabel: string;
+    offeringCourseOptionId?: string | null;
+    quranAgeGroupId?: string | null;
+    quranLevelId?: string | null;
+  }): Promise<string> {
+    if (!Number.isInteger(params.priceAmount) || params.priceAmount <= 0 || params.priceAmount > 100000) {
+      throw new Error('سعر موعد الحصة الخاصة المدفوعة يجب أن يكون رقماً صحيحاً أكبر من صفر.');
+    }
+    if (!Number.isInteger(params.durationMinutes) || params.durationMinutes < 30 || params.durationMinutes > 120) {
+      throw new Error('مدة الحصة الخاصة يجب أن تكون بين 30 و 120 دقيقة.');
+    }
+
+    // Try admin RPC first if migration 019 is applied
+    const { data: rpcId, error: rpcErr } = await supabase.rpc('admin_add_private_slot', {
+      p_tutor_id: params.tutorId,
+      p_slot_date: params.slotDate,
+      p_start_time: params.startTime,
+      p_end_time: params.endTime,
+      p_duration_minutes: params.durationMinutes,
+      p_price_amount: params.priceAmount,
+      p_currency: params.currency,
+      p_timezone: params.timezone || 'Africa/Cairo',
+      p_specialization_label: params.specializationLabel,
+      p_offering_course_option_id: params.offeringCourseOptionId || null,
+      p_quran_age_group_id: params.quranAgeGroupId || null,
+      p_quran_level_id: params.quranLevelId || null,
+    });
+
+    if (!rpcErr && rpcId) {
+      return String(rpcId);
+    }
+
+    const { data: inserted, error: insertErr } = await supabase
+      .from('tutor_private_slots')
+      .insert({
+        tutor_id: params.tutorId,
+        slot_date: params.slotDate,
+        start_time: params.startTime,
+        end_time: params.endTime,
+        duration_minutes: params.durationMinutes,
+        price_amount: params.priceAmount,
+        currency: params.currency,
+        timezone: params.timezone || 'Africa/Cairo',
+        specialization_label: params.specializationLabel,
+        offering_course_option_id: params.offeringCourseOptionId || null,
+        quran_age_group_id: params.quranAgeGroupId || null,
+        quran_level_id: params.quranLevelId || null,
+        is_available: true,
+        is_booked: false,
+        admin_suspended: false,
+      })
+      .select('id')
+      .single();
+
+    if (insertErr || !inserted) {
+      throw new Error(`تعذر إضافة الموعد الخاص المدفوع: ${insertErr?.message || rpcErr?.message || 'خطأ غير معروف'}`);
+    }
+
+    return String(inserted.id);
   },
 
   /**
@@ -326,7 +1114,8 @@ export const AdminService = {
 
   /**
    * 4. Atomic Tutor Save (Create or Update in a single RPC transaction)
-   * Guaranteed all-or-nothing rollback on any error
+   * Enforces full 6/6 readiness + initial quality review when transitioning from unpublished to published,
+   * while never auto-unpublishing already-published tutors when their slots expire.
    */
   async saveTutor(payload: AdminTutorSavePayload, isNew: boolean): Promise<string> {
     const tutorId = payload.id.trim().toLowerCase();
@@ -350,8 +1139,35 @@ export const AdminService = {
       );
     }
 
+    // Check if transitioning from unpublished -> published
+    if (payload.isPublished) {
+      const currentStatus = isNew ? null : await this.getTutorPublicationStatus(tutorId);
+      const wasAlreadyPublished = Boolean(currentStatus?.isPublished);
+
+      if (!wasAlreadyPublished) {
+        const specsCount =
+          (payload.schoolOfferingOptionIds?.length || 0) + (payload.quranOfferings?.length || 0);
+        const evaluation = await this.evaluateTutorReadinessById(tutorId, {
+          name: payload.name,
+          headline: payload.headline,
+          avatarUrl: payload.avatarUrl,
+          helpChildQuote: payload.helpChildQuote,
+          helpChildSummary: payload.helpChildSummary,
+          hourlyRateMin: payload.hourlyRateMin,
+          hourlyRateMax: payload.hourlyRateMax,
+          currency: payload.currency,
+          sessionDurationMinutes: payload.sessionDurationMinutes,
+          trialDurationMinutes: payload.trialDurationMinutes,
+          isPublished: false,
+          activeSpecializationsCount: specsCount,
+        });
+
+        assertTutorReadyForInitialPublish(evaluation);
+      }
+    }
+
     // Call atomic RPC inside a single database transaction
-    const { data: rpcResult, error: rpcError } = await supabase.rpc('admin_save_tutor', {
+    const { error: rpcError } = await supabase.rpc('admin_save_tutor', {
       p_payload: {
         ...payload,
         id: tutorId,
@@ -367,9 +1183,20 @@ export const AdminService = {
   },
 
   /**
-   * 5. Set Publish Status with strict server-side database validation
+   * 5. Set Publish Status with strict 6/6 readiness + initial quality review validation
+   * when transitioning from unpublished -> published (`shouldPublish === true`).
    */
   async toggleTutorPublish(tutorId: string, shouldPublish: boolean): Promise<boolean> {
+    if (shouldPublish) {
+      const currentStatus = await this.getTutorPublicationStatus(tutorId);
+      if (!currentStatus?.isPublished) {
+        const evaluation = await this.evaluateTutorReadinessById(tutorId, {
+          isPublished: false,
+        });
+        assertTutorReadyForInitialPublish(evaluation);
+      }
+    }
+
     const { data, error } = await supabase.rpc('admin_set_tutor_publish_status', {
       p_tutor_id: tutorId,
       p_publish: shouldPublish,

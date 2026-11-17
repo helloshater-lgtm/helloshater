@@ -680,13 +680,16 @@ export function getTutorSpecializationSummary(
  * Uses Intl.DateTimeFormat to accurately compute current date/time and UTC offset in Africa/Cairo
  * without hardcoding GMT+2 year-round (since Egypt uses GMT+3 during Daylight Saving Time).
  */
-export function getCurrentPartsInTimezone(timezone = 'Africa/Cairo'): {
+export function getCurrentPartsInTimezone(
+  timezone = 'Africa/Cairo',
+  referenceNowMs?: number
+): {
   dateStr: string; // YYYY-MM-DD
   timeStr: string; // HH:mm:ss
 } {
   const tz = timezone || 'Africa/Cairo';
+  const now = typeof referenceNowMs === 'number' ? new Date(referenceNowMs) : new Date();
   try {
-    const now = new Date();
     const dateFormatter = new Intl.DateTimeFormat('en-CA', {
       timeZone: tz,
       year: 'numeric',
@@ -705,7 +708,6 @@ export function getCurrentPartsInTimezone(timezone = 'Africa/Cairo'): {
       timeStr: timeFormatter.format(now),
     };
   } catch {
-    const now = new Date();
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
@@ -725,13 +727,14 @@ export function getCurrentPartsInTimezone(timezone = 'Africa/Cairo'): {
 export function isSlotInFuture(
   slotDate: string,
   startTime: string,
-  timezone = 'Africa/Cairo'
+  timezone = 'Africa/Cairo',
+  referenceNowMs?: number
 ): boolean {
   if (!slotDate || !startTime) return false;
   const cleanDate = slotDate.trim().slice(0, 10);
   const rawTime = startTime.trim();
   const cleanTime = rawTime.length === 5 ? `${rawTime}:00` : rawTime.slice(0, 8);
-  const nowParts = getCurrentPartsInTimezone(timezone || 'Africa/Cairo');
+  const nowParts = getCurrentPartsInTimezone(timezone || 'Africa/Cairo', referenceNowMs);
 
   if (cleanDate > nowParts.dateStr) return true;
   if (cleanDate < nowParts.dateStr) return false;

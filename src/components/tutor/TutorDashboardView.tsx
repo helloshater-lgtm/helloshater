@@ -31,6 +31,7 @@ import {
   calculateGroupFinancialSummary,
   getCalendarDayOfWeek,
 } from '../../utils/formatters';
+import { evaluateTutorProfileReadiness } from '../../utils/tutorReadinessAndContact';
 import {
   GraduationCap,
   Calendar,
@@ -88,6 +89,8 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // Approved specializations
   const [specializations, setSpecializations] = useState<ApprovedSpecializationItem[]>([]);
   const [, setIsLoadingSpecs] = useState(false);
+  const [specsLoadError, setSpecsLoadError] = useState<string | null>(null);
+  const [isAvatarBrokenAtRuntime, setIsAvatarBrokenAtRuntime] = useState(false);
 
   // Direct Self-Service Pricing State ("سعري ومدة الحصة")
   const [pricingSessionPrice, setPricingSessionPrice] = useState<number>(150);
@@ -358,6 +361,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
   const loadSpecializations = async () => {
     setIsLoadingSpecs(true);
+    setSpecsLoadError(null);
     try {
       const specs = await TutorPortalService.getMySpecializations();
       setSpecializations(specs);
@@ -365,8 +369,8 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         setSelectedSpecIds((prev) => (prev.length > 0 ? prev : specs.map((s) => s.id)));
         setGroupSpecId((prev) => (prev ? prev : specs[0].id));
       }
-    } catch (err) {
-      console.warn('Failed to load specializations:', err);
+    } catch (err: any) {
+      setSpecsLoadError(err?.message || 'تعذر تحميل التخصصات المعتمدة.');
     } finally {
       setIsLoadingSpecs(false);
     }
@@ -1555,77 +1559,54 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       isSlotInFuture(g.endDate || g.startDate, '23:59', 'Africa/Cairo')
   );
 
-  // 5 Profile Readiness Steps (الصورة، النبذة، السعر، التخصصات، والمواعيد المتاحة المستقبلية)
-  const hasAvatar = Boolean(tutor.avatarUrl && tutor.avatarUrl.trim().length > 0);
-  const hasBioComplete = Boolean(
-    tutor.headline &&
-      tutor.headline.trim().length >= 10 &&
-      ((tutor.helpChildSummary && tutor.helpChildSummary.trim().length >= 20) ||
-        (tutor.helpChildQuote && tutor.helpChildQuote.trim().length >= 5))
+  // Unified 6-Requirement Readiness Evaluator (shared single source of truth with Admin)
+  const hasReadinessLoadError = Boolean(
+    specsLoadError || trialSlotsLoadError || privateSlotsLoadError
   );
-  const hasValidPrice = Boolean(
-    Number(tutor.hourlyRateMin) > 0 &&
-      Number(tutor.sessionDurationMinutes) >= 30 &&
-      Boolean(tutor.currency)
-  );
-  const hasAtLeastOneSpec = specializations.length >= 1;
-  const hasFutureAvailableSlot =
-    validFutureTrialSlots.length > 0 ||
-    validFuturePrivateSlots.length > 0 ||
-    validFutureGroups.length > 0;
+  const readinessEvaluationErrorMessage = [
+    specsLoadError,
+    trialSlotsLoadError,
+    privateSlotsLoadError,
+  ]
+    .filter(Boolean)
+    .join(' — ');
 
-  const readinessSteps = [
-    {
-      key: 'avatar',
-      title: 'الصورة الشخصية',
-      completed: hasAvatar,
-      statusText: hasAvatar ? 'منشورة في ملفك' : 'أضف صورتك الشخصية',
-      actionLabel: 'صورتي ونبذتي',
-      targetTab: 'profile-draft' as DashboardTab,
+  const unifiedReadiness = evaluateTutorProfileReadiness({
+    tutor: {
+      id: tutor.id,
+      name: tutor.name,
+      headline: tutor.headline,
+      avatarUrl: tutor.avatarUrl,
+      helpChildQuote: tutor.helpChildQuote,
+      helpChildSummary: tutor.helpChildSummary,
+      hourlyRateMin: tutor.hourlyRateMin,
+      hourlyRateMax: tutor.hourlyRateMax,
+      currency: tutor.currency,
+      sessionDurationMinutes: tutor.sessionDurationMinutes,
+      trialDurationMinutes: tutor.trialDurationMinutes,
+      isPublished: tutor.isPublished,
     },
-    {
-      key: 'bio',
-      title: 'النبذة التعريفية',
-      completed: hasBioComplete,
-      statusText: hasBioComplete ? 'الجملة القصيرة والنبذة مكتملة' : 'أكمل نبذتك لولي الأمر',
-      actionLabel: 'صورتي ونبذتي',
-      targetTab: 'profile-draft' as DashboardTab,
-    },
-    {
-      key: 'pricing',
-      title: 'السعر ومدة الحصة',
-      completed: hasValidPrice,
-      statusText: hasValidPrice
-        ? `${tutor.hourlyRateMin} ${tutor.currency} / ${tutor.sessionDurationMinutes} دقيقة`
-        : 'حدد سعر الحصة ومدتها',
-      actionLabel: 'سعري ومدة الحصة',
-      targetTab: 'pricing' as DashboardTab,
-    },
-    {
-      key: 'specializations',
-      title: 'التخصصات المعتمدة',
-      completed: hasAtLeastOneSpec,
-      statusText: hasAtLeastOneSpec
-        ? `${specializations.length} تخصص معتمد`
-        : 'بانتظار ربط التخصصات',
-      actionLabel: 'عرض التخصصات',
-      targetTab: 'overview' as DashboardTab,
-    },
-    {
-      key: 'slots',
-      title: 'المواعيد المتاحة',
-      completed: hasFutureAvailableSlot,
-      statusText: hasFutureAvailableSlot
-        ? `${validFutureTrialSlots.length} تجريبي • ${validFuturePrivateSlots.length} خاص • ${validFutureGroups.length} مجموعة`
-        : 'لا توجد مواعيد مستقبلية متاحة حالياً',
-      actionLabel: 'إضافة موعد',
-      targetTab: 'private' as DashboardTab,
-    },
-  ];
+    activeSpecializationsCount: specializations.length,
+    specializations,
+    trialSlots,
+    privateSlots,
+    isAvatarBrokenAtRuntime,
+    evaluationError: hasReadinessLoadError,
+    evaluationErrorMessage: readinessEvaluationErrorMessage || null,
+  });
 
-  const completedStepsCount = readinessSteps.filter((s) => s.completed).length;
+  const readinessSteps = unifiedReadiness.requirements.map((req) => ({
+    key: req.key,
+    title: req.title,
+    completed: req.completed,
+    statusText: req.statusText,
+    actionLabel: req.tutorActionLabel,
+    targetTab: req.tutorTargetTab as DashboardTab,
+  }));
+
+  const completedStepsCount = unifiedReadiness.completedRequirementsCount ?? 0;
   const missingProfileItems = readinessSteps.filter((s) => !s.completed);
-  const profileStrengthPercent = Math.round((completedStepsCount / readinessSteps.length) * 100);
+  const profileStrengthPercent = unifiedReadiness.completionPercentage ?? 0;
 
   const futurePrivateBookedCount = privateSlots.filter(
     (s) => s.isBooked && isSlotInFuture(s.slotDate, s.startTime, s.timezone || 'Africa/Cairo')
@@ -1697,8 +1678,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       <div className="bg-white rounded-3xl p-4 sm:p-6 border border-[#E2E8F0] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
           <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-slate-100 border border-[#CBD5E1] shrink-0 flex items-center justify-center">
-            {tutor.avatarUrl ? (
-              <img src={tutor.avatarUrl} alt={tutor.name} className="w-full h-full object-cover" />
+            {tutor.avatarUrl && !isAvatarBrokenAtRuntime ? (
+              <img
+                src={tutor.avatarUrl}
+                alt={tutor.name}
+                onError={() => setIsAvatarBrokenAtRuntime(true)}
+                onLoad={() => setIsAvatarBrokenAtRuntime(false)}
+                className="w-full h-full object-cover"
+              />
             ) : (
               <User className="w-7 h-7 text-slate-400" />
             )}
@@ -1791,10 +1778,27 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             </div>
           </div>
 
-          {missingProfileItems.length > 0 ? (
+          {unifiedReadiness.evaluationError ? (
+            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
+                <span className="font-bold">
+                  تعذر تقييم الجاهزية: {unifiedReadiness.evaluationErrorMessage}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => loadPortalData(true)}
+                className="px-3 py-1.5 min-h-[36px] rounded-lg bg-rose-700 hover:bg-rose-800 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>إعادة المحاولة</span>
+              </button>
+            </div>
+          ) : missingProfileItems.length > 0 ? (
             <div className="p-3.5 rounded-2xl bg-white border border-amber-200 space-y-2.5">
               <span className="text-xs font-bold text-[#1F2A44] block">
-                البيانات الناقصة لاستكمال تجهيز ملفك قبل النشر ({missingProfileItems.length}):
+                البيانات الناقصة لاستكمال تجهيز ملفك قبل النشر ({missingProfileItems.length} من 6):
               </span>
               <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {missingProfileItems.map((item) => (
@@ -1823,7 +1827,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
               <span>
-                اكتملت جميع عناصر تجهيز ملفك الخمسة (الصورة، النبذة، السعر، التخصصات، والمواعيد المتاحة) — ملفك جاهز للنشر من قِبل الإدارة.
+                اكتملت جميع متطلبات بيانات ملفك الستة (6/6: الصورة، النبذة، السعر، التخصصات، موعد الحصة الخاصة المدفوعة، وموعد الحصة التجريبية) — ملفك بانتظار مراجعة الجودة الأولية والنشر من قِبل الإدارة.
               </span>
             </div>
           )}
@@ -1836,11 +1840,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <Sparkles className="w-4 h-4 text-[#0D4E8B]" />
             <span className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              إدارة ملفك بالخدمة الذاتية ({profileStrengthPercent}٪ مكتمل)
+              {unifiedReadiness.evaluationError
+                ? 'إدارة ملفك بالخدمة الذاتية (تعذر تقييم الجاهزية)'
+                : `إدارة ملفك بالخدمة الذاتية (${profileStrengthPercent}٪ مكتمل)`}
             </span>
-            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#F0F6FD] text-[#0D4E8B]">
-              {completedStepsCount} من {readinessSteps.length} خطوات جاهزة
-            </span>
+            {!unifiedReadiness.evaluationError && (
+              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#F0F6FD] text-[#0D4E8B] tabular-nums">
+                {completedStepsCount} من 6 متطلبات جاهزة
+              </span>
+            )}
           </div>
           <span className="text-[11px] text-[#64748B]">
             {tutor.isPublished
@@ -2051,10 +2059,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#F1F5F9] pb-3">
               <div>
                 <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44]">
-                  خطوات تجهيز ملفك التدريسي
+                  خطوات تجهيز ملفك التدريسي (6 متطلبات أساسية)
                 </h2>
                 <p className="text-xs text-[#64748B] mt-0.5">
-                  تأكد من اكتمال العناصر الخمسة التالية ليظهر ملفك بأفضل صورة لأولياء الأمور
+                  تأكد من اكتمال العناصر الستة التالية (بما فيها موعد خاص مدفوع وموعد تجريبي 20 دقيقة) ليظهر ملفك بأفضل صورة لأولياء الأمور
                 </p>
               </div>
               <button
@@ -2068,51 +2076,64 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-              {readinessSteps.map((step, index) => (
-                <div
-                  key={step.key}
-                  className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 ${
-                    step.completed
-                      ? 'bg-emerald-50/40 border-emerald-200'
-                      : 'bg-amber-50/40 border-amber-200'
-                  }`}
+            {unifiedReadiness.evaluationError ? (
+              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center justify-between gap-3">
+                <span>تعذر تقييم الجاهزية حالياً: {unifiedReadiness.evaluationErrorMessage}</span>
+                <button
+                  type="button"
+                  onClick={() => loadPortalData(true)}
+                  className="px-3 py-1.5 rounded-lg bg-rose-700 text-white font-bold cursor-pointer"
                 >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-bold text-[#64748B]">
-                        الخطوة {index + 1}
-                      </span>
-                      {step.completed ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>مكتمل</span>
+                  إعادة المحاولة
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {readinessSteps.map((step, index) => (
+                  <div
+                    key={step.key}
+                    className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 ${
+                      step.completed
+                        ? 'bg-emerald-50/40 border-emerald-200'
+                        : 'bg-amber-50/40 border-amber-200'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-[#64748B]">
+                          المتطلب {index + 1} من 6
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
-                          <AlertCircle className="w-3.5 h-3.5" />
-                          <span>يحتاج استكمال</span>
-                        </span>
-                      )}
+                        {step.completed ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>مكتمل</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            <span>يحتاج استكمال</span>
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44]">
+                        {step.title}
+                      </h3>
+                      <p className="text-xs text-[#64748B] leading-relaxed">{step.statusText}</p>
                     </div>
-                    <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44]">
-                      {step.title}
-                    </h3>
-                    <p className="text-xs text-[#64748B] leading-relaxed">{step.statusText}</p>
-                  </div>
 
-                  {step.key !== 'specializations' && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab(step.targetTab)}
-                      className="w-full py-2 min-h-[40px] rounded-xl bg-white hover:bg-slate-50 border border-[#CBD5E1] text-xs font-bold text-[#0D4E8B] transition-colors cursor-pointer"
-                    >
-                      {step.actionLabel}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+                    {step.key !== 'specializations' && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(step.targetTab)}
+                        className="w-full py-2 min-h-[40px] rounded-xl bg-white hover:bg-slate-50 border border-[#CBD5E1] text-xs font-bold text-[#0D4E8B] transition-colors cursor-pointer"
+                      >
+                        {step.actionLabel}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Summary Cards */}

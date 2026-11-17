@@ -4,12 +4,19 @@ import {
   AdminTutorSavePayload,
   SchoolCourseOptionDetail,
   TutorAvailableSlot,
+  TutorPrivateSlot,
   QuranAgeGroup,
   QuranLevel,
   AdminProfileDraftItem,
 } from '../../types';
 import { AdminService } from '../../services/adminService';
 import { DataService } from '../../services/dataService';
+import {
+  AdminEditorTabTarget,
+  evaluateTutorProfileReadiness,
+  evaluateIndicativePriceGuidance,
+  TutorInitialQualityReviewRecord,
+} from '../../utils/tutorReadinessAndContact';
 import {
   ArrowRight,
   Save,
@@ -21,8 +28,7 @@ import {
   Calendar,
   Clock,
   BookOpen,
-  GraduationCap,
-  ShieldAlert,
+  ShieldCheck,
   User,
   CheckCircle2,
   AlertCircle,
@@ -34,6 +40,7 @@ import {
 interface AdminTutorEditorViewProps {
   initialDetail: AdminTutorFullDetail | null;
   isNew: boolean;
+  initialTab?: AdminEditorTabTarget;
   onBack: () => void;
   onSaved: (tutorId: string) => void;
   onPreview: (tutorId: string) => void;
@@ -42,14 +49,19 @@ interface AdminTutorEditorViewProps {
 export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
   initialDetail,
   isNew,
+  initialTab = 'basics',
   onBack,
   onSaved,
   onPreview,
 }) => {
   // Navigation tab
-  const [activeTab, setActiveTab] = useState<
-    'basics' | 'pricing' | 'offerings' | 'qualifications' | 'slots' | 'private' | 'pillars'
-  >('basics');
+  const [activeTab, setActiveTab] = useState<AdminEditorTabTarget>(initialTab || 'basics');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Form State
   const [tutorId, setTutorId] = useState(initialDetail?.tutor.id || '');
@@ -57,6 +69,7 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
   const [honorific, setHonorific] = useState(initialDetail?.tutor.honorific || 'أ.');
   const [headline, setHeadline] = useState(initialDetail?.tutor.headline || '');
   const [avatarUrl, setAvatarUrl] = useState(initialDetail?.tutor.avatarUrl || '');
+  const [isAvatarBrokenAtRuntime, setIsAvatarBrokenAtRuntime] = useState(false);
   const [pendingAvatarPath, setPendingAvatarPath] = useState<string | null>(null);
   const [yearsOfExperience, setYearsOfExperience] = useState(
     initialDetail?.tutor.yearsOfExperience || 0
@@ -130,13 +143,36 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
     initialDetail?.privateInfo?.internalNotes || ''
   );
 
-  // Slots State
+  // Trial Slots State
   const [slots, setSlots] = useState<TutorAvailableSlot[]>(initialDetail?.slots || []);
   const [newSlotDate, setNewSlotDate] = useState('');
   const [newSlotStart, setNewSlotStart] = useState('');
   const [newSlotEnd, setNewSlotEnd] = useState('');
   const [newSlotNotes, setNewSlotNotes] = useState('');
   const [isAddingSlot, setIsAddingSlot] = useState(false);
+
+  // Paid Private Slots State
+  const [privateSlots, setPrivateSlots] = useState<TutorPrivateSlot[]>([]);
+  const [newPrivateDate, setNewPrivateDate] = useState('');
+  const [newPrivateStart, setNewPrivateStart] = useState('');
+  const [newPrivateDuration, setNewPrivateDuration] = useState<number>(
+    initialDetail?.tutor.sessionDurationMinutes || 50
+  );
+  const [newPrivatePrice, setNewPrivatePrice] = useState<number>(
+    initialDetail?.tutor.hourlyRateMin || 120
+  );
+  const [newPrivateCurrency, setNewPrivateCurrency] = useState<string>(
+    initialDetail?.tutor.currency || 'ج.م'
+  );
+  const [newPrivateNotes, setNewPrivateNotes] = useState('');
+  const [isAddingPrivateSlot, setIsAddingPrivateSlot] = useState(false);
+
+  // Quality Review State
+  const [qualityReviewState, setQualityReviewState] = useState<TutorInitialQualityReviewRecord | null>(null);
+  const [qrAvatarApproved, setQrAvatarApproved] = useState(false);
+  const [qrPriceApproved, setQrPriceApproved] = useState(false);
+  const [qrNotes, setQrNotes] = useState('');
+  const [isSavingQualityReview, setIsSavingQualityReview] = useState(false);
 
   // Methodology & Trial steps
   const [methodologyPillars, setMethodologyPillars] = useState(
@@ -176,7 +212,7 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
     }
   };
 
-  // Load course options and Quran taxonomy on mount
+  // Load course options, Quran taxonomy, private slots, and quality review on mount
   useEffect(() => {
     Promise.all([
       AdminService.getCourseOptionsWithDetails().catch(() => []),
@@ -192,8 +228,35 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
     if (!isNew && initialDetail?.tutor.id) {
       loadPendingDraftForTutor(initialDetail.tutor.id);
+      AdminService.getTutorPrivateSlotsForAdmin(initialDetail.tutor.id)
+        .then((pSlots) => setPrivateSlots(pSlots))
+        .catch(() => {});
+      AdminService.evaluateTutorReadinessById(initialDetail.tutor.id)
+        .then((res) => {
+          setQualityReviewState({
+            tutorId: initialDetail.tutor.id,
+            avatarQualityApproved: res.initialQualityReview.avatarApprovalMatchesCurrentUrl,
+            approvedAvatarUrl: res.initialQualityReview.avatarApprovalMatchesCurrentUrl
+              ? initialDetail.tutor.avatarUrl
+              : null,
+            priceQualityApproved: res.initialQualityReview.priceApprovalMatchesCurrentPricing,
+            approvedPriceAmount: initialDetail.tutor.hourlyRateMin,
+            approvedCurrency: initialDetail.tutor.currency,
+            approvedDurationMinutes: initialDetail.tutor.sessionDurationMinutes,
+            reviewNotes: res.initialQualityReview.reviewNotes,
+            reviewedAt: res.initialQualityReview.reviewedAt,
+          });
+          setQrAvatarApproved(res.initialQualityReview.avatarApprovalMatchesCurrentUrl);
+          setQrPriceApproved(res.initialQualityReview.priceApprovalMatchesCurrentPricing);
+          setQrNotes(res.initialQualityReview.reviewNotes || '');
+        })
+        .catch(() => {});
     }
   }, [isNew, initialDetail?.tutor.id]);
+
+  useEffect(() => {
+    setIsAvatarBrokenAtRuntime(false);
+  }, [avatarUrl]);
 
   const handleReviewPendingDraft = async (action: 'approve' | 'needs_revision' | 'reject') => {
     if (!pendingDraft) return;
@@ -366,12 +429,144 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
       setNewSlotStart('');
       setNewSlotEnd('');
       setNewSlotNotes('');
-      setSaveSuccessMsg('تمت إضافة الموعد بنجاح.');
+      setSaveSuccessMsg('تمت إضافة الموعد التجريبي بنجاح.');
       setTimeout(() => setSaveSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMessage(err?.message || 'فشل إضافة الموعد.');
     } finally {
       setIsAddingSlot(false);
+    }
+  };
+
+  // Add Paid Private Slot Handler
+  const handleAddPrivateSlot = async () => {
+    if (!newPrivateDate || !newPrivateStart) {
+      setErrorMessage('يرجى تحديد تاريخ ووقت بداية الحصة الخاصة المدفوعة.');
+      return;
+    }
+
+    if (!tutorId.trim()) {
+      setErrorMessage('يرجى حفظ بيانات المعلم الأساسية أولاً قبل إضافة مواعيد خاصة مدفوعة.');
+      return;
+    }
+
+    const durationVal = Number(newPrivateDuration);
+    if (!Number.isInteger(durationVal) || durationVal < 30 || durationVal > 120) {
+      setErrorMessage('مدة الحصة الخاصة يجب أن تكون بين 30 و120 دقيقة.');
+      return;
+    }
+
+    const priceVal = Number(newPrivatePrice);
+    if (!Number.isInteger(priceVal) || priceVal < 1 || priceVal > 100000) {
+      setErrorMessage('سعر الحصة الخاصة المدفوعة يجب أن يكون رقماً صحيحاً أكبر من صفر (1 إلى 100,000).');
+      return;
+    }
+
+    const activeSchoolCount = selectedOptionIds.length;
+    const activeQuranCount = quranOfferings.length;
+    if (activeSchoolCount + activeQuranCount === 0) {
+      setErrorMessage('يرجى تحديد تخصص معتمد واحد على الأقل للمعلم في تبويب «التخصصات المعتمدة» قبل إضافة موعد حصة خاصة.');
+      return;
+    }
+
+    const firstCourseOptId = selectedOptionIds[0] || null;
+    const firstCourseOpt = firstCourseOptId
+      ? allCourseOptions.find((o) => o.id === firstCourseOptId)
+      : null;
+    const firstQuranOffering = quranOfferings[0] || null;
+    const computedSpecLabel = firstCourseOpt
+      ? `${firstCourseOpt.subjectName} - ${firstCourseOpt.gradeName}`
+      : firstQuranOffering
+      ? 'القرآن الكريم والتأسيس'
+      : 'حصة خاصة 1:1';
+
+    const [sh, sm] = newPrivateStart.split(':').map(Number);
+    const totalEndMins = sh * 60 + sm + durationVal;
+    const endH = Math.floor((totalEndMins / 60) % 24);
+    const endM = totalEndMins % 60;
+    const computedEndTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+
+    setIsAddingPrivateSlot(true);
+    setErrorMessage(null);
+
+    try {
+      const slotId = await AdminService.addPrivateSlotForTutor({
+        tutorId: tutorId.trim(),
+        slotDate: newPrivateDate,
+        startTime: newPrivateStart,
+        endTime: computedEndTime,
+        durationMinutes: durationVal,
+        priceAmount: priceVal,
+        currency: newPrivateCurrency || currency || 'ج.م',
+        timezone: 'Africa/Cairo',
+        specializationLabel: computedSpecLabel,
+        offeringCourseOptionId: firstCourseOptId,
+        quranAgeGroupId: !firstCourseOptId && firstQuranOffering ? firstQuranOffering.ageGroupId : null,
+        quranLevelId: !firstCourseOptId && firstQuranOffering ? firstQuranOffering.levelId : null,
+      });
+
+      const refreshedPrivate = await AdminService.getTutorPrivateSlotsForAdmin(tutorId.trim()).catch(() => null);
+      if (refreshedPrivate) {
+        setPrivateSlots(refreshedPrivate);
+      } else {
+        setPrivateSlots([
+          ...privateSlots,
+          {
+            id: slotId,
+            tutorId: tutorId.trim(),
+            specializationLabel: computedSpecLabel,
+            offeringCourseOptionId: firstCourseOptId,
+            quranAgeGroupId: !firstCourseOptId && firstQuranOffering ? firstQuranOffering.ageGroupId : null,
+            quranLevelId: !firstCourseOptId && firstQuranOffering ? firstQuranOffering.levelId : null,
+            slotDate: newPrivateDate,
+            startTime: newPrivateStart,
+            endTime: computedEndTime,
+            timezone: 'Africa/Cairo',
+            durationMinutes: durationVal,
+            priceAmount: priceVal,
+            currency: newPrivateCurrency || currency || 'ج.م',
+            isAvailable: true,
+            isBooked: false,
+            adminSuspended: false,
+          },
+        ]);
+      }
+
+      setNewPrivateDate('');
+      setNewPrivateStart('');
+      setNewPrivateNotes('');
+      setSaveSuccessMsg('تمت إضافة موعد الحصة الخاصة المدفوعة بنجاح.');
+      setTimeout(() => setSaveSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'فشل إضافة موعد الحصة الخاصة المدفوعة.');
+    } finally {
+      setIsAddingPrivateSlot(false);
+    }
+  };
+
+  // Save Initial Quality Review Handler
+  const handleSaveQualityReview = async () => {
+    if (!tutorId.trim()) return;
+    setIsSavingQualityReview(true);
+    setErrorMessage(null);
+    try {
+      const saved = await AdminService.saveTutorInitialQualityReview({
+        tutorId: tutorId.trim(),
+        avatarQualityApproved: qrAvatarApproved,
+        approvedAvatarUrl: avatarUrl,
+        priceQualityApproved: qrPriceApproved,
+        approvedPriceAmount: Number(hourlyRateMin) || 0,
+        approvedCurrency: currency,
+        approvedDurationMinutes: Number(sessionDurationMinutes) || 50,
+        reviewNotes: qrNotes.trim() || undefined,
+      });
+      setQualityReviewState(saved);
+      setSaveSuccessMsg('تم حفظ اعتماد مراجعة الجودة الأولية بنجاح.');
+      setTimeout(() => setSaveSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'تعذر حفظ مراجعة الجودة الأولية.');
+    } finally {
+      setIsSavingQualityReview(false);
     }
   };
 
@@ -514,8 +709,6 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
       onSaved(savedId);
     } catch (err: any) {
-      // Safe cleanup: only delete newly uploaded avatar if DB does NOT point to it!
-      // If network lost connection after successful DB commit, do NOT delete it!
       if (pendingAvatarPath && tutorId) {
         const deleted = await AdminService.safeCleanupPendingAvatar(
           tutorId.trim().toLowerCase(),
@@ -540,6 +733,38 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
     if (courseFilterCurriculum && opt.curriculumId !== courseFilterCurriculum) return false;
     return true;
   });
+
+  // Live readiness evaluation in editor
+  const readinessPolicy = AdminService.getReadinessPolicy();
+  const editorReadiness = evaluateTutorProfileReadiness({
+    tutor: {
+      id: tutorId || 'draft',
+      name,
+      headline,
+      avatarUrl,
+      helpChildQuote,
+      helpChildSummary,
+      hourlyRateMin: Number(hourlyRateMin) || 0,
+      hourlyRateMax: Number(hourlyRateMax) || 0,
+      currency,
+      sessionDurationMinutes: Number(sessionDurationMinutes) || 50,
+      trialDurationMinutes: Number(trialDurationMinutes) || 20,
+      isPublished,
+    },
+    activeSpecializationsCount: selectedOptionIds.length + quranOfferings.length,
+    trialSlots: slots,
+    privateSlots,
+    isAvatarBrokenAtRuntime,
+    policy: readinessPolicy,
+    qualityReview: qualityReviewState,
+  });
+
+  const livePriceGuidance = evaluateIndicativePriceGuidance(
+    Number(hourlyRateMin) || 0,
+    currency,
+    Number(sessionDurationMinutes) || 50,
+    readinessPolicy
+  );
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -638,8 +863,180 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div className="space-y-0.5">
             <span className="font-bold block">خطأ في العملية:</span>
-            <span className="leading-relaxed">{errorMessage}</span>
+            <span className="leading-relaxed whitespace-pre-line">{errorMessage}</span>
           </div>
+        </div>
+      )}
+
+      {/* Unified 6/6 Readiness & Initial Quality Review Card in Editor */}
+      {!isNew && (
+        <div className="bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 space-y-4 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  editorReadiness.isReadyForInitialPublish
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : editorReadiness.isDataComplete6of6
+                    ? 'bg-blue-50 text-[#0D4E8B]'
+                    : 'bg-amber-50 text-amber-700'
+                }`}
+              >
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44]">
+                    جاهزية الملف للنشر ومراجعة الجودة الأولية
+                  </h3>
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold tabular-nums ${
+                      editorReadiness.isReadyForInitialPublish
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : editorReadiness.isDataComplete6of6
+                        ? 'bg-blue-100 text-[#0D4E8B]'
+                        : 'bg-amber-100 text-amber-800'
+                    }`}
+                  >
+                    {editorReadiness.statusBadgeLabel} ({editorReadiness.completedRequirementsCount ?? 0}/{editorReadiness.totalRequirementsCount} ·{' '}
+                    {editorReadiness.completionPercentage ?? 0}%)
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#64748B]">
+                  تجريبي متاح: <strong className="tabular-nums">{editorReadiness.validTrialSlotsCount}</strong> · خاص مدفوع متاح:{' '}
+                  <strong className="tabular-nums">{editorReadiness.validPaidPrivateSlotsCount}</strong> · تغطية الأيام:{' '}
+                  <strong className="tabular-nums">{editorReadiness.distinctUpcomingDaysCount}</strong> يوم
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* 6 Requirements Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {editorReadiness.requirements.map((item) => (
+              <div
+                key={item.key}
+                className={`p-3 rounded-xl border text-xs flex flex-col justify-between gap-2 ${
+                  item.completed
+                    ? 'bg-emerald-50/40 border-emerald-200'
+                    : 'bg-amber-50/60 border-amber-200'
+                }`}
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="font-bold text-[#1F2A44]">{item.title}</span>
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        item.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {item.completed ? 'مكتمل' : 'ناقص'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#64748B] leading-relaxed">
+                    {item.completed ? item.statusText : item.missingReason || item.statusText}
+                  </p>
+                </div>
+
+                {!item.completed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab(item.adminTargetTab)}
+                    className="self-start px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-[#0D4E8B] border border-[#CBD5E1] text-[11px] font-bold cursor-pointer"
+                  >
+                    {item.adminActionLabel}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Initial Quality Review Section (For First Publication) */}
+          {!isPublished && (
+            <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold text-[#1F2A44] block">
+                    مراجعة الجودة البشرية قبل النشر لأول مرة (منفصلة عن اكتمال البيانات 6/6):
+                  </span>
+                  <span className="text-[11px] text-[#64748B]">
+                    يرتبط الاعتماد برابط الصورة الحالي وبالسعر والعملة والمدة الحالية. إذا غيّر المعلم الصورة أو السعر قبل النشر، يُطلب تأكيد الجودة للقيم الجديدة.
+                  </span>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                    editorReadiness.initialQualityReview.isQualityReviewComplete
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {editorReadiness.initialQualityReview.isQualityReviewComplete
+                    ? 'معتمد للنشر الأول'
+                    : 'بانتظار اعتماد الجودة'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <label className="flex items-start gap-2 p-2.5 rounded-xl bg-white border border-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={qrAvatarApproved}
+                    onChange={(e) => setQrAvatarApproved(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded text-[#0D4E8B] cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-bold text-[#1F2A44] block">
+                      تأكيد وضوح وملاءمة الصورة الشخصية الحالية
+                    </span>
+                    <span className="text-[11px] text-[#64748B]">
+                      صورة حقيقية واضحة ومناسبة للظهور لأولياء الأمور
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2 p-2.5 rounded-xl bg-white border border-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={qrPriceApproved}
+                    onChange={(e) => setQrPriceApproved(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded text-[#0D4E8B] cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-bold text-[#1F2A44] block">
+                      تأكيد ملاءمة سعر الحصة الحالية ({hourlyRateMin} - {hourlyRateMax} {currency} / {sessionDurationMinutes} د)
+                    </span>
+                    <span
+                      className={`text-[11px] block ${
+                        livePriceGuidance.status === 'within_range'
+                          ? 'text-emerald-700'
+                          : 'text-amber-700 font-medium'
+                      }`}
+                    >
+                      {livePriceGuidance.summaryText}
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <input
+                  type="text"
+                  value={qrNotes}
+                  onChange={(e) => setQrNotes(e.target.value)}
+                  placeholder="ملاحظة مراجعة الجودة الأولية (اختياري)..."
+                  className="flex-1 px-3 py-1.5 rounded-xl border border-[#CBD5E1] bg-white text-xs"
+                />
+                <button
+                  type="button"
+                  disabled={isSavingQualityReview}
+                  onClick={handleSaveQualityReview}
+                  className="px-4 py-1.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {isSavingQualityReview ? 'جاري الحفظ...' : 'حفظ اعتماد الجودة'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -815,9 +1212,10 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
             activeTab === 'slots' ? 'bg-white text-[#0D4E8B] shadow-xs' : 'text-[#64748B] hover:text-[#1F2A44]'
           }`}
         >
-          <span>المواعيد التجريبية</span>
+          <span>المواعيد (تجريبي + خاص مدفوع)</span>
           <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-[10px] text-emerald-800">
-            {slots.filter((s) => s.isAvailable).length}
+            {slots.filter((s) => s.isAvailable).length +
+              privateSlots.filter((s) => s.isAvailable && !s.isBooked && !s.adminSuspended && Number(s.priceAmount) > 0).length}
           </span>
         </button>
         <button
@@ -900,9 +1298,14 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
           {/* Headline */}
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-[#1F2A44]" htmlFor="tutor-headline">
-              العنوان التعريفي (Headline) <span className="text-rose-500">*</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-[#1F2A44]" htmlFor="tutor-headline">
+                العنوان التعريفي القصير (Headline) <span className="text-rose-500">*</span>
+              </label>
+              <span className="text-[11px] text-[#64748B] tabular-nums">
+                {headline.trim().length} / 250 حرفًا (الحد الأدنى 10 أحرف)
+              </span>
+            </div>
             <input
               id="tutor-headline"
               type="text"
@@ -917,10 +1320,11 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
           <div className="p-4 rounded-xl border border-[#E2E8F0] bg-[#F8F9FC] space-y-3">
             <label className="block text-xs font-bold text-[#1F2A44]">الصورة الشخصية للمعلم</label>
             <div className="flex flex-col sm:flex-row items-center gap-4">
-              {avatarUrl ? (
+              {avatarUrl && !isAvatarBrokenAtRuntime ? (
                 <img
                   src={avatarUrl}
                   alt={name}
+                  onError={() => setIsAvatarBrokenAtRuntime(true)}
                   className="w-16 h-16 rounded-xl object-cover border border-[#E2E8F0] bg-white shrink-0"
                 />
               ) : (
@@ -958,6 +1362,11 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
                   placeholder="أو ضع رابط مباشر للصورة هنا..."
                   className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs text-left"
                 />
+                {isAvatarBrokenAtRuntime && (
+                  <p className="text-[11px] text-rose-600 font-bold">
+                    تعذر تحميل الصورة من الرابط الحالي (صورة تالفة). يرجى رفع صورة صالحة.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -989,9 +1398,14 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
           {/* Quotes and Bio */}
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-[#1F2A44]">
-              اقتباس المعلم البارز (Help Child Quote)
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-[#1F2A44]">
+                اقتباس المعلم البارز (Help Child Quote)
+              </label>
+              <span className="text-[11px] text-[#64748B] tabular-nums">
+                {helpChildQuote.trim().length} / 350 حرفًا
+              </span>
+            </div>
             <input
               type="text"
               value={helpChildQuote}
@@ -1002,9 +1416,14 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-[#1F2A44]">
-              النبذة التفصيلية عن أسلوب التدريس (Help Child Summary)
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-[#1F2A44]">
+                النبذة التفصيلية عن أسلوب التدريس (Help Child Summary)
+              </label>
+              <span className="text-[11px] text-[#64748B] tabular-nums">
+                {helpChildSummary.trim().length} / 2500 حرف (الحد الأدنى 20 حرفًا)
+              </span>
+            </div>
             <textarea
               rows={4}
               value={helpChildSummary}
@@ -1037,16 +1456,7 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
       {activeTab === 'pricing' && (
         <div className="bg-white p-5 sm:p-7 rounded-2xl border border-[#E2E8F0] space-y-6">
           <div className="p-4 rounded-xl bg-[#F0F6FD] border border-[#CBD5E1] text-xs text-[#0D4E8B] leading-relaxed">
-            <strong>ملاحظة تسعير شاطر:</strong> يُعرض سعر الحصة في الموقع لأولياء الأمور كسعر
-            للحصة المحددة مدتها أدناه (مثلاً: 120 - 150 ج.م / 50 دقيقة)، ويتم تخزينهما في عمودي{' '}
-            <code className="bg-white px-1.5 py-0.5 rounded font-mono text-[11px]">
-              hourly_rate_min
-            </code>{' '}
-            و{' '}
-            <code className="bg-white px-1.5 py-0.5 rounded font-mono text-[11px]">
-              hourly_rate_max
-            </code>
-            .
+            <strong>ملاحظة تسعير شاطر:</strong> يُقبل أي سعر صحيح أكبر من صفر (1 إلى 100,000) دون اشتراط مضاعفات 5 أو 10 أو حد أدنى 20 (مثل 6 دولارات أو 127 أو 175).
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1056,10 +1466,12 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
               </label>
               <input
                 type="number"
-                min="0"
+                min="1"
+                max="100000"
+                step="1"
                 value={hourlyRateMin}
                 onChange={(e) => setHourlyRateMin(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none tabular-nums"
               />
             </div>
 
@@ -1069,38 +1481,57 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
               </label>
               <input
                 type="number"
-                min="0"
+                min="1"
+                max="100000"
+                step="1"
                 value={hourlyRateMax}
                 onChange={(e) => setHourlyRateMax(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none tabular-nums"
               />
             </div>
 
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-[#1F2A44]">العملة</label>
-              <input
-                type="text"
+              <select
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
-              />
+              >
+                <option value="ج.م">جنيه مصري (ج.م)</option>
+                <option value="ر.س">ريال سعودي (ر.س)</option>
+                <option value="د.إ">درهم إماراتي (د.إ)</option>
+                <option value="$">دولار أمريكي ($)</option>
+              </select>
             </div>
+          </div>
+
+          {/* Live Indicative Price Guidance */}
+          <div
+            className={`p-3.5 rounded-xl border text-xs ${
+              livePriceGuidance.status === 'within_range'
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}
+          >
+            <span className="font-bold block mb-0.5">النطاق السعري الاسترشادي للإدارة:</span>
+            <span>{livePriceGuidance.summaryText}</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-[#1F2A44]">
-                مدة الحصة الاعتيادية (بالدقائق)
+                مدة الحصة الاعتيادية (بالدقائق: 30 إلى 120)
               </label>
               <input
                 type="number"
-                min="15"
-                step="5"
+                min="30"
+                max="120"
+                step="1"
                 value={sessionDurationMinutes}
                 onChange={(e) => setSessionDurationMinutes(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none tabular-nums"
               />
-              <p className="text-[11px] text-[#94A3B8]">المعتاد لمنصة شاطر: 50 دقيقة أو 60 دقيقة.</p>
+              <p className="text-[11px] text-[#94A3B8]">المعتاد لمنصة شاطر: 45 أو 50 أو 60 دقيقة.</p>
             </div>
 
             <div className="space-y-1.5">
@@ -1109,13 +1540,14 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
               </label>
               <input
                 type="number"
-                min="10"
-                step="5"
+                min="20"
+                max="20"
+                step="1"
                 value={trialDurationMinutes}
                 onChange={(e) => setTrialDurationMinutes(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none"
+                className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm focus:border-[#0D4E8B] outline-none tabular-nums"
               />
-              <p className="text-[11px] text-[#94A3B8]">المعتاد لمنصة شاطر: 25 دقيقة أو 30 دقيقة.</p>
+              <p className="text-[11px] text-[#94A3B8]">مدة الحصة التجريبية المعتمدة في شاطر: 20 دقيقة.</p>
             </div>
           </div>
         </div>
@@ -1480,215 +1912,382 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
         </div>
       )}
 
-      {/* TAB 5: SLOTS (Africa/Cairo Protected) */}
+      {/* TAB 5: SLOTS (Trial Slots + Paid Private 1:1 Slots) */}
       {activeTab === 'slots' && (
-        <div className="bg-white p-5 sm:p-7 rounded-2xl border border-[#E2E8F0] space-y-6">
-          <div>
-            <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              المواعيد التجريبية للمعلم
-            </h3>
-            <p className="text-xs text-[#64748B]">
-              المواعيد المحددة بالتاريخ والساعة التي تظهر لولي الأمر لحجز الحصة التجريبية (وفق توقيت القاهرة)
-            </p>
-          </div>
-
-          {/* Add Slot Form */}
-          <div className="p-4 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-3">
-            <span className="text-xs font-bold text-[#0D4E8B] block">
-              + إضافة موعد تجريبي جديد:
-            </span>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-[#1F2A44]">تاريخ الموعد</label>
-                <input
-                  type="date"
-                  value={newSlotDate}
-                  min={new Date().toISOString().split('T')[0]}
-                  onChange={(e) => setNewSlotDate(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-[#1F2A44]">وقت البداية (توقيت القاهرة)</label>
-                <input
-                  type="time"
-                  value={newSlotStart}
-                  onChange={(e) => handleSlotStartTimeChange(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-[#1F2A44]">وقت النهاية (20 دقيقة تلقائياً)</label>
-                <input
-                  type="time"
-                  value={newSlotEnd}
-                  onChange={(e) => setNewSlotEnd(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-slate-50"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-              <input
-                type="text"
-                value={newSlotNotes}
-                onChange={(e) => setNewSlotNotes(e.target.value)}
-                placeholder="ملاحظات الموعد للإدارة (محجوز للطالب... / مغلق)..."
-                className="flex-1 px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs"
-              />
-
-              <button
-                type="button"
-                disabled={isAddingSlot}
-                onClick={handleAddSlot}
-                className="px-4 py-1.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
-              >
-                {isAddingSlot ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Plus className="w-3.5 h-3.5" />
-                )}
-                <span>حفظ الموعد</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Slots List */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-[#1F2A44] block">
-                المواعيد المسجلة ({slots.length}):
-              </span>
-              <div className="flex items-center gap-3 text-[11px] text-[#64748B]">
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" /> متاح للحجز
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-purple-600" /> حجز مؤكد لطالب
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-slate-400" /> مغلق إدارياً
-                </span>
-              </div>
-            </div>
-
-            {slots.length === 0 ? (
-              <p className="text-xs text-[#94A3B8] italic p-4 text-center border border-dashed border-[#CBD5E1] rounded-xl">
-                لا توجد مواعيد مسجلة لهذا المعلم حتى الآن.
+        <div className="bg-white p-5 sm:p-7 rounded-2xl border border-[#E2E8F0] space-y-8">
+          {/* PART A: Trial Slots (20 minutes) */}
+          <div className="space-y-6">
+            <div>
+              <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                ١. المواعيد التجريبية المجانية (20 دقيقة)
+              </h3>
+              <p className="text-xs text-[#64748B]">
+                المواعيد المحددة بالتاريخ والساعة التي تظهر لولي الأمر لحجز الحصة التجريبية (وفق توقيت القاهرة)
               </p>
-            ) : (
-              <div className="divide-y divide-slate-100 border border-[#E2E8F0] rounded-xl overflow-hidden">
-                {slots.map((s) => {
-                  const isBooked = Boolean(s.isBooked);
-                  const isAvailable = Boolean(s.isAvailable);
+            </div>
 
-                  return (
-                    <div
-                      key={s.id}
-                      className="p-3 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 text-xs"
-                    >
-                      {/* Slot Details */}
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <Calendar className="w-4 h-4 text-[#0D4E8B] shrink-0" />
-                        <span className="font-bold text-[#1F2A44]">{s.slotDate}</span>
-                        <span className="text-slate-400">·</span>
-                        <span className="text-[#0D4E8B] font-bold">
-                          {s.startTime.substring(0, 5)} - {s.endTime.substring(0, 5)}
-                        </span>
-                        <span className="text-[11px] text-[#94A3B8]">({s.timezone})</span>
+            {/* Add Trial Slot Form */}
+            <div className="p-4 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-3">
+              <span className="text-xs font-bold text-[#0D4E8B] block">
+                + إضافة موعد تجريبي جديد (20 دقيقة):
+              </span>
 
-                        {/* Status Badge */}
-                        {isBooked ? (
-                          <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-bold inline-flex items-center gap-1">
-                            <Lock className="w-3 h-3 text-purple-600" />
-                            حجز مؤكد لطالب
-                          </span>
-                        ) : isAvailable ? (
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
-                            متاح للحجز
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200 text-[11px] font-bold">
-                            مغلق إدارياً
-                          </span>
-                        )}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#1F2A44]">تاريخ الموعد</label>
+                  <input
+                    type="date"
+                    value={newSlotDate}
+                    min={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setNewSlotDate(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                  />
+                </div>
 
-                        {s.notes && (
-                          <span className="text-[11px] text-slate-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
-                            {s.notes}
-                          </span>
-                        )}
-                      </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#1F2A44]">وقت البداية (توقيت القاهرة)</label>
+                  <input
+                    type="time"
+                    value={newSlotStart}
+                    onChange={(e) => handleSlotStartTimeChange(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none"
+                  />
+                </div>
 
-                      {/* Slot Actions with explicit distinction */}
-                      <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
-                        {isBooked ? (
-                          <span
-                            className="text-[11px] text-purple-800 font-bold px-2 py-1 rounded bg-purple-50 inline-flex items-center gap-1"
-                            title="المواعيد المؤكدة محمية من التعديل أو الحذف للحفاظ على سجلات الطلاب"
-                          >
-                            <Lock className="w-3 h-3" />
-                            محمي (حجز مؤكد)
-                          </span>
-                        ) : isAvailable ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleConfirmBooking(s.id)}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors cursor-pointer border border-purple-200"
-                              title="تسجيل وتأكيد حجز رسمي لطالب على هذا الموعد"
-                            >
-                              تأكيد حجز لطالب
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleToggleSlotAvailability(s.id, true)}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
-                              title="إغلاق الموعد مؤقتاً بدون تسجيل حجز"
-                            >
-                              إغلاق إداري
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSlot(s.id, false)}
-                              className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                              title="حذف الموعد نهائياً"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleSlotAvailability(s.id, false)}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer border border-emerald-200"
-                              title="إعادة فتح الموعد وجعله متاحاً للحجز"
-                            >
-                              إعادة فتح الموعد
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSlot(s.id, false)}
-                              className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                              title="حذف الموعد نهائياً"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#1F2A44]">وقت النهاية (20 دقيقة تلقائياً)</label>
+                  <input
+                    type="time"
+                    value={newSlotEnd}
+                    onChange={(e) => setNewSlotEnd(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs focus:border-[#0D4E8B] outline-none bg-slate-50"
+                  />
+                </div>
               </div>
-            )}
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                <input
+                  type="text"
+                  value={newSlotNotes}
+                  onChange={(e) => setNewSlotNotes(e.target.value)}
+                  placeholder="ملاحظات الموعد للإدارة (اختياري)..."
+                  className="flex-1 px-3 py-1.5 rounded-xl border border-[#CBD5E1] text-xs"
+                />
+
+                <button
+                  type="button"
+                  disabled={isAddingSlot}
+                  onClick={handleAddSlot}
+                  className="px-4 py-1.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {isAddingSlot ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5" />
+                  )}
+                  <span>حفظ الموعد التجريبي</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Trial Slots List */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#1F2A44] block">
+                  المواعيد التجريبية المسجلة ({slots.length}):
+                </span>
+                <div className="flex items-center gap-3 text-[11px] text-[#64748B]">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" /> متاح للحجز
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-purple-600" /> حجز مؤكد لطالب
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-slate-400" /> مغلق إدارياً
+                  </span>
+                </div>
+              </div>
+
+              {slots.length === 0 ? (
+                <p className="text-xs text-[#94A3B8] italic p-4 text-center border border-dashed border-[#CBD5E1] rounded-xl">
+                  لا توجد مواعيد تجريبية مسجلة لهذا المعلم حتى الآن.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100 border border-[#E2E8F0] rounded-xl overflow-hidden">
+                  {slots.map((s) => {
+                    const isBooked = Boolean(s.isBooked);
+                    const isAvailable = Boolean(s.isAvailable);
+
+                    return (
+                      <div
+                        key={s.id}
+                        className="p-3 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 text-xs"
+                      >
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <Calendar className="w-4 h-4 text-[#0D4E8B] shrink-0" />
+                          <span className="font-bold text-[#1F2A44]">{s.slotDate}</span>
+                          <span className="text-slate-400">·</span>
+                          <span className="text-[#0D4E8B] font-bold">
+                            {s.startTime.substring(0, 5)} - {s.endTime.substring(0, 5)}
+                          </span>
+                          <span className="text-[11px] text-[#94A3B8]">({s.timezone})</span>
+
+                          {isBooked ? (
+                            <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-bold inline-flex items-center gap-1">
+                              <Lock className="w-3 h-3 text-purple-600" />
+                              حجز مؤكد لطالب
+                            </span>
+                          ) : isAvailable ? (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
+                              متاح للحجز
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200 text-[11px] font-bold">
+                              مغلق إدارياً
+                            </span>
+                          )}
+
+                          {s.notes && (
+                            <span className="text-[11px] text-slate-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                              {s.notes}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                          {isBooked ? (
+                            <span
+                              className="text-[11px] text-purple-800 font-bold px-2 py-1 rounded bg-purple-50 inline-flex items-center gap-1"
+                              title="المواعيد المؤكدة محمية من التعديل أو الحذف للحفاظ على سجلات الطلاب"
+                            >
+                              <Lock className="w-3 h-3" />
+                              محمي (حجز مؤكد)
+                            </span>
+                          ) : isAvailable ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmBooking(s.id)}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors cursor-pointer border border-purple-200"
+                                title="تسجيل وتأكيد حجز رسمي لطالب على هذا الموعد"
+                              >
+                                تأكيد حجز لطالب
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleToggleSlotAvailability(s.id, true)}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                                title="إغلاق الموعد مؤقتاً بدون تسجيل حجز"
+                              >
+                                إغلاق إداري
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSlot(s.id, false)}
+                                className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                title="حذف الموعد نهائياً"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleSlotAvailability(s.id, false)}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer border border-emerald-200"
+                                title="إعادة فتح الموعد وجعله متاحاً للحجز"
+                              >
+                                إعادة فتح الموعد
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSlot(s.id, false)}
+                                className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                title="حذف الموعد نهائياً"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* PART B: Paid Private 1:1 Slots */}
+          <div className="space-y-6 pt-6 border-t border-slate-200">
+            <div>
+              <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
+                ٢. مواعيد الحصص الخاصة المدفوعة (1:1)
+              </h3>
+              <p className="text-xs text-[#64748B]">
+                يشترط لاكتمال جاهزية النشر وجود موعد مستقبلي واحد على الأقل لحصة خاصة مدفوعة (بسعر صحيح أكبر من صفر، ومدة 30–120 دقيقة).
+              </p>
+            </div>
+
+            {/* Add Paid Private Slot Form */}
+            <div className="p-4 rounded-xl bg-emerald-50/40 border border-emerald-200 space-y-3">
+              <span className="text-xs font-bold text-emerald-800 block">
+                + إضافة موعد حصة خاصة مدفوعة (1:1):
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#1F2A44]">تاريخ الحصة</label>
+                  <input
+                    type="date"
+                    value={newPrivateDate}
+                    min={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setNewPrivateDate(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] bg-white text-xs focus:border-[#0D4E8B] outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#1F2A44]">وقت البداية (توقيت القاهرة)</label>
+                  <input
+                    type="time"
+                    value={newPrivateStart}
+                    onChange={(e) => setNewPrivateStart(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] bg-white text-xs focus:border-[#0D4E8B] outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#1F2A44]">مدة الحصة (30 - 120 د)</label>
+                  <input
+                    type="number"
+                    min="30"
+                    max="120"
+                    step="1"
+                    value={newPrivateDuration}
+                    onChange={(e) => setNewPrivateDuration(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] bg-white text-xs focus:border-[#0D4E8B] outline-none tabular-nums"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#1F2A44]">سعر الحصة المدفوعة ({newPrivateCurrency})</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="1"
+                      max="100000"
+                      step="1"
+                      value={newPrivatePrice}
+                      onChange={(e) => setNewPrivatePrice(Number(e.target.value))}
+                      className="w-full px-3 py-1.5 rounded-xl border border-[#CBD5E1] bg-white text-xs focus:border-[#0D4E8B] outline-none tabular-nums"
+                    />
+                    <select
+                      value={newPrivateCurrency}
+                      onChange={(e) => setNewPrivateCurrency(e.target.value)}
+                      className="px-2 py-1.5 rounded-xl border border-[#CBD5E1] bg-white text-xs"
+                    >
+                      <option value="ج.م">ج.م</option>
+                      <option value="ر.س">ر.س</option>
+                      <option value="د.إ">د.إ</option>
+                      <option value="$">$</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                <input
+                  type="text"
+                  value={newPrivateNotes}
+                  onChange={(e) => setNewPrivateNotes(e.target.value)}
+                  placeholder="ملاحظات الحصة الخاصة (اختياري)..."
+                  className="flex-1 px-3 py-1.5 rounded-xl border border-[#CBD5E1] bg-white text-xs"
+                />
+
+                <button
+                  type="button"
+                  disabled={isAddingPrivateSlot}
+                  onClick={handleAddPrivateSlot}
+                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {isAddingPrivateSlot ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5" />
+                  )}
+                  <span>حفظ الموعد الخاص المدفوع</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Paid Private Slots List */}
+            <div className="space-y-3">
+              <span className="text-xs font-bold text-[#1F2A44] block">
+                مواعيد الحصص الخاصة المسجلة ({privateSlots.length}):
+              </span>
+
+              {privateSlots.length === 0 ? (
+                <p className="text-xs text-[#94A3B8] italic p-4 text-center border border-dashed border-[#CBD5E1] rounded-xl">
+                  لا توجد مواعيد حصص خاصة مسجلة لهذا المعلم حتى الآن.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100 border border-[#E2E8F0] rounded-xl overflow-hidden">
+                  {privateSlots.map((ps) => {
+                    const isBooked = Boolean(ps.isBooked);
+                    const isSuspended = Boolean(ps.adminSuspended);
+                    const isAvailable = Boolean(ps.isAvailable) && !isBooked && !isSuspended;
+                    const isPaid = Number(ps.priceAmount) > 0;
+
+                    return (
+                      <div
+                        key={ps.id}
+                        className="p-3 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 text-xs"
+                      >
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <Clock className="w-4 h-4 text-emerald-700 shrink-0" />
+                          <span className="font-bold text-[#1F2A44]">{ps.slotDate}</span>
+                          <span className="text-slate-400">·</span>
+                          <span className="text-emerald-800 font-bold">
+                            {ps.startTime.substring(0, 5)} - {ps.endTime.substring(0, 5)} ({ps.durationMinutes} د)
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-[#1F2A44] font-bold tabular-nums">
+                            {ps.priceAmount} {ps.currency}
+                          </span>
+                          {!isPaid && (
+                            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                              مجاني (لا يحسب كموعد مدفوع)
+                            </span>
+                          )}
+                          {isBooked ? (
+                            <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-bold">
+                              محجوز لطالب
+                            </span>
+                          ) : isSuspended ? (
+                            <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-bold">
+                              موقوف إدارياً
+                            </span>
+                          ) : isAvailable ? (
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
+                              متاح للحجز
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[11px] font-bold">
+                              غير متاح
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
