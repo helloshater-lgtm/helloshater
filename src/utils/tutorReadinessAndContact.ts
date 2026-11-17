@@ -1191,6 +1191,13 @@ export function buildTutorProfileCompletionWhatsAppDraft(params: {
   portalUrl?: string;
   customAdminNote?: string;
 }): string {
+  if (params.evaluation.evaluationError) {
+    throw new Error(
+      params.evaluation.evaluationErrorMessage ||
+        'تعذر تجهيز مسودة طلب استكمال الملف لأن تقييم الجاهزية من الخادم لم يكتمل.'
+    );
+  }
+
   const honorificPrefix = params.honorific ? `${params.honorific} ` : 'أ. ';
   const cleanName = String(params.tutorName || 'معلمنا العزيز').trim();
   const portalLink =
@@ -1253,3 +1260,210 @@ export function buildTutorProfileCompletionWhatsAppDraft(params: {
 
   return lines.join('\n');
 }
+
+// ============================================================================
+// 4. Batched Readiness Slot Rows RPC Contract Parser & Helper (v1)
+// ============================================================================
+
+export const READINESS_SLOT_ROWS_RPC_BATCH_SIZE = 500;
+
+export interface ParsedAdminReadinessSlotRows {
+  version: 1;
+  evaluatedAt: string;
+  evaluatedAtMs: number;
+  trialSlots: TutorAvailableSlot[];
+  privateSlots: TutorPrivateSlot[];
+}
+
+export interface FetchAdminReadinessSlotRowsResult {
+  success: boolean;
+  errorMessage: string | null;
+  evaluatedAt: string | null;
+  evaluatedAtMs: number;
+  trialSlots: TutorAvailableSlot[];
+  privateSlots: TutorPrivateSlot[];
+}
+
+export type AdminReadinessSlotRowsRpcInvoker = (
+  tutorIdsBatch: string[]
+) => Promise<{
+  data: unknown;
+  error: { message?: string; code?: string } | null;
+}>;
+
+/**
+ * Strictly validates and maps the JSONB response of `public.admin_get_readiness_slot_rows_v1`.
+ * Never fabricates missing arrays, timestamps, or sensitive/internal fields (like notes).
+ */
+export function parseAdminReadinessSlotRowsResponse(
+  raw: unknown
+): ParsedAdminReadinessSlotRows {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('استجابة دالة تقييم المواعيد غير صالحة (ليست كائنًا).');
+  }
+
+  const payload = raw as Record<string, unknown>;
+  if (payload.version !== 1) {
+    throw new Error(
+      `إصدار عقد دالة تقييم المواعيد غير مدعوم (${String(payload.version ?? 'غير محدد')}).`
+    );
+  }
+
+  if (typeof payload.evaluated_at !== 'string' || !payload.evaluated_at.trim()) {
+    throw new Error('استجابة دالة تقييم المواعيد تفتقد التوقيت المرجعي للخادم (evaluated_at).');
+  }
+
+  const evaluatedAtMs = Date.parse(payload.evaluated_at);
+  if (!Number.isFinite(evaluatedAtMs)) {
+    throw new Error('توقيت الخادم المرجعي في استجابة المواعيد غير صالح.');
+  }
+
+  if (!Array.isArray(payload.trial_slots) || !Array.isArray(payload.private_slots)) {
+    throw new Error('استجابة دالة تقييم المواعيد تفتقد مصفوفات trial_slots أو private_slots.');
+  }
+
+  const trialSlots: TutorAvailableSlot[] = payload.trial_slots.map((row: any) => ({
+    id: String(row?.id ?? ''),
+    tutorId: String(row?.tutor_id ?? ''),
+    slotDate: String(row?.slot_date ?? ''),
+    startTime: String(row?.start_time ?? ''),
+    endTime: String(row?.end_time ?? ''),
+    timezone: String(row?.timezone || 'Africa/Cairo'),
+    isAvailable: Boolean(row?.is_available),
+    isBooked: Boolean(row?.is_booked),
+    adminSuspended: Boolean(row?.admin_suspended),
+  }));
+
+  const privateSlots: TutorPrivateSlot[] = payload.private_slots.map((row: any) => ({
+    id: String(row?.id ?? ''),
+    tutorId: String(row?.tutor_id ?? ''),
+    specializationLabel: String(row?.specialization_label || ''),
+    offeringCourseOptionId: row?.offering_course_option_id ? String(row.offering_course_option_id) : null,
+    quranAgeGroupId: row?.quran_age_group_id ? String(row.quran_age_group_id) : null,
+    quranLevelId: row?.quran_level_id ? String(row.quran_level_id) : null,
+    allowedSpecializations: Array.isArray(row?.allowed_specializations)
+      ? row.allowed_specializations
+      : undefined,
+    slotDate: String(row?.slot_date ?? ''),
+    startTime: String(row?.start_time ?? ''),
+    endTime: String(row?.end_time ?? ''),
+    timezone: String(row?.timezone || 'Africa/Cairo'),
+    durationMinutes: Number(row?.duration_minutes ?? 0),
+    priceAmount:
+      row?.price_amount !== null && row?.price_amount !== undefined
+        ? Number(row.price_amount)
+        : 0,
+    currency: String(row?.currency || 'ج.م'),
+    isAvailable: Boolean(row?.is_available),
+    isBooked: Boolean(row?.is_booked),
+    adminSuspended: Boolean(row?.admin_suspended),
+  }));
+
+  return {
+    version: 1,
+    evaluatedAt: payload.evaluated_at,
+    evaluatedAtMs,
+    trialSlots,
+    privateSlots,
+  };
+}
+
+/**
+ * Fetches readiness slot rows via `admin_get_readiness_slot_rows_v1` in deduplicated
+ * batches of at most 500 tutor IDs. On any RPC error or malformed response, returns
+ * `success: false` so callers fail explicitly (`evaluationError: true`) rather than
+ * falling back to direct table reads or assuming 0 slots.
+ */
+export async function fetchAdminReadinessSlotRows(
+  tutorIds: string[],
+  rpcInvoker: AdminReadinessSlotRowsRpcInvoker
+): Promise<FetchAdminReadinessSlotRowsResult> {
+  const uniqueIds = Array.from(
+    new Set(
+      (tutorIds || [])
+        .map((id) => String(id ?? '').trim())
+        .filter((id) => id.length > 0)
+    )
+  );
+
+  if (uniqueIds.length === 0) {
+    const nowMs = Date.now();
+    return {
+      success: true,
+      errorMessage: null,
+      evaluatedAt: new Date(nowMs).toISOString(),
+      evaluatedAtMs: nowMs,
+      trialSlots: [],
+      privateSlots: [],
+    };
+  }
+
+  const batches: string[][] = [];
+  for (let i = 0; i < uniqueIds.length; i += READINESS_SLOT_ROWS_RPC_BATCH_SIZE) {
+    batches.push(uniqueIds.slice(i, i + READINESS_SLOT_ROWS_RPC_BATCH_SIZE));
+  }
+
+  try {
+    const results = await Promise.all(
+      batches.map(async (batch) => {
+        const { data, error } = await rpcInvoker(batch);
+        if (error) {
+          const codePart = error.code ? ` (${error.code})` : '';
+          throw new Error(
+            `فشل استدعاء دالة مواعيد الجاهزية admin_get_readiness_slot_rows_v1${codePart}: ${error.message || 'خطأ غير معروف'}`
+          );
+        }
+        return parseAdminReadinessSlotRowsResponse(data);
+      })
+    );
+
+    const allTrials: TutorAvailableSlot[] = [];
+    const allPrivates: TutorPrivateSlot[] = [];
+    let resolvedEvaluatedAt = results[0].evaluatedAt;
+    let resolvedEvaluatedAtMs = results[0].evaluatedAtMs;
+
+    for (const part of results) {
+      allTrials.push(...part.trialSlots);
+      allPrivates.push(...part.privateSlots);
+      if (part.evaluatedAtMs < resolvedEvaluatedAtMs) {
+        resolvedEvaluatedAtMs = part.evaluatedAtMs;
+        resolvedEvaluatedAt = part.evaluatedAt;
+      }
+    }
+
+    const compareSlot = (
+      a: { slotDate: string; startTime: string; id: string },
+      b: { slotDate: string; startTime: string; id: string }
+    ) => {
+      const cmpDate = String(a.slotDate).localeCompare(String(b.slotDate));
+      if (cmpDate !== 0) return cmpDate;
+      const cmpTime = String(a.startTime).localeCompare(String(b.startTime));
+      if (cmpTime !== 0) return cmpTime;
+      return String(a.id).localeCompare(String(b.id));
+    };
+
+    allTrials.sort(compareSlot);
+    allPrivates.sort(compareSlot);
+
+    return {
+      success: true,
+      errorMessage: null,
+      evaluatedAt: resolvedEvaluatedAt,
+      evaluatedAtMs: resolvedEvaluatedAtMs,
+      trialSlots: allTrials,
+      privateSlots: allPrivates,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      errorMessage:
+        err?.message ||
+        'تعذر جلب مواعيد الجاهزية من دالة الخادم admin_get_readiness_slot_rows_v1.',
+      evaluatedAt: null,
+      evaluatedAtMs: Date.now(),
+      trialSlots: [],
+      privateSlots: [],
+    };
+  }
+}
+

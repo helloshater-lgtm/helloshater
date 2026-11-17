@@ -47,32 +47,15 @@ import {
   resolveTutorAdminContact,
   evaluateTutorProfileReadiness,
   assertTutorReadyForInitialPublish,
+  fetchAdminReadinessSlotRows,
 } from '../utils/tutorReadinessAndContact';
 
-const QUALITY_REVIEWS_STORAGE_KEY = 'shatir_admin_quality_reviews_v1';
 const READINESS_POLICY_STORAGE_KEY = 'shatir_admin_readiness_policy_v1';
 
-function loadLocalQualityReviewsMap(): Record<string, TutorInitialQualityReviewRecord> {
-  if (typeof window === 'undefined' || !window.localStorage) return {};
-  try {
-    const raw = window.localStorage.getItem(QUALITY_REVIEWS_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
+let activeSupabaseClient: any = supabase;
 
-function saveLocalQualityReviewRecord(record: TutorInitialQualityReviewRecord): void {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    const map = loadLocalQualityReviewsMap();
-    map[record.tutorId] = record;
-    window.localStorage.setItem(QUALITY_REVIEWS_STORAGE_KEY, JSON.stringify(map));
-  } catch {
-    // ignore storage errors
-  }
+export function __setAdminServiceSupabaseForTests(client: any): void {
+  activeSupabaseClient = client || supabase;
 }
 
 export interface AdminTutorListItem {
@@ -97,6 +80,10 @@ export interface AdminTutorListItem {
   validPaidPrivateSlotsCount: number;
   validTrialSlots: TutorAvailableSlot[];
   validPaidPrivateSlots: TutorPrivateSlot[];
+  rawTrialSlots?: TutorAvailableSlot[];
+  rawPrivateSlots?: TutorPrivateSlot[];
+  evaluatedAtMs?: number;
+  qualityReviewSchemaError?: string | null;
   activeSpecializations: ApprovedSpecializationItem[];
   tracks: ('school' | 'quran')[];
   subjectIds: string[];
@@ -175,6 +162,7 @@ export const AdminService = {
 
   /**
    * 0.1 Save Initial Human Quality Review for a Tutor (Avatar clarity & Price suitability)
+   * Always requires verified server persistence (never falls back to localStorage or fakes success).
    */
   async saveTutorInitialQualityReview(params: {
     tutorId: string;
@@ -187,24 +175,28 @@ export const AdminService = {
     reviewNotes?: string;
   }): Promise<TutorInitialQualityReviewRecord> {
     const nowIso = new Date().toISOString();
+    const rawPrice = Number(params.approvedPriceAmount);
+    const exactApprovedPrice =
+      Number.isInteger(rawPrice) && rawPrice >= 1 ? rawPrice : null;
+    const rawDuration = Number(params.approvedDurationMinutes);
+    const exactApprovedDuration =
+      Number.isInteger(rawDuration) && rawDuration >= 1 ? rawDuration : null;
+
     const record: TutorInitialQualityReviewRecord = {
       tutorId: params.tutorId,
       avatarQualityApproved: Boolean(params.avatarQualityApproved),
       approvedAvatarUrl: params.approvedAvatarUrl.trim() || null,
       priceQualityApproved: Boolean(params.priceQualityApproved),
-      approvedPriceAmount: Number(params.approvedPriceAmount) || null,
+      approvedPriceAmount: exactApprovedPrice,
       approvedCurrency: params.approvedCurrency.trim() || null,
-      approvedDurationMinutes: Number(params.approvedDurationMinutes) || null,
+      approvedDurationMinutes: exactApprovedDuration,
       reviewNotes: params.reviewNotes?.trim() || null,
       reviewedAt: nowIso,
     };
 
-    // Always persist in local storage first for immediate consistency
-    saveLocalQualityReviewRecord(record);
-
-    // Attempt server-side RPC persistence (from migration 019)
-    try {
-      const { error: rpcErr } = await supabase.rpc('admin_save_tutor_quality_review', {
+    const { error: rpcErr } = await activeSupabaseClient.rpc(
+      'admin_save_tutor_quality_review',
+      {
         p_tutor_id: params.tutorId,
         p_avatar_quality_approved: record.avatarQualityApproved,
         p_approved_avatar_url: record.approvedAvatarUrl,
@@ -213,17 +205,32 @@ export const AdminService = {
         p_approved_currency: record.approvedCurrency,
         p_approved_duration_minutes: record.approvedDurationMinutes,
         p_review_notes: record.reviewNotes,
-      });
+      }
+    );
 
-      if (rpcErr) {
-        // Fallback: try direct upsert into tutor_quality_reviews table if RPC is not yet created
-        await supabase.from('tutor_quality_reviews').upsert(
+    if (!rpcErr) {
+      return record;
+    }
+
+    const rpcErrCode = String(rpcErr.code || '');
+    const rpcErrMsg = String(rpcErr.message || '');
+    const isRpcMissing =
+      rpcErrCode === '42883' ||
+      rpcErrCode === 'PGRST202' ||
+      /Could not find the function.*admin_save_tutor_quality_review/i.test(rpcErrMsg);
+
+    if (isRpcMissing) {
+      const { error: upsertErr } = await activeSupabaseClient
+        .from('tutor_quality_reviews')
+        .upsert(
           {
             tutor_id: params.tutorId,
             avatar_quality_approved: record.avatarQualityApproved,
             approved_avatar_url: record.approvedAvatarUrl,
             price_quality_approved: record.priceQualityApproved,
             approved_price_amount: record.approvedPriceAmount,
+            approved_price_min: record.approvedPriceAmount,
+            approved_price_max: record.approvedPriceAmount,
             approved_currency: record.approvedCurrency,
             approved_duration_minutes: record.approvedDurationMinutes,
             review_notes: record.reviewNotes,
@@ -231,18 +238,28 @@ export const AdminService = {
             updated_at: nowIso,
           },
           { onConflict: 'tutor_id' }
-        );
+        )
+        .select('tutor_id')
+        .single();
+
+      if (!upsertErr) {
+        return record;
       }
-    } catch {
-      // Gracefully keep local storage state if migration 019 hasn't been run in SQL editor yet
+
+      throw new Error(
+        `تعذر حفظ مراجعة الجودة الأولية في قاعدة البيانات (${upsertErr.message}). يرجى تطبيق الترحيل 021_admin_quality_review_and_private_slot_rpc.sql في Supabase أولاً.`
+      );
     }
 
-    return record;
+    throw new Error(
+      `تعذر حفظ مراجعة الجودة الأولية في قاعدة البيانات: ${rpcErrMsg || 'خطأ غير معروف'}`
+    );
   },
 
   /**
    * 1. Get all tutors (both published and unpublished) with bulk-fetched offerings,
-   * future trial & paid private slots, limited contact fields, and unified 6/6 readiness evaluation.
+   * future trial & paid private slots via `admin_get_readiness_slot_rows_v1`,
+   * limited contact fields, and unified 6/6 readiness evaluation.
    */
   async getTutorsList(
     searchQuery?: string,
@@ -250,7 +267,7 @@ export const AdminService = {
   ): Promise<AdminTutorListItem[]> {
     const policy = policyOverride || this.getReadinessPolicy();
 
-    let query = supabase
+    let query = activeSupabaseClient
       .from('tutors')
       .select(
         'id, name, honorific, headline, avatar_url, help_child_quote, help_child_summary, hourly_rate_min, hourly_rate_max, session_duration_minutes, trial_duration_minutes, currency, is_published, rating, reviews_count, created_at, updated_at'
@@ -273,7 +290,7 @@ export const AdminService = {
 
     const tutorIds = tutorsData.map((t: any) => String(t.id));
 
-    // Bulk-fetch all required readiness, taxonomy, slots, and limited contact data in parallel (no N+1 queries)
+    // Bulk-fetch all required readiness, taxonomy, batched slot RPC, limited contact, and quality review data in parallel
     const [
       schoolOfferingsRes,
       quranOfferingsRes,
@@ -284,82 +301,71 @@ export const AdminService = {
       curriculaRes,
       quranAgesRes,
       quranLevelsRes,
-      trialSlotsRes,
-      privateSlotsRes,
+      slotRowsRes,
       privateInfoContactRes,
       approvedAppsContactRes,
       qualityReviewsRes,
     ] = await Promise.all([
-      supabase
+      activeSupabaseClient
         .from('tutor_school_offerings')
         .select('tutor_id, course_option_id')
         .in('tutor_id', tutorIds),
-      supabase
+      activeSupabaseClient
         .from('tutor_quran_offerings')
         .select('tutor_id, age_group_id, level_id')
         .in('tutor_id', tutorIds),
-      supabase
+      activeSupabaseClient
         .from('school_course_options')
         .select('id, grade_id, subject_id, curriculum_id, is_active')
         .eq('is_active', true),
-      supabase
+      activeSupabaseClient
         .from('educational_grades')
         .select('id, stage_id, name, is_active')
         .eq('is_active', true),
-      supabase
+      activeSupabaseClient
         .from('educational_stages')
         .select('id, name, is_active')
         .eq('is_active', true),
-      supabase
+      activeSupabaseClient
         .from('subjects')
         .select('id, name, is_active')
         .eq('is_active', true),
-      supabase
+      activeSupabaseClient
         .from('curriculum_types')
         .select('id, name, is_active')
         .eq('is_active', true),
-      supabase
+      activeSupabaseClient
         .from('quran_age_groups')
         .select('id, name, is_active')
         .eq('is_active', true),
-      supabase
+      activeSupabaseClient
         .from('quran_levels')
         .select('id, name, is_active')
         .eq('is_active', true),
-      // Trial slots: fetch future/available slots via RPC or table
-      supabase
-        .from('tutor_available_slots')
-        .select('id, tutor_id, slot_date, start_time, end_time, timezone, is_available, is_booked, admin_suspended')
-        .in('tutor_id', tutorIds)
-        .eq('is_available', true),
-      // Paid Private slots
-      supabase
-        .from('tutor_private_slots')
-        .select(
-          'id, tutor_id, specialization_label, offering_course_option_id, quran_age_group_id, quran_level_id, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency, is_available, is_booked, admin_suspended'
-        )
-        .in('tutor_id', tutorIds)
-        .eq('is_available', true),
+      fetchAdminReadinessSlotRows(tutorIds, (batch) =>
+        activeSupabaseClient.rpc('admin_get_readiness_slot_rows_v1', {
+          p_tutor_ids: batch,
+        })
+      ),
       // Limited contact fields ONLY (never select national_id_number, payout_details, or internal_notes in list view)
-      supabase
+      activeSupabaseClient
         .from('tutor_private_info')
         .select('tutor_id, country_code, whatsapp_number, phone_number')
         .in('tutor_id', tutorIds),
       // Approved applications explicitly linked via applicant_tutor_id
-      supabase
+      activeSupabaseClient
         .from('tutor_applications')
         .select('applicant_tutor_id, status, country_code, whatsapp_number, phone, updated_at')
         .in('applicant_tutor_id', tutorIds)
         .eq('status', 'approved')
         .order('updated_at', { ascending: false }),
-      // Optional server-side quality review table (from migration 019)
-      supabase
+      // Optional server-side quality review table (from migration 021)
+      activeSupabaseClient
         .from('tutor_quality_reviews')
         .select('*')
         .in('tutor_id', tutorIds),
     ]);
 
-    // Check if any critical readiness data source failed to load
     const readinessLoadErrors: string[] = [];
     if (schoolOfferingsRes.error) {
       readinessLoadErrors.push(`التخصصات المدرسية (${schoolOfferingsRes.error.message})`);
@@ -378,41 +384,10 @@ export const AdminService = {
     ) {
       readinessLoadErrors.push('الجداول المرجعية للمواد والمراحل');
     }
-
-    // Handle trial slots fallback if `admin_suspended` column was not yet migrated
-    let resolvedTrialSlotsRows: any[] = [];
-    if (trialSlotsRes.error) {
-      const fallbackTrialRes = await supabase
-        .from('tutor_available_slots')
-        .select('id, tutor_id, slot_date, start_time, end_time, timezone, is_available, is_booked')
-        .in('tutor_id', tutorIds)
-        .eq('is_available', true);
-      if (fallbackTrialRes.error) {
-        readinessLoadErrors.push(`المواعيد التجريبية (${fallbackTrialRes.error.message})`);
-      } else {
-        resolvedTrialSlotsRows = fallbackTrialRes.data || [];
-      }
-    } else {
-      resolvedTrialSlotsRows = trialSlotsRes.data || [];
-    }
-
-    // Handle private slots fallback if `admin_suspended` column was not yet migrated
-    let resolvedPrivateSlotsRows: any[] = [];
-    if (privateSlotsRes.error) {
-      const fallbackPrivateRes = await supabase
-        .from('tutor_private_slots')
-        .select(
-          'id, tutor_id, specialization_label, offering_course_option_id, quran_age_group_id, quran_level_id, slot_date, start_time, end_time, timezone, duration_minutes, price_amount, currency, is_available, is_booked'
-        )
-        .in('tutor_id', tutorIds)
-        .eq('is_available', true);
-      if (fallbackPrivateRes.error) {
-        readinessLoadErrors.push(`المواعيد الخاصة المدفوعة (${fallbackPrivateRes.error.message})`);
-      } else {
-        resolvedPrivateSlotsRows = fallbackPrivateRes.data || [];
-      }
-    } else {
-      resolvedPrivateSlotsRows = privateSlotsRes.data || [];
+    if (!slotRowsRes.success) {
+      readinessLoadErrors.push(
+        slotRowsRes.errorMessage || 'تعذر جلب مواعيد الجاهزية من الخادم'
+      );
     }
 
     const hasBatchEvaluationError = readinessLoadErrors.length > 0;
@@ -525,49 +500,22 @@ export const AdminService = {
       specsByTutor.set(tutorId, list);
     });
 
-    // Group trial slots per tutor
+    // Group raw trial slots per tutor from admin_get_readiness_slot_rows_v1
     const trialSlotsByTutor = new Map<string, TutorAvailableSlot[]>();
-    resolvedTrialSlotsRows.forEach((s: any) => {
-      const tutorId = String(s.tutor_id);
-      const list = trialSlotsByTutor.get(tutorId) || [];
-      list.push({
-        id: String(s.id),
-        tutorId,
-        slotDate: String(s.slot_date),
-        startTime: String(s.start_time),
-        endTime: String(s.end_time),
-        timezone: String(s.timezone || 'Africa/Cairo'),
-        isAvailable: Boolean(s.is_available),
-        isBooked: Boolean(s.is_booked),
-        adminSuspended: Boolean(s.admin_suspended),
-      });
-      trialSlotsByTutor.set(tutorId, list);
+    slotRowsRes.trialSlots.forEach((slot) => {
+      const list = trialSlotsByTutor.get(slot.tutorId) || [];
+      list.push(slot);
+      trialSlotsByTutor.set(slot.tutorId, list);
     });
 
-    // Group private slots per tutor
+    // Group raw private slots per tutor from admin_get_readiness_slot_rows_v1
     const privateSlotsByTutor = new Map<string, TutorPrivateSlot[]>();
-    resolvedPrivateSlotsRows.forEach((s: any) => {
-      const tutorId = String(s.tutor_id);
-      const list = privateSlotsByTutor.get(tutorId) || [];
-      list.push({
-        id: String(s.id),
-        tutorId,
-        specializationLabel: String(s.specialization_label || ''),
-        offeringCourseOptionId: s.offering_course_option_id || null,
-        quranAgeGroupId: s.quran_age_group_id || null,
-        quranLevelId: s.quran_level_id || null,
-        slotDate: String(s.slot_date),
-        startTime: String(s.start_time),
-        endTime: String(s.end_time),
-        timezone: String(s.timezone || 'Africa/Cairo'),
-        durationMinutes: Number(s.duration_minutes || 50),
-        priceAmount: Number(s.price_amount ?? 0),
-        currency: String(s.currency || 'ج.م'),
-        isAvailable: Boolean(s.is_available),
-        isBooked: Boolean(s.is_booked),
-        adminSuspended: Boolean(s.admin_suspended),
-      });
-      privateSlotsByTutor.set(tutorId, list);
+    slotRowsRes.privateSlots.forEach((slot) => {
+      const tid = String(slot.tutorId || '');
+      if (!tid) return;
+      const list = privateSlotsByTutor.get(tid) || [];
+      list.push(slot);
+      privateSlotsByTutor.set(tid, list);
     });
 
     // Contact maps
@@ -605,14 +553,12 @@ export const AdminService = {
       });
     });
 
-    // Quality review map (merge DB table + local storage)
-    const localQualityMap = loadLocalQualityReviewsMap();
+    // Server-side quality review map (never uses localStorage fake approvals)
     const qualityReviewByTutor = new Map<string, TutorInitialQualityReviewRecord>();
-    Object.values(localQualityMap).forEach((rec) => {
-      if (rec && rec.tutorId) {
-        qualityReviewByTutor.set(rec.tutorId, rec);
-      }
-    });
+    const qualityReviewSchemaError = qualityReviewsRes.error
+      ? qualityReviewsRes.error.message || 'تعذر قراءة جدول مراجعة الجودة من الخادم'
+      : null;
+
     if (!qualityReviewsRes.error && Array.isArray(qualityReviewsRes.data)) {
       qualityReviewsRes.data.forEach((row: any) => {
         const tId = String(row.tutor_id);
@@ -637,7 +583,7 @@ export const AdminService = {
       });
     }
 
-    const referenceNowMs = Date.now();
+    const referenceNowMs = slotRowsRes.success ? slotRowsRes.evaluatedAtMs : Date.now();
 
     return tutorsData.map((row: any) => {
       const tutorId = String(row.id);
@@ -742,6 +688,10 @@ export const AdminService = {
         validPaidPrivateSlotsCount: readiness.validPaidPrivateSlotsCount,
         validTrialSlots: readiness.validTrialSlots,
         validPaidPrivateSlots: readiness.validPaidPrivateSlots,
+        rawTrialSlots: tutorTrials,
+        rawPrivateSlots: tutorPrivates,
+        evaluatedAtMs: slotRowsRes.success ? slotRowsRes.evaluatedAtMs : undefined,
+        qualityReviewSchemaError,
         activeSpecializations: activeSpecs,
         tracks,
         subjectIds,
@@ -761,6 +711,7 @@ export const AdminService = {
 
   /**
    * 1.1 Evaluate a single tutor's readiness on-demand (used before publishing or inside AdminTutorEditorView)
+   * Uses `admin_get_readiness_slot_rows_v1` directly for the single tutor ID and server `evaluated_at`.
    */
   async evaluateTutorReadinessById(
     tutorId: string,
@@ -779,82 +730,240 @@ export const AdminService = {
       activeSpecializationsCount: number;
     }>
   ): Promise<TutorProfileReadinessEvaluation> {
-    const items = await this.getTutorsList(undefined);
-    const existing = items.find((i) => i.id === tutorId);
+    const policy = this.getReadinessPolicy();
 
-    if (!existing && !overrideFields) {
+    const [
+      tutorRes,
+      slotRowsRes,
+      schoolOfferingsRes,
+      quranOfferingsRes,
+      courseOptionsRes,
+      gradesRes,
+      stagesRes,
+      subjectsRes,
+      curriculaRes,
+      quranAgesRes,
+      quranLevelsRes,
+      qualityReviewRes,
+    ] = await Promise.all([
+      activeSupabaseClient
+        .from('tutors')
+        .select(
+          'id, name, headline, avatar_url, help_child_quote, help_child_summary, hourly_rate_min, hourly_rate_max, session_duration_minutes, trial_duration_minutes, currency, is_published, created_at, updated_at'
+        )
+        .eq('id', tutorId)
+        .maybeSingle(),
+      fetchAdminReadinessSlotRows([tutorId], (batch) =>
+        activeSupabaseClient.rpc('admin_get_readiness_slot_rows_v1', {
+          p_tutor_ids: batch,
+        })
+      ),
+      activeSupabaseClient
+        .from('tutor_school_offerings')
+        .select('course_option_id')
+        .eq('tutor_id', tutorId),
+      activeSupabaseClient
+        .from('tutor_quran_offerings')
+        .select('age_group_id, level_id')
+        .eq('tutor_id', tutorId),
+      activeSupabaseClient
+        .from('school_course_options')
+        .select('id, grade_id, subject_id, curriculum_id, is_active')
+        .eq('is_active', true),
+      activeSupabaseClient
+        .from('educational_grades')
+        .select('id, stage_id, is_active')
+        .eq('is_active', true),
+      activeSupabaseClient
+        .from('educational_stages')
+        .select('id, is_active')
+        .eq('is_active', true),
+      activeSupabaseClient
+        .from('subjects')
+        .select('id, is_active')
+        .eq('is_active', true),
+      activeSupabaseClient
+        .from('curriculum_types')
+        .select('id, is_active')
+        .eq('is_active', true),
+      activeSupabaseClient
+        .from('quran_age_groups')
+        .select('id, is_active')
+        .eq('is_active', true),
+      activeSupabaseClient
+        .from('quran_levels')
+        .select('id, is_active')
+        .eq('is_active', true),
+      activeSupabaseClient
+        .from('tutor_quality_reviews')
+        .select('*')
+        .eq('tutor_id', tutorId)
+        .maybeSingle(),
+    ]);
+
+    if (tutorRes.error) {
+      throw new Error(`تعذر جلب ملف المعلم (${tutorId}) لتقييم جاهزية النشر: ${tutorRes.error.message}`);
+    }
+
+    const tutorRow = tutorRes.data;
+    if (!tutorRow && !overrideFields) {
       throw new Error(`تعذر العثور على ملف المعلم (${tutorId}) لتقييم جاهزية النشر.`);
     }
 
-    const policy = this.getReadinessPolicy();
-    const localMap = loadLocalQualityReviewsMap();
-    const qualityReview = existing?.qualityReview || localMap[tutorId] || null;
+    const readinessErrors: string[] = [];
+    if (!slotRowsRes.success) {
+      readinessErrors.push(slotRowsRes.errorMessage || 'تعذر جلب مواعيد الجاهزية من الخادم');
+    }
+    if (overrideFields?.activeSpecializationsCount === undefined) {
+      if (schoolOfferingsRes.error) {
+        readinessErrors.push(`التخصصات المدرسية (${schoolOfferingsRes.error.message})`);
+      }
+      if (quranOfferingsRes.error) {
+        readinessErrors.push(`تخصصات القرآن (${quranOfferingsRes.error.message})`);
+      }
+      if (
+        courseOptionsRes.error ||
+        gradesRes.error ||
+        stagesRes.error ||
+        subjectsRes.error ||
+        curriculaRes.error ||
+        quranAgesRes.error ||
+        quranLevelsRes.error
+      ) {
+        readinessErrors.push('الجداول المرجعية للمواد والمراحل');
+      }
+    }
+
+    let activeSpecsCount = 0;
+    if (overrideFields?.activeSpecializationsCount !== undefined) {
+      activeSpecsCount = overrideFields.activeSpecializationsCount;
+    } else if (readinessErrors.length === 0) {
+      const stageIds = new Set((stagesRes.data || []).filter((s: any) => s.is_active !== false).map((s: any) => String(s.id)));
+      const gradeIds = new Set(
+        (gradesRes.data || [])
+          .filter((g: any) => g.is_active !== false && stageIds.has(String(g.stage_id)))
+          .map((g: any) => String(g.id))
+      );
+      const subjectIds = new Set((subjectsRes.data || []).filter((s: any) => s.is_active !== false).map((s: any) => String(s.id)));
+      const curriculumIds = new Set((curriculaRes.data || []).filter((c: any) => c.is_active !== false).map((c: any) => String(c.id)));
+      const activeCourseOptionIds = new Set(
+        (courseOptionsRes.data || [])
+          .filter(
+            (co: any) =>
+              co.is_active !== false &&
+              gradeIds.has(String(co.grade_id)) &&
+              subjectIds.has(String(co.subject_id)) &&
+              curriculumIds.has(String(co.curriculum_id))
+          )
+          .map((co: any) => String(co.id))
+      );
+      const activeQuranAgeIds = new Set((quranAgesRes.data || []).filter((a: any) => a.is_active !== false).map((a: any) => String(a.id)));
+      const activeQuranLevelIds = new Set((quranLevelsRes.data || []).filter((l: any) => l.is_active !== false).map((l: any) => String(l.id)));
+
+      const schoolCount = (schoolOfferingsRes.data || []).filter((row: any) =>
+        activeCourseOptionIds.has(String(row.course_option_id))
+      ).length;
+      const quranCount = (quranOfferingsRes.data || []).filter(
+        (row: any) =>
+          activeQuranAgeIds.has(String(row.age_group_id)) &&
+          activeQuranLevelIds.has(String(row.level_id))
+      ).length;
+      activeSpecsCount = schoolCount + quranCount;
+    }
+
+    let qualityReview: TutorInitialQualityReviewRecord | null = null;
+    if (!qualityReviewRes.error && qualityReviewRes.data) {
+      const row = qualityReviewRes.data;
+      qualityReview = {
+        tutorId,
+        avatarQualityApproved: Boolean(row.avatar_quality_approved),
+        approvedAvatarUrl: row.approved_avatar_url || null,
+        priceQualityApproved: Boolean(row.price_quality_approved),
+        approvedPriceAmount:
+          row.approved_price_amount !== null && row.approved_price_amount !== undefined
+            ? Number(row.approved_price_amount)
+            : null,
+        approvedCurrency: row.approved_currency || null,
+        approvedDurationMinutes:
+          row.approved_duration_minutes !== null && row.approved_duration_minutes !== undefined
+            ? Number(row.approved_duration_minutes)
+            : null,
+        reviewNotes: row.review_notes || null,
+        reviewedBy: row.reviewed_by || null,
+        reviewedAt: row.reviewed_at || row.updated_at || null,
+      };
+    }
+
+    const effectivePublished = overrideFields?.isPublished ?? Boolean(tutorRow?.is_published);
+    const effectiveAvatar = overrideFields?.avatarUrl ?? tutorRow?.avatar_url ?? '';
+    const effectiveRateMin = overrideFields?.hourlyRateMin ?? tutorRow?.hourly_rate_min ?? 0;
+    const effectiveCurrency = overrideFields?.currency ?? tutorRow?.currency ?? 'ج.م';
+    const effectiveDuration =
+      overrideFields?.sessionDurationMinutes ?? tutorRow?.session_duration_minutes ?? 50;
+
+    if (!qualityReview && effectivePublished && effectiveAvatar && Number(effectiveRateMin) > 0) {
+      qualityReview = {
+        tutorId,
+        avatarQualityApproved: true,
+        approvedAvatarUrl: String(effectiveAvatar).trim(),
+        priceQualityApproved: true,
+        approvedPriceAmount: Number(effectiveRateMin),
+        approvedCurrency: String(effectiveCurrency).trim(),
+        approvedDurationMinutes: Number(effectiveDuration),
+        reviewNotes: 'معتمد عند النشر السابق',
+        reviewedAt: tutorRow?.updated_at || tutorRow?.created_at || null,
+      };
+    }
+
+    const hasEvaluationError = readinessErrors.length > 0;
 
     return evaluateTutorProfileReadiness({
       tutor: {
         id: tutorId,
-        name: overrideFields?.name ?? existing?.name ?? '',
-        headline: overrideFields?.headline ?? existing?.headline ?? '',
-        avatarUrl: overrideFields?.avatarUrl ?? existing?.avatarUrl ?? '',
-        helpChildQuote: overrideFields?.helpChildQuote ?? existing?.helpChildQuote ?? '',
-        helpChildSummary: overrideFields?.helpChildSummary ?? existing?.helpChildSummary ?? '',
-        hourlyRateMin: overrideFields?.hourlyRateMin ?? existing?.hourlyRateMin ?? 0,
-        hourlyRateMax: overrideFields?.hourlyRateMax ?? existing?.hourlyRateMax ?? 0,
-        currency: overrideFields?.currency ?? existing?.currency ?? 'ج.م',
-        sessionDurationMinutes:
-          overrideFields?.sessionDurationMinutes ?? existing?.sessionDurationMinutes ?? 50,
+        name: overrideFields?.name ?? tutorRow?.name ?? '',
+        headline: overrideFields?.headline ?? tutorRow?.headline ?? '',
+        avatarUrl: effectiveAvatar,
+        helpChildQuote: overrideFields?.helpChildQuote ?? tutorRow?.help_child_quote ?? '',
+        helpChildSummary: overrideFields?.helpChildSummary ?? tutorRow?.help_child_summary ?? '',
+        hourlyRateMin: effectiveRateMin,
+        hourlyRateMax: overrideFields?.hourlyRateMax ?? tutorRow?.hourly_rate_max ?? 0,
+        currency: effectiveCurrency,
+        sessionDurationMinutes: effectiveDuration,
         trialDurationMinutes:
-          overrideFields?.trialDurationMinutes ?? existing?.trialDurationMinutes ?? 20,
-        isPublished: overrideFields?.isPublished ?? existing?.isPublished ?? false,
+          overrideFields?.trialDurationMinutes ?? tutorRow?.trial_duration_minutes ?? 20,
+        isPublished: effectivePublished,
       },
-      activeSpecializationsCount:
-        overrideFields?.activeSpecializationsCount ?? existing?.offeringsCount ?? 0,
-      specializations: existing?.activeSpecializations ?? [],
-      trialSlots: existing?.validTrialSlots ?? [],
-      privateSlots: existing?.validPaidPrivateSlots ?? [],
-      evaluationError: existing?.readiness.evaluationError ?? false,
-      evaluationErrorMessage: existing?.readiness.evaluationErrorMessage ?? null,
+      activeSpecializationsCount: activeSpecsCount,
+      trialSlots: slotRowsRes.trialSlots.filter((s) => s.tutorId === tutorId),
+      privateSlots: slotRowsRes.privateSlots.filter((s) => s.tutorId === tutorId),
+      evaluationError: hasEvaluationError,
+      evaluationErrorMessage: hasEvaluationError
+        ? `تعذر تقييم الجاهزية بسبب فشل جلب: ${readinessErrors.join('، ')}`
+        : null,
       qualityReview,
       policy,
+      referenceNowMs: slotRowsRes.success ? slotRowsRes.evaluatedAtMs : Date.now(),
     });
   },
 
   /**
    * 1.2 Get & Add Paid Private Slots for a Tutor by Admin
+   * Reads limited raw private slot fields exclusively via `admin_get_readiness_slot_rows_v1`.
    */
   async getTutorPrivateSlotsForAdmin(tutorId: string): Promise<TutorPrivateSlot[]> {
-    const { data, error } = await supabase
-      .from('tutor_private_slots')
-      .select('*')
-      .eq('tutor_id', tutorId)
-      .order('slot_date', { ascending: true })
-      .order('start_time', { ascending: true });
+    const res = await fetchAdminReadinessSlotRows([tutorId], (batch) =>
+      activeSupabaseClient.rpc('admin_get_readiness_slot_rows_v1', {
+        p_tutor_ids: batch,
+      })
+    );
 
-    if (error) {
-      throw new Error(`تعذر جلب المواعيد الخاصة للمعلم: ${error.message}`);
+    if (!res.success) {
+      throw new Error(
+        res.errorMessage || 'تعذر جلب المواعيد الخاصة للمعلم من الخادم.'
+      );
     }
 
-    return (data || []).map((s: any) => ({
-      id: String(s.id),
-      tutorId: String(s.tutor_id),
-      specializationLabel: String(s.specialization_label || ''),
-      offeringCourseOptionId: s.offering_course_option_id || null,
-      quranAgeGroupId: s.quran_age_group_id || null,
-      quranLevelId: s.quran_level_id || null,
-      slotDate: String(s.slot_date),
-      startTime: String(s.start_time),
-      endTime: String(s.end_time),
-      timezone: String(s.timezone || 'Africa/Cairo'),
-      durationMinutes: Number(s.duration_minutes || 50),
-      priceAmount: Number(s.price_amount ?? 0),
-      currency: String(s.currency || 'ج.م'),
-      isAvailable: Boolean(s.is_available),
-      isBooked: Boolean(s.is_booked),
-      adminSuspended: Boolean(s.admin_suspended),
-      adminSuspensionNotes: s.admin_suspension_notes || null,
-      bookedAt: s.booked_at || null,
-      createdAt: s.created_at,
-    }));
+    return res.privateSlots.filter((s) => s.tutorId === tutorId);
   },
 
   async addPrivateSlotForTutor(params: {
@@ -878,8 +987,8 @@ export const AdminService = {
       throw new Error('مدة الحصة الخاصة يجب أن تكون بين 30 و 120 دقيقة.');
     }
 
-    // Try admin RPC first if migration 019 is applied
-    const { data: rpcId, error: rpcErr } = await supabase.rpc('admin_add_private_slot', {
+    // Try admin RPC first (from migration 021)
+    const { data: rpcId, error: rpcErr } = await activeSupabaseClient.rpc('admin_add_private_slot', {
       p_tutor_id: params.tutorId,
       p_slot_date: params.slotDate,
       p_start_time: params.startTime,
@@ -898,7 +1007,7 @@ export const AdminService = {
       return String(rpcId);
     }
 
-    const { data: inserted, error: insertErr } = await supabase
+    const { data: inserted, error: insertErr } = await activeSupabaseClient
       .from('tutor_private_slots')
       .insert({
         tutor_id: params.tutorId,
@@ -1167,7 +1276,7 @@ export const AdminService = {
     }
 
     // Call atomic RPC inside a single database transaction
-    const { error: rpcError } = await supabase.rpc('admin_save_tutor', {
+    const { error: rpcError } = await activeSupabaseClient.rpc('admin_save_tutor', {
       p_payload: {
         ...payload,
         id: tutorId,
@@ -1197,7 +1306,7 @@ export const AdminService = {
       }
     }
 
-    const { data, error } = await supabase.rpc('admin_set_tutor_publish_status', {
+    const { data, error } = await activeSupabaseClient.rpc('admin_set_tutor_publish_status', {
       p_tutor_id: tutorId,
       p_publish: shouldPublish,
     });
@@ -2094,7 +2203,7 @@ export const AdminService = {
   async getTutorPublicationStatus(
     tutorId: string
   ): Promise<{ isPublished: boolean; avatarUrl: string | null } | null> {
-    const { data, error } = await supabase
+    const { data, error } = await activeSupabaseClient
       .from('tutors')
       .select('id, is_published, avatar_url')
       .eq('id', tutorId)

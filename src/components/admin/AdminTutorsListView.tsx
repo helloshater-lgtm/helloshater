@@ -153,14 +153,14 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
     text: string;
   } | null>(null);
 
-  // Compute effective readiness for each tutor (accounting for runtime broken avatar or updated policy)
+  // Compute effective readiness for each tutor (accounting for runtime broken avatar)
   const tutorsWithEffectiveReadiness = useMemo(() => {
     return tutors.map((t) => {
       const isBrokenRuntime = Boolean(brokenAvatarMap[t.id]);
       if (!isBrokenRuntime) {
         return { tutor: t, readiness: t.readiness };
       }
-      // Re-evaluate with broken runtime avatar
+      // Re-evaluate with broken runtime avatar using server reference timestamp
       const reEvaluated = evaluateTutorProfileReadiness({
         tutor: {
           id: t.id,
@@ -178,13 +178,14 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
         },
         activeSpecializationsCount: t.offeringsCount,
         specializations: t.activeSpecializations,
-        trialSlots: t.validTrialSlots,
-        privateSlots: t.validPaidPrivateSlots,
+        trialSlots: t.rawTrialSlots ?? t.validTrialSlots,
+        privateSlots: t.rawPrivateSlots ?? t.validPaidPrivateSlots,
         isAvatarBrokenAtRuntime: true,
         evaluationError: t.readiness.evaluationError,
         evaluationErrorMessage: t.readiness.evaluationErrorMessage,
         qualityReview: t.qualityReview,
         policy,
+        referenceNowMs: t.evaluatedAtMs,
       });
       return { tutor: t, readiness: reEvaluated };
     });
@@ -993,6 +994,32 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
         </div>
       </div>
 
+      {/* Batch Evaluation Error Alert */}
+      {!isLoading && summaryStats.evaluationErrorCount > 0 && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <strong className="block font-bold">
+                تعذر التحقق من جاهزية المواعيد لـ {summaryStats.evaluationErrorCount} معلم
+              </strong>
+              <p className="text-xs text-rose-800 leading-relaxed">
+                {tutorsWithEffectiveReadiness.find((e) => e.readiness.evaluationError)?.readiness
+                  .evaluationErrorMessage ||
+                  'فشل جلب صفوف المواعيد من الخادم عبر دالة admin_get_readiness_slot_rows_v1.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 self-end sm:self-center cursor-pointer"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      )}
+
       {/* Tutors List */}
       {isLoading ? (
         <div className="bg-white p-12 rounded-2xl border border-[#E2E8F0] text-center space-y-3">
@@ -1168,41 +1195,59 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
                           </span>
 
                           {/* Separate Trial vs Paid Private Slot Counts */}
-                          <span
-                            className={`px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 tabular-nums ${
-                              readiness.validTrialSlotsCount > 0
-                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                                : 'bg-rose-50 text-rose-700 border border-rose-200'
-                            }`}
-                          >
-                            <Calendar className="w-3 h-3" />
-                            <span>تجريبي متاح: {readiness.validTrialSlotsCount}</span>
-                            {readiness.earliestTrialSlot && (
-                              <span className="text-[10px] font-normal opacity-80">
-                                (أقرب: {readiness.earliestTrialSlot.slotDate})
+                          {readiness.evaluationError ? (
+                            <>
+                              <span className="px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 bg-rose-50 text-rose-800 border border-rose-200">
+                                <Calendar className="w-3 h-3" />
+                                <span>تجريبي متاح: تعذر التحقق</span>
                               </span>
-                            )}
-                          </span>
-
-                          <span
-                            className={`px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 tabular-nums ${
-                              readiness.validPaidPrivateSlotsCount > 0
-                                ? 'bg-blue-50 text-[#0D4E8B] border border-blue-200'
-                                : 'bg-rose-50 text-rose-700 border border-rose-200'
-                            }`}
-                          >
-                            <Clock className="w-3 h-3" />
-                            <span>خاص مدفوع متاح: {readiness.validPaidPrivateSlotsCount}</span>
-                            {readiness.earliestPaidPrivateSlot && (
-                              <span className="text-[10px] font-normal opacity-80">
-                                (أقرب: {readiness.earliestPaidPrivateSlot.slotDate})
+                              <span className="px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 bg-rose-50 text-rose-800 border border-rose-200">
+                                <Clock className="w-3 h-3" />
+                                <span>خاص مدفوع متاح: تعذر التحقق</span>
                               </span>
-                            )}
-                          </span>
+                              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[#64748B] font-bold">
+                                تغطية الأيام: —
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span
+                                className={`px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 tabular-nums ${
+                                  readiness.validTrialSlotsCount > 0
+                                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                    : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                }`}
+                              >
+                                <Calendar className="w-3 h-3" />
+                                <span>تجريبي متاح: {readiness.validTrialSlotsCount}</span>
+                                {readiness.earliestTrialSlot && (
+                                  <span className="text-[10px] font-normal opacity-80">
+                                    (أقرب: {readiness.earliestTrialSlot.slotDate})
+                                  </span>
+                                )}
+                              </span>
 
-                          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[#64748B] font-bold tabular-nums">
-                            تغطية الأيام: {readiness.distinctUpcomingDaysCount} يوم
-                          </span>
+                              <span
+                                className={`px-2 py-0.5 rounded-md font-bold inline-flex items-center gap-1 tabular-nums ${
+                                  readiness.validPaidPrivateSlotsCount > 0
+                                    ? 'bg-blue-50 text-[#0D4E8B] border border-blue-200'
+                                    : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                }`}
+                              >
+                                <Clock className="w-3 h-3" />
+                                <span>خاص مدفوع متاح: {readiness.validPaidPrivateSlotsCount}</span>
+                                {readiness.earliestPaidPrivateSlot && (
+                                  <span className="text-[10px] font-normal opacity-80">
+                                    (أقرب: {readiness.earliestPaidPrivateSlot.slotDate})
+                                  </span>
+                                )}
+                              </span>
+
+                              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[#64748B] font-bold tabular-nums">
+                                تغطية الأيام: {readiness.distinctUpcomingDaysCount} يوم
+                              </span>
+                            </>
+                          )}
 
                           {/* Taxonomy Tags */}
                           {distinctSubjectNames.length > 0 && (
@@ -1391,7 +1436,9 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
 
                           <button
                             type="button"
+                            disabled={readiness.evaluationError}
                             onClick={() => {
+                              if (readiness.evaluationError) return;
                               const draftMessage = buildTutorProfileCompletionWhatsAppDraft({
                                 tutorName: tutor.name,
                                 honorific: tutor.honorific,
@@ -1407,8 +1454,16 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
                                 draftMessage,
                               });
                             }}
-                            className="min-h-[36px] px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 text-[11px] font-bold transition-colors inline-flex items-center gap-1 cursor-pointer"
-                            title="تجهيز رسالة واتساب قابلة للتعديل بطلب استكمال بيانات الملف"
+                            className={`min-h-[36px] px-2.5 py-1 rounded-lg bg-white text-emerald-800 border border-emerald-300 text-[11px] font-bold transition-colors inline-flex items-center gap-1 ${
+                              readiness.evaluationError
+                                ? 'opacity-50 cursor-not-allowed'
+                                : 'hover:bg-emerald-50 cursor-pointer'
+                            }`}
+                            title={
+                              readiness.evaluationError
+                                ? 'تعذر تجهيز قائمة البنود الناقصة قبل نجاح تقييم الجاهزية من الخادم'
+                                : 'تجهيز رسالة واتساب قابلة للتعديل بطلب استكمال بيانات الملف'
+                            }
                           >
                             <Send className="w-3 h-3" />
                             <span>طلب استكمال الملف</span>
@@ -1581,8 +1636,9 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
                 </h3>
                 <p className="text-xs text-[#64748B]">
                   الحالة الحالية: {inspectedItem.readiness.statusBadgeLabel} · اكتمال البيانات:{' '}
-                  {inspectedItem.readiness.completedRequirementsCount ?? 0}/6 (
-                  {inspectedItem.readiness.completionPercentage ?? 0}%)
+                  {inspectedItem.readiness.evaluationError
+                    ? 'تعذر التحقق'
+                    : `${inspectedItem.readiness.completedRequirementsCount ?? 0}/6 (${inspectedItem.readiness.completionPercentage ?? 0}%)`}
                 </p>
               </div>
               <button
@@ -1611,91 +1667,133 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
               </div>
             )}
 
-            {/* 6 Independent Requirements List */}
-            <div className="space-y-2.5">
-              <h4 className="text-xs font-bold text-[#1F2A44]">
-                أولاً: متطلبات اكتمال البيانات الأساسية (6 متطلبات مستقلة):
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {inspectedItem.readiness.requirements.map((item) => (
-                  <div
-                    key={item.key}
-                    className={`p-3 rounded-xl border text-xs flex flex-col justify-between gap-2 ${
-                      item.completed
-                        ? 'bg-emerald-50/40 border-emerald-200'
-                        : 'bg-amber-50/60 border-amber-200'
-                    }`}
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-[#1F2A44]">{item.title}</span>
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            item.completed
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {item.completed ? 'مكتمل ✓' : 'ناقص'}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-[#64748B] leading-relaxed">
-                        {item.completed ? item.statusText : item.missingReason || item.statusText}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const targetTutorId = inspectedItem.tutor.id;
-                        setInspectModalTutorId(null);
-                        onEditTutor(targetTutorId, item.adminTargetTab);
-                      }}
-                      className="self-start px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-[#0D4E8B] border border-[#CBD5E1] text-[11px] font-bold cursor-pointer"
-                    >
-                      {item.adminActionLabel} ↗
-                    </button>
+            {/* 6 Independent Requirements List OR Explicit Evaluation Error */}
+            {inspectedItem.readiness.evaluationError ? (
+              <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs space-y-3">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <strong className="block font-bold">تعذر تقييم متطلبات الجاهزية (6/6)</strong>
+                    <p className="leading-relaxed text-rose-800">
+                      {inspectedItem.readiness.evaluationErrorMessage ||
+                        'تعذر جلب مواعيد الجاهزية أو التخصصات من الخادم.'}
+                    </p>
                   </div>
-                ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onRefresh}
+                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer"
+                  >
+                    إعادة المحاولة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetTutorId = inspectedItem.tutor.id;
+                      setInspectModalTutorId(null);
+                      onEditTutor(targetTutorId, 'slots');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-white hover:bg-rose-100 text-rose-800 border border-rose-200 text-xs font-bold cursor-pointer"
+                  >
+                    فتح صفحة تعديل المعلم ↗
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="space-y-2.5">
+                  <h4 className="text-xs font-bold text-[#1F2A44]">
+                    أولاً: متطلبات اكتمال البيانات الأساسية (6 متطلبات مستقلة):
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {inspectedItem.readiness.requirements.map((item) => (
+                      <div
+                        key={item.key}
+                        className={`p-3 rounded-xl border text-xs flex flex-col justify-between gap-2 ${
+                          item.completed
+                            ? 'bg-emerald-50/40 border-emerald-200'
+                            : 'bg-amber-50/60 border-amber-200'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-[#1F2A44]">{item.title}</span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                item.completed
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {item.completed ? 'مكتمل ✓' : 'ناقص'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#64748B] leading-relaxed">
+                            {item.completed ? item.statusText : item.missingReason || item.statusText}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const targetTutorId = inspectedItem.tutor.id;
+                            setInspectModalTutorId(null);
+                            onEditTutor(targetTutorId, item.adminTargetTab);
+                          }}
+                          className="self-start px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-[#0D4E8B] border border-[#CBD5E1] text-[11px] font-bold cursor-pointer"
+                        >
+                          {item.adminActionLabel} ↗
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
-            {/* Slot Coverage Summary */}
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-bold text-[#1F2A44]">
-                  تغطية المواعيد المستقبلية (مقابل سياسة الجاهزية):
-                </span>
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    inspectedItem.readiness.meetsSlotPolicyThresholds
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  {inspectedItem.readiness.meetsSlotPolicyThresholds
-                    ? 'مستوفٍ لسياسة التغطية'
-                    : 'أقل من الحد الموصى به في السياسة'}
-                </span>
-              </div>
-              <p className="text-[11px] text-[#64748B]">
-                مواعيد تجريبية متاحة:{' '}
-                <strong className="text-[#1F2A44] tabular-nums">
-                  {inspectedItem.readiness.validTrialSlotsCount}
-                </strong>{' '}
-                (الحد الأدنى بالسياسة: {policy.minTrialSlots}) · مواعيد خاصة مدفوعة متاحة:{' '}
-                <strong className="text-[#1F2A44] tabular-nums">
-                  {inspectedItem.readiness.validPaidPrivateSlotsCount}
-                </strong>{' '}
-                (الحد الأدنى بالسياسة: {policy.minPaidPrivateSlots}) · تغطية الأيام:{' '}
-                <strong className="text-[#1F2A44] tabular-nums">
-                  {inspectedItem.readiness.distinctUpcomingDaysCount}
-                </strong>{' '}
-                يوم (الحد الموصى به: {policy.minDistinctCoverageDays})
-              </p>
-            </div>
+                {/* Slot Coverage Summary */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-bold text-[#1F2A44]">
+                      تغطية المواعيد المستقبلية (مقابل سياسة الجاهزية):
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        inspectedItem.readiness.meetsSlotPolicyThresholds
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {inspectedItem.readiness.meetsSlotPolicyThresholds
+                        ? 'مستوفٍ لسياسة التغطية'
+                        : 'أقل من الحد الموصى به في السياسة'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#64748B]">
+                    مواعيد تجريبية متاحة:{' '}
+                    <strong className="text-[#1F2A44] tabular-nums">
+                      {inspectedItem.readiness.validTrialSlotsCount}
+                    </strong>{' '}
+                    (الحد الأدنى بالسياسة: {policy.minTrialSlots}) · مواعيد خاصة مدفوعة متاحة:{' '}
+                    <strong className="text-[#1F2A44] tabular-nums">
+                      {inspectedItem.readiness.validPaidPrivateSlotsCount}
+                    </strong>{' '}
+                    (الحد الأدنى بالسياسة: {policy.minPaidPrivateSlots}) · تغطية الأيام:{' '}
+                    <strong className="text-[#1F2A44] tabular-nums">
+                      {inspectedItem.readiness.distinctUpcomingDaysCount}
+                    </strong>{' '}
+                    يوم (الحد الموصى به: {policy.minDistinctCoverageDays})
+                  </p>
+                </div>
+              </>
+            )}
 
             {/* Initial Human Quality Review Section */}
             <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-3">
+              {inspectedItem.tutor.qualityReviewSchemaError && (
+                <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-relaxed">
+                  <strong>تنبيه قاعدة البيانات:</strong> جدول/دالة مراجعة الجودة الأولية غير متاحة حالياً ({inspectedItem.tutor.qualityReviewSchemaError}). يرجى تطبيق الترحيل <code className="font-mono">021_admin_quality_review_and_private_slot_rpc.sql</code> في Supabase قبل حفظ الاعتماد.
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h4 className="text-xs font-bold text-[#1F2A44]">

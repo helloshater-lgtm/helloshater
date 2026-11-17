@@ -153,6 +153,8 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
   // Paid Private Slots State
   const [privateSlots, setPrivateSlots] = useState<TutorPrivateSlot[]>([]);
+  const [privateSlotsLoadError, setPrivateSlotsLoadError] = useState<string | null>(null);
+  const [readinessLoadError, setReadinessLoadError] = useState<string | null>(null);
   const [newPrivateDate, setNewPrivateDate] = useState('');
   const [newPrivateStart, setNewPrivateStart] = useState('');
   const [newPrivateDuration, setNewPrivateDuration] = useState<number>(
@@ -212,6 +214,52 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
     }
   };
 
+  const loadEditorSlotsAndReadiness = async (id: string) => {
+    if (!id) return;
+    setPrivateSlotsLoadError(null);
+    setReadinessLoadError(null);
+
+    try {
+      const pSlots = await AdminService.getTutorPrivateSlotsForAdmin(id);
+      setPrivateSlots(pSlots);
+    } catch (err: any) {
+      setPrivateSlots([]);
+      setPrivateSlotsLoadError(
+        err?.message || 'تعذر جلب المواعيد الخاصة المدفوعة من الخادم.'
+      );
+    }
+
+    try {
+      const res = await AdminService.evaluateTutorReadinessById(id);
+      if (res.evaluationError) {
+        setReadinessLoadError(
+          res.evaluationErrorMessage || 'تعذر التحقق من جاهزية الملف من الخادم.'
+        );
+      }
+      setQualityReviewState({
+        tutorId: id,
+        avatarQualityApproved: res.initialQualityReview.avatarApprovalMatchesCurrentUrl,
+        approvedAvatarUrl: res.initialQualityReview.avatarApprovalMatchesCurrentUrl
+          ? (initialDetail?.tutor.avatarUrl || avatarUrl || null)
+          : null,
+        priceQualityApproved: res.initialQualityReview.priceApprovalMatchesCurrentPricing,
+        approvedPriceAmount: initialDetail?.tutor.hourlyRateMin ?? Number(hourlyRateMin) ?? 0,
+        approvedCurrency: initialDetail?.tutor.currency || currency || 'ج.م',
+        approvedDurationMinutes:
+          initialDetail?.tutor.sessionDurationMinutes ?? Number(sessionDurationMinutes) ?? 50,
+        reviewNotes: res.initialQualityReview.reviewNotes,
+        reviewedAt: res.initialQualityReview.reviewedAt,
+      });
+      setQrAvatarApproved(res.initialQualityReview.avatarApprovalMatchesCurrentUrl);
+      setQrPriceApproved(res.initialQualityReview.priceApprovalMatchesCurrentPricing);
+      setQrNotes(res.initialQualityReview.reviewNotes || '');
+    } catch (err: any) {
+      setReadinessLoadError(
+        err?.message || 'تعذر تقييم جاهزية ملف المعلم من الخادم.'
+      );
+    }
+  };
+
   // Load course options, Quran taxonomy, private slots, and quality review on mount
   useEffect(() => {
     Promise.all([
@@ -228,29 +276,7 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
     if (!isNew && initialDetail?.tutor.id) {
       loadPendingDraftForTutor(initialDetail.tutor.id);
-      AdminService.getTutorPrivateSlotsForAdmin(initialDetail.tutor.id)
-        .then((pSlots) => setPrivateSlots(pSlots))
-        .catch(() => {});
-      AdminService.evaluateTutorReadinessById(initialDetail.tutor.id)
-        .then((res) => {
-          setQualityReviewState({
-            tutorId: initialDetail.tutor.id,
-            avatarQualityApproved: res.initialQualityReview.avatarApprovalMatchesCurrentUrl,
-            approvedAvatarUrl: res.initialQualityReview.avatarApprovalMatchesCurrentUrl
-              ? initialDetail.tutor.avatarUrl
-              : null,
-            priceQualityApproved: res.initialQualityReview.priceApprovalMatchesCurrentPricing,
-            approvedPriceAmount: initialDetail.tutor.hourlyRateMin,
-            approvedCurrency: initialDetail.tutor.currency,
-            approvedDurationMinutes: initialDetail.tutor.sessionDurationMinutes,
-            reviewNotes: res.initialQualityReview.reviewNotes,
-            reviewedAt: res.initialQualityReview.reviewedAt,
-          });
-          setQrAvatarApproved(res.initialQualityReview.avatarApprovalMatchesCurrentUrl);
-          setQrPriceApproved(res.initialQualityReview.priceApprovalMatchesCurrentPricing);
-          setQrNotes(res.initialQualityReview.reviewNotes || '');
-        })
-        .catch(() => {});
+      loadEditorSlotsAndReadiness(initialDetail.tutor.id);
     }
   }, [isNew, initialDetail?.tutor.id]);
 
@@ -507,6 +533,7 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
       const refreshedPrivate = await AdminService.getTutorPrivateSlotsForAdmin(tutorId.trim()).catch(() => null);
       if (refreshedPrivate) {
+        setPrivateSlotsLoadError(null);
         setPrivateSlots(refreshedPrivate);
       } else {
         setPrivateSlots([
@@ -736,6 +763,7 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
 
   // Live readiness evaluation in editor
   const readinessPolicy = AdminService.getReadinessPolicy();
+  const combinedEditorError = privateSlotsLoadError || readinessLoadError;
   const editorReadiness = evaluateTutorProfileReadiness({
     tutor: {
       id: tutorId || 'draft',
@@ -755,6 +783,8 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
     trialSlots: slots,
     privateSlots,
     isAvatarBrokenAtRuntime,
+    evaluationError: !isNew && Boolean(combinedEditorError),
+    evaluationErrorMessage: combinedEditorError,
     policy: readinessPolicy,
     qualityReview: qualityReviewState,
   });
@@ -875,7 +905,9 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
             <div className="flex items-center gap-2.5">
               <div
                 className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                  editorReadiness.isReadyForInitialPublish
+                  editorReadiness.evaluationError
+                    ? 'bg-rose-50 text-rose-700'
+                    : editorReadiness.isReadyForInitialPublish
                     ? 'bg-emerald-50 text-emerald-700'
                     : editorReadiness.isDataComplete6of6
                     ? 'bg-blue-50 text-[#0D4E8B]'
@@ -891,65 +923,93 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
                   </h3>
                   <span
                     className={`px-2 py-0.5 rounded-md text-[11px] font-bold tabular-nums ${
-                      editorReadiness.isReadyForInitialPublish
+                      editorReadiness.evaluationError
+                        ? 'bg-rose-100 text-rose-800'
+                        : editorReadiness.isReadyForInitialPublish
                         ? 'bg-emerald-100 text-emerald-800'
                         : editorReadiness.isDataComplete6of6
                         ? 'bg-blue-100 text-[#0D4E8B]'
                         : 'bg-amber-100 text-amber-800'
                     }`}
                   >
-                    {editorReadiness.statusBadgeLabel} ({editorReadiness.completedRequirementsCount ?? 0}/{editorReadiness.totalRequirementsCount} ·{' '}
-                    {editorReadiness.completionPercentage ?? 0}%)
+                    {editorReadiness.evaluationError
+                      ? `${editorReadiness.statusBadgeLabel} (تعذر التحقق)`
+                      : `${editorReadiness.statusBadgeLabel} (${editorReadiness.completedRequirementsCount ?? 0}/${editorReadiness.totalRequirementsCount} · ${editorReadiness.completionPercentage ?? 0}%)`}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#64748B]">
-                  تجريبي متاح: <strong className="tabular-nums">{editorReadiness.validTrialSlotsCount}</strong> · خاص مدفوع متاح:{' '}
-                  <strong className="tabular-nums">{editorReadiness.validPaidPrivateSlotsCount}</strong> · تغطية الأيام:{' '}
-                  <strong className="tabular-nums">{editorReadiness.distinctUpcomingDaysCount}</strong> يوم
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* 6 Requirements Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-            {editorReadiness.requirements.map((item) => (
-              <div
-                key={item.key}
-                className={`p-3 rounded-xl border text-xs flex flex-col justify-between gap-2 ${
-                  item.completed
-                    ? 'bg-emerald-50/40 border-emerald-200'
-                    : 'bg-amber-50/60 border-amber-200'
-                }`}
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="font-bold text-[#1F2A44]">{item.title}</span>
-                    <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                        item.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {item.completed ? 'مكتمل' : 'ناقص'}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#64748B] leading-relaxed">
-                    {item.completed ? item.statusText : item.missingReason || item.statusText}
+                {editorReadiness.evaluationError ? (
+                  <p className="text-[11px] text-rose-700 font-bold">
+                    تجريبي متاح: تعذر التحقق · خاص مدفوع متاح: تعذر التحقق · تغطية الأيام: —
                   </p>
-                </div>
-
-                {!item.completed && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab(item.adminTargetTab)}
-                    className="self-start px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-[#0D4E8B] border border-[#CBD5E1] text-[11px] font-bold cursor-pointer"
-                  >
-                    {item.adminActionLabel}
-                  </button>
+                ) : (
+                  <p className="text-[11px] text-[#64748B]">
+                    تجريبي متاح: <strong className="tabular-nums">{editorReadiness.validTrialSlotsCount}</strong> · خاص مدفوع متاح:{' '}
+                    <strong className="tabular-nums">{editorReadiness.validPaidPrivateSlotsCount}</strong> · تغطية الأيام:{' '}
+                    <strong className="tabular-nums">{editorReadiness.distinctUpcomingDaysCount}</strong> يوم
+                  </p>
                 )}
               </div>
-            ))}
+            </div>
+
+            {editorReadiness.evaluationError && tutorId && (
+              <button
+                type="button"
+                onClick={() => loadEditorSlotsAndReadiness(tutorId)}
+                className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer"
+              >
+                إعادة التحقق
+              </button>
+            )}
           </div>
+
+          {editorReadiness.evaluationError ? (
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span className="leading-relaxed">
+                {editorReadiness.evaluationErrorMessage ||
+                  'تعذر جلب بيانات المواعيد أو الجاهزية من الخادم لتقييم المتطلبات الستة بدقة.'}
+              </span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {editorReadiness.requirements.map((item) => (
+                <div
+                  key={item.key}
+                  className={`p-3 rounded-xl border text-xs flex flex-col justify-between gap-2 ${
+                    item.completed
+                      ? 'bg-emerald-50/40 border-emerald-200'
+                      : 'bg-amber-50/60 border-amber-200'
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="font-bold text-[#1F2A44]">{item.title}</span>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          item.completed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {item.completed ? 'مكتمل' : 'ناقص'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#64748B] leading-relaxed">
+                      {item.completed ? item.statusText : item.missingReason || item.statusText}
+                    </p>
+                  </div>
+
+                  {!item.completed && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab(item.adminTargetTab)}
+                      className="self-start px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-[#0D4E8B] border border-[#CBD5E1] text-[11px] font-bold cursor-pointer"
+                    >
+                      {item.adminActionLabel}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Initial Quality Review Section (For First Publication) */}
           {!isPublished && (
@@ -2229,10 +2289,26 @@ export const AdminTutorEditorView: React.FC<AdminTutorEditorViewProps> = ({
             {/* Paid Private Slots List */}
             <div className="space-y-3">
               <span className="text-xs font-bold text-[#1F2A44] block">
-                مواعيد الحصص الخاصة المسجلة ({privateSlots.length}):
+                مواعيد الحصص الخاصة المسجلة ({privateSlotsLoadError ? 'تعذر التحقق' : privateSlots.length}):
               </span>
 
-              {privateSlots.length === 0 ? (
+              {privateSlotsLoadError ? (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{privateSlotsLoadError}</span>
+                  </div>
+                  {tutorId && (
+                    <button
+                      type="button"
+                      onClick={() => loadEditorSlotsAndReadiness(tutorId)}
+                      className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 cursor-pointer"
+                    >
+                      إعادة التحميل
+                    </button>
+                  )}
+                </div>
+              ) : privateSlots.length === 0 ? (
                 <p className="text-xs text-[#94A3B8] italic p-4 text-center border border-dashed border-[#CBD5E1] rounded-xl">
                   لا توجد مواعيد حصص خاصة مسجلة لهذا المعلم حتى الآن.
                 </p>
