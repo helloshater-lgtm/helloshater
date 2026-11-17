@@ -198,6 +198,7 @@ export const WhatsAppNoticeModal: React.FC<WhatsAppNoticeModalProps> = ({
     trackParentLeadSubmitted({
       track: resolvedTrack,
       request_type: requestType,
+      referenceCode: outcome.referenceCode,
     });
     setReferenceCode(outcome.referenceCode);
     setFallbackNotice(null);

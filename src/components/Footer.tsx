@@ -1,6 +1,7 @@
 import React from 'react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { trackWhatsAppClicked } from '../services/analytics';
+import { openConsentSettings } from '../services/consentService';
 import { toArabicDigits } from '../utils/formatters';
 
 interface FooterProps {
@@ -95,7 +96,14 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         {/* Bottom Legal & Copyright Row */}
         <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#64748B]">
           <span>© {toArabicDigits(new Date().getFullYear())} شاطر كلاسيز</span>
-          <div className="flex items-center gap-5 text-xs">
+          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-5 text-xs">
+            <button
+              type="button"
+              onClick={openConsentSettings}
+              className="py-1 hover:text-[#0D4E8B] transition-colors cursor-pointer"
+            >
+              إعدادات الخصوصية والتتبع
+            </button>
             <a
               href="#privacy"
               onClick={(e) => {

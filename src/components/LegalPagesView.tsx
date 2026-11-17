@@ -2,6 +2,7 @@ import React from 'react';
 import { ShieldCheck, FileText, ArrowRight, MessageCircle } from 'lucide-react';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { trackWhatsAppClicked } from '../services/analytics';
+import { openConsentSettings } from '../services/consentService';
 
 interface LegalPagesViewProps {
   page: 'privacy' | 'terms';
@@ -118,7 +119,18 @@ export const LegalPagesView: React.FC<LegalPagesViewProps> = ({
                       <strong className="text-[#1F2A44]">Supabase:</strong> تُستخدم خدمة Supabase لاستضافة قاعدة البيانات وإدارة مصادقة حسابات المعلمين والإدارة وتخزين ملفات المعلمين والمواعيد المعتمدة وفق ضوابط صلاحيات الوصول (RLS).
                     </li>
                     <li>
-                      <strong className="text-[#1F2A44]">Google Analytics (تحليلات جوجل):</strong> نستخدم خدمة Google Analytics 4 لقياس أداء المنصة بصورة إجمالية خالية من البيانات الشخصية، وتكون الخدمة معطلة افتراضيًا لحين اختيار الزائر «موافق» في شريط الموافقة (Google Consent Mode).
+                      <strong className="text-[#1F2A44]">Google Analytics (تحليلات جوجل):</strong> نستخدم خدمة Google Analytics 4 لقياس أداء المنصة بصورة إجمالية خالية من البيانات الشخصية، وتكون الخدمة معطلة افتراضيًا لحين موافقة الزائر على إحصاءات الاستخدام عبر إعدادات الخصوصية.
+                    </li>
+                    <li>
+                      <strong className="text-[#1F2A44]">Meta Pixel (قياس الإعلانات):</strong> نستخدم Meta Pixel بصورة معطلة افتراضيًا ولا يبدأ تحميله إلا بعد موافقتك المستقلة على قياس الإعلانات، لقياس فاعلية الحملات عبر أحداث محدودة دون إرسال أسماء أو أرقام هواتف أو بريد إلكتروني أو بيانات أطفال أو نصوص الرسائل، ويمكنك رفضه أو سحب الموافقة في أي وقت عبر{' '}
+                      <button
+                        type="button"
+                        onClick={openConsentSettings}
+                        className="font-bold text-[#0D4E8B] underline underline-offset-2 hover:text-[#003767] cursor-pointer"
+                      >
+                        إعدادات الخصوصية والتتبع
+                      </button>
+                      .
                     </li>
                     <li>
                       <strong className="text-[#1F2A44]">WhatsApp (واتساب):</strong> يتم تنسيق طلبات الحجز والاستفسارات عبر خدمة واتساب المباشرة مع فريق إدارة شاطر، وتخضع المحادثات عبر تطبيق واتساب لسياسة الخصوصية الخاصة بشركة Meta.

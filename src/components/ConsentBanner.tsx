@@ -1,41 +1,73 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-
-const CONSENT_STORAGE_KEY = 'shatir_ga_consent';
+import {
+  getConsentPreferences,
+  needsConsentPrompt,
+  saveConsentPreferences,
+  subscribeOpenConsentSettings,
+} from '../services/consentService';
+import { MetaPixelService } from '../services/metaPixelService';
+import { ShieldCheck, X } from 'lucide-react';
 
 export const ConsentBanner: React.FC = () => {
   const [isVisible, setIsVisible] = useState(false);
+  const [isSettingsMode, setIsSettingsMode] = useState(false);
+  const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
+  const [marketingEnabled, setMarketingEnabled] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(CONSENT_STORAGE_KEY);
-      if (saved === 'granted' || saved === 'denied') {
-        if (typeof window.gtag === 'function') {
-          window.gtag('consent', 'update', {
-            analytics_storage: saved,
-          });
-        }
-        setIsVisible(false);
-      } else {
-        setIsVisible(true);
-      }
-    } catch {
-      setIsVisible(false);
+    const prefs = getConsentPreferences();
+    setAnalyticsEnabled(prefs.analytics === 'granted');
+    setMarketingEnabled(prefs.marketing === 'granted');
+    MetaPixelService.syncConsentState(prefs.marketing === 'granted');
+
+    if (needsConsentPrompt()) {
+      setIsSettingsMode(false);
+      setIsVisible(true);
     }
+
+    const unsubscribe = subscribeOpenConsentSettings(() => {
+      const latest = getConsentPreferences();
+      setAnalyticsEnabled(latest.analytics === 'granted');
+      setMarketingEnabled(latest.marketing === 'granted');
+      setIsSettingsMode(true);
+      setIsVisible(true);
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  const handleDecision = (decision: 'granted' | 'denied') => {
-    try {
-      window.localStorage.setItem(CONSENT_STORAGE_KEY, decision);
-    } catch {
-      // ignore storage errors
-    }
-    if (typeof window !== 'undefined' && typeof window.gtag === 'function') {
-      window.gtag('consent', 'update', {
-        analytics_storage: decision,
-      });
-    }
+  const handleSaveCustom = () => {
+    saveConsentPreferences({
+      analytics: analyticsEnabled ? 'granted' : 'denied',
+      marketing: marketingEnabled ? 'granted' : 'denied',
+    });
     setIsVisible(false);
+    setIsSettingsMode(false);
+  };
+
+  const handleAcceptAll = () => {
+    setAnalyticsEnabled(true);
+    setMarketingEnabled(true);
+    saveConsentPreferences({
+      analytics: 'granted',
+      marketing: 'granted',
+    });
+    setIsVisible(false);
+    setIsSettingsMode(false);
+  };
+
+  const handleRejectOrWithdrawAll = () => {
+    setAnalyticsEnabled(false);
+    setMarketingEnabled(false);
+    saveConsentPreferences({
+      analytics: 'denied',
+      marketing: 'denied',
+    });
+    setIsVisible(false);
+    setIsSettingsMode(false);
   };
 
   if (!isVisible) return null;
@@ -43,35 +75,112 @@ export const ConsentBanner: React.FC = () => {
   const bannerNode = (
     <div
       role="region"
-      aria-label="إشعار ملفات تعريف الارتباط والخصوصية"
+      aria-label="إعدادات الخصوصية وملفات تعريف الارتباط"
       dir="rtl"
-      className="fixed bottom-24 lg:bottom-3 right-3 left-3 sm:left-auto sm:max-w-md z-50 bg-white/98 backdrop-blur-md border border-[#CBD5E1] rounded-2xl shadow-lg p-3.5 sm:p-4 text-xs text-[#1F2A44]"
+      className="fixed bottom-24 lg:bottom-4 right-3 left-3 sm:left-auto sm:max-w-md z-50 bg-white/98 backdrop-blur-md border border-[#CBD5E1] rounded-2xl shadow-xl p-4 sm:p-5 text-xs text-[#1F2A44]"
     >
-      <div className="space-y-2.5">
+      <div className="space-y-3">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-[#F0F6FD] border border-[#D1DCFE] text-[#0D4E8B] flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4 h-4" />
+            </span>
+            <div>
+              <h3 className="font-['Cairo'] font-extrabold text-xs sm:text-sm text-[#1F2A44]">
+                تفضيلات الخصوصية والقياس
+              </h3>
+            </div>
+          </div>
+
+          {isSettingsMode && (
+            <button
+              type="button"
+              onClick={() => setIsVisible(false)}
+              aria-label="إغلاق إعدادات الخصوصية"
+              className="min-w-[32px] min-h-[32px] rounded-lg hover:bg-[#F8FAFC] text-[#64748B] hover:text-[#1F2A44] flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
         <p className="leading-relaxed text-[#535E7B]">
-          نستخدم إحصاءات تصفح غير شخصية لتحسين تجربة أولياء الأمور على منصة شاطر. يمكنك القبول أو الرفض، والاطلاع على{' '}
+          نحترم خصوصيتك. يمكنك التحكم بصورة مستقلة في تفعيل الإحصاءات وقياس الإعلانات دون إرسال
+          أي بيانات شخصية، والاطلاع على{' '}
           <a
             href="#privacy"
+            onClick={() => {
+              if (isSettingsMode) setIsVisible(false);
+            }}
             className="font-bold text-[#0D4E8B] underline underline-offset-2 hover:text-[#003767]"
           >
             سياسة الخصوصية
           </a>
           .
         </p>
-        <div className="flex items-center justify-end gap-2">
+
+        {/* Independent Toggles: Analytics vs Ads Measurement */}
+        <div className="space-y-2 pt-0.5">
+          <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#F8FAFD] border border-[#E2E8F0] hover:border-[#CBD5E1] cursor-pointer select-none transition-colors">
+            <input
+              type="checkbox"
+              checked={analyticsEnabled}
+              onChange={(e) => setAnalyticsEnabled(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-[#CBD5E1] text-[#0D4E8B] focus:ring-[#0D4E8B] shrink-0 cursor-pointer"
+            />
+            <span className="flex-1 leading-snug">
+              <span className="block font-['Cairo'] font-bold text-[#1F2A44]">
+                إحصاءات الاستخدام (Google Analytics)
+              </span>
+              <span className="block text-[11px] text-[#64748B] mt-0.5">
+                إحصاءات تصفح غير شخصية لتحسين تجربة أولياء الأمور.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#F8FAFD] border border-[#E2E8F0] hover:border-[#CBD5E1] cursor-pointer select-none transition-colors">
+            <input
+              type="checkbox"
+              checked={marketingEnabled}
+              onChange={(e) => setMarketingEnabled(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-[#CBD5E1] text-[#0D4E8B] focus:ring-[#0D4E8B] shrink-0 cursor-pointer"
+            />
+            <span className="flex-1 leading-snug">
+              <span className="block font-['Cairo'] font-bold text-[#1F2A44]">
+                قياس الإعلانات (Meta Pixel)
+              </span>
+              <span className="block text-[11px] text-[#64748B] mt-0.5">
+                قياس فاعلية الإعلانات بأحداث محدودة دون أسماء أو هواتف أو بيانات أطفال.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
           <button
             type="button"
-            onClick={() => handleDecision('denied')}
-            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#CBD5E1] hover:bg-[#F8F9FC] text-[#64748B] hover:text-[#1F2A44] font-['Cairo'] font-bold text-xs transition-colors cursor-pointer"
+            onClick={handleRejectOrWithdrawAll}
+            className="min-h-[38px] px-3 py-1.5 rounded-xl border border-[#CBD5E1] hover:bg-[#F8F9FC] text-[#64748B] hover:text-[#1F2A44] font-['Cairo'] font-bold text-xs transition-colors cursor-pointer"
           >
-            رفض
+            {isSettingsMode ? 'رفض / سحب الكل' : 'رفض الكل'}
           </button>
+
           <button
             type="button"
-            onClick={() => handleDecision('granted')}
+            onClick={handleSaveCustom}
+            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#0D4E8B] bg-white hover:bg-[#F0F6FD] text-[#0D4E8B] font-['Cairo'] font-bold text-xs transition-colors cursor-pointer"
+          >
+            حفظ الاختيارات
+          </button>
+
+          <button
+            type="button"
+            onClick={handleAcceptAll}
             className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs shadow-2xs transition-colors cursor-pointer"
           >
-            موافق
+            موافق على الكل
           </button>
         </div>
       </div>

@@ -10,6 +10,7 @@
 
 import { SearchCriteria } from '../types';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
+import { MetaPixelService } from './metaPixelService';
 
 declare global {
   interface Window {
@@ -401,11 +402,20 @@ export function trackParentLeadFormOpened(params: {
 export function trackParentLeadSubmitted(params: {
   track?: 'school' | 'quran' | null;
   request_type: 'trial' | 'private' | 'group' | 'recommendation';
+  referenceCode?: string | null;
 }): void {
   sendGAEvent('parent_lead_submitted', {
     track: params.track || undefined,
     request_type: params.request_type,
   });
+
+  if (params.referenceCode) {
+    MetaPixelService.trackLead({
+      referenceCode: params.referenceCode,
+      track: params.track,
+      requestType: params.request_type,
+    });
+  }
 }
 
 export function trackParentLeadSubmitFailed(params: {

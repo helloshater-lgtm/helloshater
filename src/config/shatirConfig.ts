@@ -5,6 +5,7 @@
 
 // If environment variable is provided, use it. Otherwise, default is empty to trigger notice.
 const RAW_ADMIN_WHATSAPP = (import.meta?.env?.VITE_SHATIR_WHATSAPP_NUMBER as string | undefined)?.trim();
+const RAW_META_PIXEL_ID = (import.meta?.env?.VITE_META_PIXEL_ID as string | undefined)?.trim();
 
 export const SHATIR_CONFIG = {
   platformName: 'شاطر كلاسيز',
@@ -17,6 +18,9 @@ export const SHATIR_CONFIG = {
 
   // Central Google Analytics 4 Measurement ID
   gaMeasurementId: 'G-CGL8XBRE0J',
+
+  // Central Meta Pixel ID
+  metaPixelId: RAW_META_PIXEL_ID || '1515074777348342',
 
   // Platform Guarantee & Trust messaging
   trialSession: {

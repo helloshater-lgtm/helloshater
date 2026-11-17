@@ -21,13 +21,23 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('consent', 'default', {
-        analytics_storage: 'denied'
+        analytics_storage: 'denied',
+        ad_storage: 'denied',
+        ad_user_data: 'denied',
+        ad_personalization: 'denied'
       });
       try {
-        if (window.localStorage && window.localStorage.getItem('shatir_ga_consent') === 'granted') {
-          gtag('consent', 'update', {
-            analytics_storage: 'granted'
-          });
+        if (window.localStorage) {
+          var gaSaved = window.localStorage.getItem('shatir_ga_consent');
+          var metaSaved = window.localStorage.getItem('shatir_meta_consent');
+          if (gaSaved === 'granted' || metaSaved === 'granted') {
+            gtag('consent', 'update', {
+              analytics_storage: gaSaved === 'granted' ? 'granted' : 'denied',
+              ad_storage: metaSaved === 'granted' ? 'granted' : 'denied',
+              ad_user_data: metaSaved === 'granted' ? 'granted' : 'denied',
+              ad_personalization: metaSaved === 'granted' ? 'granted' : 'denied'
+            });
+          }
         }
       } catch (e) {}
     </script>

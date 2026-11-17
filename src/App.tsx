@@ -36,6 +36,11 @@ import {
   trackTutorProfileOpened,
   resetTutorProfileTracking,
 } from './services/analytics';
+import {
+  isMarketingConsentGranted,
+  subscribeConsentChanges,
+} from './services/consentService';
+import { MetaPixelService } from './services/metaPixelService';
 import { captureInitialAttribution } from './services/parentLeadService';
 
 const AdminDashboardView = lazy(() =>
@@ -76,6 +81,9 @@ export default function App() {
   const [savedCriteria, setSavedCriteria] = useState<SearchCriteria | null>(null);
   const [savedResults, setSavedResults] = useState<Tutor[]>([]);
   const [savedScrollPosition, setSavedScrollPosition] = useState<number>(0);
+  const [marketingConsentGranted, setMarketingConsentGranted] = useState<boolean>(() =>
+    isMarketingConsentGranted()
+  );
 
   // Taxonomy for profile breadcrumbs
   const [stages, setStages] = useState<Stage[]>([]);
@@ -103,6 +111,17 @@ export default function App() {
       setQuranAges(qAges);
       setQuranLevels(qLvls);
     });
+
+    MetaPixelService.syncConsentState(isMarketingConsentGranted());
+    const unsubscribeConsent = subscribeConsentChanges((prefs) => {
+      const granted = prefs.marketing === 'granted';
+      setMarketingConsentGranted(granted);
+      MetaPixelService.syncConsentState(granted);
+    });
+
+    return () => {
+      unsubscribeConsent();
+    };
   }, []);
 
   // View navigation helper
@@ -252,6 +271,65 @@ export default function App() {
       trackTutorProfileOpened(selectedTutorId);
     }
   }, [currentView, selectedTutorId]);
+
+  // Meta Pixel PageView tracking (strictly public parent routes only, gated by marketing consent)
+  useEffect(() => {
+    if (!marketingConsentGranted) return;
+
+    if (currentView === 'home') {
+      MetaPixelService.resetTutorViewTracking();
+      MetaPixelService.trackPageView({ path: '/', view: 'home' });
+    } else if (currentView === 'privacy') {
+      MetaPixelService.resetTutorViewTracking();
+      MetaPixelService.trackPageView({ path: '/#privacy', view: 'privacy' });
+    } else if (currentView === 'terms') {
+      MetaPixelService.resetTutorViewTracking();
+      MetaPixelService.trackPageView({ path: '/#terms', view: 'terms' });
+    } else if (currentView === 'tutor-profile' && selectedTutorId) {
+      MetaPixelService.trackPageView({
+        path: `/#tutor/${selectedTutorId}`,
+        view: 'tutor-profile',
+      });
+    } else {
+      // Excluded views: join-as-tutor, tutor-dashboard, admin
+      MetaPixelService.resetTutorViewTracking();
+    }
+  }, [currentView, selectedTutorId, marketingConsentGranted]);
+
+  // Meta Pixel ViewContent tracking (only after a published tutor profile loads on the public view)
+  useEffect(() => {
+    if (!marketingConsentGranted) return;
+    if (
+      currentView !== 'tutor-profile' ||
+      isTutorLoading ||
+      !currentTutor ||
+      !selectedTutorId ||
+      currentTutor.id !== selectedTutorId ||
+      currentTutor.isPublished !== true
+    ) {
+      return;
+    }
+
+    const tutorTrack: 'school' | 'quran' = currentTutor.offerings.some(
+      (o) => o.track === 'school'
+    )
+      ? 'school'
+      : 'quran';
+
+    MetaPixelService.trackViewContent({
+      tutorId: currentTutor.id,
+      track: tutorTrack,
+      isPublished: true,
+      isPreview: false,
+      view: 'tutor-profile',
+    });
+  }, [
+    currentView,
+    selectedTutorId,
+    isTutorLoading,
+    currentTutor,
+    marketingConsentGranted,
+  ]);
 
   // Update document.title dynamically based on current view & loaded tutor
   useEffect(() => {

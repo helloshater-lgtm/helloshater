@@ -1,4 +1,8 @@
 import { supabase } from '../lib/supabase';
+import {
+  isAnalyticsConsentGranted,
+  isMarketingConsentGranted,
+} from './consentService';
 
 export type ParentLeadRequestType = 'trial' | 'private' | 'group' | 'recommendation';
 export type ParentLeadTrack = 'school' | 'quran' | null;
@@ -16,7 +20,6 @@ export const PARENT_LEAD_COUNTRY_OPTIONS = [
 ];
 
 const SESSION_ATTR_INIT_KEY = 'shatir_visit_attribution_init';
-const CONSENT_STORAGE_KEY = 'shatir_ga_consent';
 
 const ATTR_KEYS = {
   utm_source: 'utm_source',
@@ -70,14 +73,7 @@ export type SubmitParentLeadOutcome =
       message: string;
     };
 
-function isAnalyticsConsentGranted(): boolean {
-  try {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(CONSENT_STORAGE_KEY) === 'granted';
-  } catch {
-    return false;
-  }
-}
+
 
 function extractReferrerOrigin(rawReferrer: string): string | null {
   if (!rawReferrer || !rawReferrer.trim()) return null;
@@ -162,7 +158,8 @@ export function getSavedAttributionForPayload(): VisitAttributionData {
     // Ensure initialized if called before effect runs
     captureInitialAttribution();
 
-    const consentGranted = isAnalyticsConsentGranted();
+    const analyticsConsentGranted = isAnalyticsConsentGranted();
+    const marketingConsentGranted = isMarketingConsentGranted();
 
     return {
       utmSource: window.sessionStorage.getItem(ATTR_KEYS.utm_source) || null,
@@ -170,8 +167,8 @@ export function getSavedAttributionForPayload(): VisitAttributionData {
       utmCampaign: window.sessionStorage.getItem(ATTR_KEYS.utm_campaign) || null,
       utmContent: window.sessionStorage.getItem(ATTR_KEYS.utm_content) || null,
       utmTerm: window.sessionStorage.getItem(ATTR_KEYS.utm_term) || null,
-      gclid: consentGranted ? window.sessionStorage.getItem(ATTR_KEYS.gclid) || null : null,
-      fbclid: consentGranted ? window.sessionStorage.getItem(ATTR_KEYS.fbclid) || null : null,
+      gclid: analyticsConsentGranted ? window.sessionStorage.getItem(ATTR_KEYS.gclid) || null : null,
+      fbclid: marketingConsentGranted ? window.sessionStorage.getItem(ATTR_KEYS.fbclid) || null : null,
       landingPage: window.sessionStorage.getItem(ATTR_KEYS.landing_page) || null,
       referrer: window.sessionStorage.getItem(ATTR_KEYS.referrer) || null,
     };
