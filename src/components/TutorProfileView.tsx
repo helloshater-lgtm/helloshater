@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Tutor,
@@ -6,8 +6,21 @@ import {
   TutorAvailableSlot,
   TutorPrivateSlot,
   TutorGroup,
+  DirectTrialBooking,
+  DirectTrialBookingPolicy,
 } from '../types';
 import { DataService } from '../services/dataService';
+import { DirectTrialBookingService } from '../services/directTrialBookingService';
+import { PARENT_LEAD_COUNTRY_OPTIONS } from '../services/parentLeadService';
+import { normalizeTutorContactPhone } from '../utils/tutorReadinessAndContact';
+import {
+  filterDirectBookingTrialSlots,
+  formatBookingInOwnTimezone,
+  formatMinimumNoticeArabic,
+  savePendingDirectTrialDraft,
+  loadPendingDirectTrialDraft,
+  clearPendingDirectTrialDraft,
+} from '../utils/directTrialBooking';
 import { VideoModal } from './VideoModal';
 import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
 import {
@@ -57,12 +70,16 @@ import {
   Star,
   UserCheck,
   Info,
+  Mail,
+  AlertCircle,
+  CalendarCheck2,
 } from 'lucide-react';
 
 interface TutorProfileViewProps {
   tutor: Tutor;
   criteria?: SearchCriteria;
   onBack: () => void;
+  onNavigateToMyTrials?: () => void;
   stageName?: string;
   gradeName?: string;
   subjectName?: string;
@@ -81,6 +98,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   tutor,
   criteria,
   onBack,
+  onNavigateToMyTrials,
   stageName,
   gradeName,
   subjectName,
@@ -115,13 +133,29 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   // Active tab in the compact booking widget
   const [activeBookingTab, setActiveBookingTab] = useState<BookingTabType>('trial');
 
-  // Trial slots state (strictly real future available slots)
+  // Trial slots & direct trial booking policy state
   const [rawTrialSlots, setRawTrialSlots] = useState<TutorAvailableSlot[]>([]);
   const [isLoadingTrialSlots, setIsLoadingTrialSlots] = useState(true);
+  const [bookingPolicy, setBookingPolicy] = useState<DirectTrialBookingPolicy | null>(null);
+  const [isLoadingPolicy, setIsLoadingPolicy] = useState(false);
   const [selectedTrialDate, setSelectedTrialDate] = useState<string>('');
   const [selectedTrialSlotId, setSelectedTrialSlotId] = useState<string>('');
   const [trialDayWindowStart, setTrialDayWindowStart] = useState<number>(0);
   const [showTrialMiniCalendar, setShowTrialMiniCalendar] = useState<boolean>(false);
+
+  // Direct booking interactive flow state
+  const [isDirectPanelOpen, setIsDirectPanelOpen] = useState(false);
+  const [authUser, setAuthUser] = useState<{ id: string; email?: string | null } | null>(null);
+  const [otpEmail, setOtpEmail] = useState('');
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [otpSentEmail, setOtpSentEmail] = useState<string | null>(null);
+  const [guardianName, setGuardianName] = useState('');
+  const [whatsappCountryCode, setWhatsappCountryCode] = useState('+20');
+  const [whatsappLocalPhone, setWhatsappLocalPhone] = useState('');
+  const [directBookingError, setDirectBookingError] = useState<string | null>(null);
+  const [isConfirmingDirectBooking, setIsConfirmingDirectBooking] = useState(false);
+  const [confirmedDirectBooking, setConfirmedDirectBooking] =
+    useState<DirectTrialBooking | null>(null);
 
   // Private 1:1 slots & Groups state
   const [rawPrivateSlots, setRawPrivateSlots] = useState<TutorPrivateSlot[]>([]);
@@ -196,9 +230,31 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   const hasRealVideo = Boolean(tutor.videoPreview?.available);
 
   // Filter strictly valid future available trial slots (no fabricated fallback slots)
-  const validTrialSlots = useMemo(
+  const baseValidTrialSlots = useMemo(
     () => filterValidAvailableTrialSlots(rawTrialSlots),
     [rawTrialSlots]
+  );
+
+  const isDirectBookingEnabled = Boolean(
+    !isPreviewMode &&
+      !isUnpublishedProfile &&
+      bookingPolicy?.directBookingAvailable === true
+  );
+
+  const validTrialSlots = useMemo(() => {
+    if (isDirectBookingEnabled && bookingPolicy) {
+      return filterDirectBookingTrialSlots(
+        rawTrialSlots,
+        bookingPolicy.minimumNoticeMinutes
+      );
+    }
+    return baseValidTrialSlots;
+  }, [isDirectBookingEnabled, bookingPolicy, rawTrialSlots, baseValidTrialSlots]);
+
+  const hasNoticeFilteredOutAllSlots = Boolean(
+    isDirectBookingEnabled &&
+      baseValidTrialSlots.length > 0 &&
+      validTrialSlots.length === 0
   );
 
   // Group trial slots by date
@@ -239,22 +295,36 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     [privateSlotsByDate]
   );
 
-  // Fetch Trial Slots
+  const refreshTrialSlots = useCallback(async () => {
+    if (previewTrialSlots !== undefined || isUnpublishedProfile) return;
+    const slots = await DataService.getTutorAvailableSlots(tutor.id);
+    setRawTrialSlots(slots || []);
+  }, [tutor.id, previewTrialSlots, isUnpublishedProfile]);
+
+  // Fetch Trial Slots + Direct Trial Booking Policy
   useEffect(() => {
     if (previewTrialSlots !== undefined) {
       setRawTrialSlots(previewTrialSlots);
       setIsLoadingTrialSlots(false);
+      setBookingPolicy(null);
+      setIsLoadingPolicy(false);
       return;
     }
 
     if (isUnpublishedProfile) {
       setRawTrialSlots([]);
       setIsLoadingTrialSlots(false);
+      setBookingPolicy(null);
+      setIsLoadingPolicy(false);
       return;
     }
 
     let isMounted = true;
     setIsLoadingTrialSlots(true);
+    setIsLoadingPolicy(true);
+    setConfirmedDirectBooking(null);
+    setDirectBookingError(null);
+
     DataService.getTutorAvailableSlots(tutor.id)
       .then((slots) => {
         if (!isMounted) return;
@@ -266,14 +336,82 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
         setRawTrialSlots([]);
         setIsLoadingTrialSlots(false);
       });
+
+    DirectTrialBookingService.getDirectTrialBookingPolicy(tutor.id)
+      .then((policy) => {
+        if (!isMounted) return;
+        setBookingPolicy(policy);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setBookingPolicy(null);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingPolicy(false);
+      });
+
     return () => {
       isMounted = false;
     };
   }, [tutor.id, previewTrialSlots, isUnpublishedProfile]);
 
+  // Track Supabase parent auth session + restore pending direct-booking draft after OTP return
+  useEffect(() => {
+    if (isPreviewMode || isUnpublishedProfile) return;
+    let isMounted = true;
+
+    DirectTrialBookingService.getCurrentSessionUser()
+      .then((user) => {
+        if (!isMounted) return;
+        setAuthUser(user);
+      })
+      .catch(() => {
+        if (isMounted) setAuthUser(null);
+      });
+
+    const unsubscribe = DirectTrialBookingService.onAuthStateChange((user) => {
+      if (!isMounted) return;
+      setAuthUser(user);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [isPreviewMode, isUnpublishedProfile]);
+
+  // Restore saved draft (without auto-confirming!) when validTrialSlots load
+  useEffect(() => {
+    if (!isDirectBookingEnabled || validTrialSlots.length === 0) return;
+    const draft = loadPendingDirectTrialDraft(tutor.id);
+    if (!draft) return;
+
+    const matchingSlot = validTrialSlots.find((s) => s.id === draft.slotId);
+    if (matchingSlot) {
+      setSelectedTrialDate(matchingSlot.slotDate);
+      setSelectedTrialSlotId(matchingSlot.id);
+    }
+    if (draft.guardianName && !guardianName) {
+      setGuardianName(draft.guardianName);
+    }
+    if (draft.countryCode) {
+      setWhatsappCountryCode(draft.countryCode);
+    }
+    if (draft.localPhone && !whatsappLocalPhone) {
+      setWhatsappLocalPhone(draft.localPhone);
+    }
+    setIsDirectPanelOpen(true);
+  }, [isDirectBookingEnabled, tutor.id, validTrialSlots]);
+
   // Initialize earliest trial date & first slot automatically when validTrialSlots load
   useEffect(() => {
     if (availableTrialDates.length > 0) {
+      const stillValidSelected = validTrialSlots.some(
+        (s) => s.id === selectedTrialSlotId
+      );
+      if (stillValidSelected && selectedTrialDate && availableTrialDates.includes(selectedTrialDate)) {
+        return;
+      }
       const firstDate = availableTrialDates[0];
       setSelectedTrialDate(firstDate);
       setTrialDayWindowStart(0);
@@ -285,7 +423,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       setSelectedTrialDate('');
       setSelectedTrialSlotId('');
     }
-  }, [availableTrialDates, trialSlotsByDate]);
+  }, [availableTrialDates, trialSlotsByDate, validTrialSlots, selectedTrialSlotId, selectedTrialDate]);
 
   // Fetch Private Slots & Groups
   useEffect(() => {
@@ -538,6 +676,85 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       whatsappAnalyticsSource: 'trial_booking_modal',
     });
     setIsWhatsAppModalOpen(true);
+  };
+
+  const handleSendDirectOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTrialSlot) return;
+    setDirectBookingError(null);
+    setIsSendingOtp(true);
+    try {
+      savePendingDirectTrialDraft({
+        tutorId: tutor.id,
+        slotId: selectedTrialSlot.id,
+        guardianName: guardianName.trim() || undefined,
+        countryCode: whatsappCountryCode,
+        localPhone: whatsappLocalPhone.trim() || undefined,
+      });
+      const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=${encodeURIComponent(`tutor/${tutor.id}`)}`;
+      await DirectTrialBookingService.signInParentWithOtp(otpEmail, redirectUrl);
+      setOtpSentEmail(otpEmail.trim());
+    } catch (err: any) {
+      setDirectBookingError(
+        err?.message || 'تعذر إرسال رابط الدخول إلى بريدك. يرجى التأكد من صحة البريد الإلكتروني.'
+      );
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleConfirmDirectTrialBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isUnpublishedProfile || isPreviewMode || !selectedTrialSlot) return;
+
+    setDirectBookingError(null);
+    const cleanGuardian = guardianName.trim();
+    if (cleanGuardian.length < 2) {
+      setDirectBookingError('يرجى إدخال اسم ولي الأمر بالكامل.');
+      return;
+    }
+
+    const phoneValidation = normalizeTutorContactPhone(
+      whatsappLocalPhone,
+      whatsappCountryCode
+    );
+    if (!phoneValidation.isValid || !phoneValidation.displayPhone) {
+      setDirectBookingError(
+        phoneValidation.invalidReason ||
+          'يرجى إدخال رقم واتساب صحيح مع اختيار المفتاح الدولي.'
+      );
+      return;
+    }
+
+    setIsConfirmingDirectBooking(true);
+    try {
+      const booked = await DirectTrialBookingService.parentBookTrial({
+        slotId: selectedTrialSlot.id,
+        guardianName: cleanGuardian,
+        whatsapp: phoneValidation.displayPhone,
+      });
+      clearPendingDirectTrialDraft();
+      setConfirmedDirectBooking(booked);
+      setIsDirectPanelOpen(false);
+      await refreshTrialSlots().catch(() => {});
+    } catch (err: any) {
+      setDirectBookingError(
+        err?.message || 'تعذر تأكيد الحجز المجاني حالياً. يرجى المحاولة مرة أخرى.'
+      );
+      if (err?.isSlotUnavailable) {
+        await refreshTrialSlots().catch(() => {});
+      }
+    } finally {
+      setIsConfirmingDirectBooking(false);
+    }
+  };
+
+  const navigateToMyTrials = () => {
+    if (onNavigateToMyTrials) {
+      onNavigateToMyTrials();
+    } else if (typeof window !== 'undefined') {
+      window.location.hash = '#my-trials';
+    }
   };
 
   const handleBookPrivateSlot = (slot: TutorPrivateSlot) => {
@@ -1320,13 +1537,76 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
               {/* =============================================================== */}
               {activeBookingTab === 'trial' && (
                 <div className="space-y-4">
-                  {isLoadingTrialSlots ? (
+                  {confirmedDirectBooking && (() => {
+                    const bookedTime = formatBookingInOwnTimezone(
+                      confirmedDirectBooking.startsAt,
+                      confirmedDirectBooking.endsAt,
+                      confirmedDirectBooking.timezone
+                    );
+                    return (
+                      <div className="p-4 sm:p-5 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-3">
+                        <div className="flex items-start gap-2.5">
+                          <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <h3 className="font-['Cairo'] text-sm sm:text-base font-extrabold text-emerald-950">
+                              تم تأكيد حجز التجربة المجانية بنجاح!
+                            </h3>
+                            <p className="text-xs text-emerald-900 leading-relaxed">
+                              تم تثبيت موعد الحصة التجريبية المجانية مع{' '}
+                              <strong>{confirmedDirectBooking.tutorName || tutor.name}</strong>:
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-white border border-emerald-200 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="text-[11px] text-[#64748B] block">التاريخ:</span>
+                            <span className="font-bold text-[#1F2A44]">{bookedTime.fullDateLabel}</span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] text-[#64748B] block">الوقت:</span>
+                            <span className="font-bold text-[#0D4E8B]">
+                              {bookedTime.timeRangeLabel} ({bookedTime.timezoneLabel})
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-emerald-900 leading-relaxed">
+                          سيظهر رابط Google Meet أو Zoom داخل صفحة «حجوزاتي» فور إضافته من المعلم.
+                        </p>
+
+                        <button
+                          type="button"
+                          onClick={navigateToMyTrials}
+                          className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-['Cairo'] font-extrabold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <CalendarCheck2 className="w-4 h-4" />
+                          <span>عرض تفاصيل الحجز في «حجوزاتي»</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  {isLoadingTrialSlots || isLoadingPolicy ? (
                     <div className="py-8 flex flex-col items-center justify-center gap-2 text-xs text-[#64748B]">
                       <Loader2 className="w-6 h-6 text-[#0D4E8B] animate-spin" />
                       <span>جاري تحميل المواعيد التجريبية المتاحة...</span>
                     </div>
                   ) : availableTrialDates.length > 0 ? (
                     <>
+                      {isDirectBookingEnabled && bookingPolicy && (
+                        <div className="px-3.5 py-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 flex items-center justify-between flex-wrap gap-2 text-[11px]">
+                          <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+                            <CalendarCheck2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                            <span>الحجز المباشر الفوري مفعّل مجانًا</span>
+                          </span>
+                          <span className="font-medium text-emerald-800">
+                            مهلة الحجز: قبل الموعد بـ{' '}
+                            {formatMinimumNoticeArabic(bookingPolicy.minimumNoticeMinutes)} على الأقل
+                          </span>
+                        </div>
+                      )}
+
                       {/* Step 1: Available Days Strip + Next/Prev + Mini Calendar Toggle */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
@@ -1488,12 +1768,14 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                         </div>
                       )}
 
-                      {/* Step 3: ONE Unified Booking Summary Box */}
+                      {/* Step 3: Unified Booking Summary & Direct Booking OR WhatsApp Fallback */}
                       {selectedTrialSlot && selectedTrialSlotPayload && (
                         <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#D1DCFE] space-y-3">
                           <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-2">
                             <span className="font-['Cairo'] text-xs font-extrabold text-[#0D4E8B]">
-                              ملخص طلب التجربة المجانية
+                              {isDirectBookingEnabled
+                                ? 'ملخص الحجز التجريبي المباشر'
+                                : 'ملخص طلب التجربة المجانية'}
                             </span>
                             <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                               مجانًا — ٠ ج.م
@@ -1525,38 +1807,244 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                             <div>
                               <span className="text-[11px] text-[#64748B] block">المدة والسعر:</span>
                               <span className="font-bold text-emerald-700">
-                                {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة • مجانًا
+                                {toArabicDigits(
+                                  bookingPolicy?.trialDurationMinutes ||
+                                    tutor.trialDurationMinutes ||
+                                    20
+                                )}{' '}
+                                دقيقة • مجانًا
                               </span>
                             </div>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={openTrialWhatsAppModal}
-                            className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-                          >
-                            <MessageCircle className="w-4 h-4 text-[#1F2A44]" />
-                            <span>إرسال طلب التجربة عبر واتساب</span>
-                          </button>
+                          {isDirectBookingEnabled ? (
+                            <div className="space-y-3 pt-1">
+                              {!isDirectPanelOpen ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setDirectBookingError(null);
+                                      setIsDirectPanelOpen(true);
+                                    }}
+                                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                                  >
+                                    <CalendarCheck2 className="w-4 h-4 text-[#1F2A44]" />
+                                    <span>احجز التجربة المجانية مباشرة</span>
+                                  </button>
 
-                          <p className="text-[11px] text-[#535E7B] leading-relaxed text-center">
-                            التواصل عبر واتساب هو طلب تنسيق، ولا يُعتبر الموعد مؤكدًا إلا بعد تأكيد الإدارة.
-                          </p>
+                                  <button
+                                    type="button"
+                                    onClick={openTrialWhatsAppModal}
+                                    className="w-full py-1.5 text-[11px] font-bold text-[#0D4E8B] hover:underline text-center cursor-pointer"
+                                  >
+                                    تحتاج مساعدة في الاختيار؟ تنسيق عبر واتساب الإدارة
+                                  </button>
+                                </>
+                              ) : !authUser ? (
+                                <div className="p-3.5 rounded-xl bg-white border border-[#CBD5E1] space-y-3">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-['Cairo'] text-xs font-extrabold text-[#1F2A44] flex items-center gap-1.5">
+                                      <Mail className="w-4 h-4 text-[#0D4E8B]" />
+                                      <span>١. سجّل الدخول ببريدك لتأكيد الحجز</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setIsDirectPanelOpen(false)}
+                                      className="text-[11px] font-bold text-[#64748B] hover:text-[#1F2A44] cursor-pointer"
+                                    >
+                                      إغلاق
+                                    </button>
+                                  </div>
+
+                                  {otpSentEmail ? (
+                                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2 text-xs text-emerald-900">
+                                      <p className="font-bold">
+                                        تم إرسال رابط الدخول إلى{' '}
+                                        <span dir="ltr">{otpSentEmail}</span>
+                                      </p>
+                                      <p className="text-[11px] leading-relaxed">
+                                        افتح الرابط المرسل لبريدك للعودة إلى هذا الموعد وإدخال بياناتك ثم الضغط على «تأكيد الحجز المجاني».
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => setOtpSentEmail(null)}
+                                        className="text-[11px] font-bold text-[#0D4E8B] underline cursor-pointer"
+                                      >
+                                        استخدام بريد آخر
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <form onSubmit={handleSendDirectOtp} className="space-y-2.5">
+                                      <p className="text-[11px] text-[#535E7B] leading-relaxed">
+                                        سنرسل رابط دخول مباشر لبريدك الإلكتروني (بدون كلمة مرور) لحفظ حجزك وإظهار رابط الحصة في «حجوزاتي».
+                                      </p>
+                                      <input
+                                        type="email"
+                                        required
+                                        dir="ltr"
+                                        value={otpEmail}
+                                        onChange={(e) => setOtpEmail(e.target.value)}
+                                        placeholder="parent@example.com"
+                                        className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
+                                      />
+                                      {directBookingError && (
+                                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold flex items-start gap-1.5">
+                                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                          <span>{directBookingError}</span>
+                                        </div>
+                                      )}
+                                      <button
+                                        type="submit"
+                                        disabled={isSendingOtp}
+                                        className="w-full min-h-[42px] py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                                      >
+                                        {isSendingOtp ? (
+                                          <>
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            <span>جاري الإرسال...</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Mail className="w-3.5 h-3.5" />
+                                            <span>إرسال رابط الدخول لبريدك</span>
+                                          </>
+                                        )}
+                                      </button>
+                                    </form>
+                                  )}
+                                </div>
+                              ) : (
+                                <form
+                                  onSubmit={handleConfirmDirectTrialBooking}
+                                  className="p-3.5 rounded-xl bg-white border border-[#CBD5E1] space-y-3"
+                                >
+                                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                                    <span className="font-bold text-emerald-800">
+                                      مسجل الدخول: <span dir="ltr">{authUser.email}</span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => DirectTrialBookingService.signOutSession()}
+                                      className="text-[#0D4E8B] font-bold hover:underline cursor-pointer"
+                                    >
+                                      تغيير البريد
+                                    </button>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="block text-[11px] font-bold text-[#1F2A44]">
+                                      اسم ولي الأمر
+                                    </label>
+                                    <input
+                                      type="text"
+                                      required
+                                      value={guardianName}
+                                      onChange={(e) => setGuardianName(e.target.value)}
+                                      placeholder="الاسم الثنائي لولي الأمر"
+                                      className="w-full min-h-[40px] px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="block text-[11px] font-bold text-[#1F2A44]">
+                                      رقم واتساب (مع مفتاح الدولة)
+                                    </label>
+                                    <div className="grid grid-cols-12 gap-1.5">
+                                      <select
+                                        value={whatsappCountryCode}
+                                        onChange={(e) => setWhatsappCountryCode(e.target.value)}
+                                        className="col-span-5 min-h-[40px] px-2 py-2 rounded-xl border border-[#CBD5E1] bg-white text-[11px] font-bold text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
+                                        aria-label="المفتاح الدولي"
+                                      >
+                                        {PARENT_LEAD_COUNTRY_OPTIONS.map((opt) => (
+                                          <option key={opt.code} value={opt.code}>
+                                            {opt.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="tel"
+                                        required
+                                        dir="ltr"
+                                        value={whatsappLocalPhone}
+                                        onChange={(e) => setWhatsappLocalPhone(e.target.value)}
+                                        placeholder="01012345678"
+                                        className="col-span-7 min-h-[40px] px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {directBookingError && (
+                                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold flex items-start gap-1.5">
+                                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                      <span>{directBookingError}</span>
+                                    </div>
+                                  )}
+
+                                  <button
+                                    type="submit"
+                                    disabled={isConfirmingDirectBooking}
+                                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                                  >
+                                    {isConfirmingDirectBooking ? (
+                                      <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        <span>جاري تأكيد الحجز...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <CheckCircle2 className="w-4 h-4" />
+                                        <span>تأكيد الحجز المجاني</span>
+                                      </>
+                                    )}
+                                  </button>
+
+                                  <p className="text-[10px] text-[#535E7B] text-center leading-relaxed">
+                                    لن يتم تأكيد الحجز وإغلاق الموعد إلا بعد الضغط على «تأكيد الحجز المجاني».
+                                  </p>
+                                </form>
+                              )}
+                            </div>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={openTrialWhatsAppModal}
+                                className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                              >
+                                <MessageCircle className="w-4 h-4 text-[#1F2A44]" />
+                                <span>إرسال طلب التجربة عبر واتساب</span>
+                              </button>
+
+                              <p className="text-[11px] text-[#535E7B] leading-relaxed text-center">
+                                التواصل عبر واتساب هو طلب تنسيق، ولا يُعتبر الموعد مؤكدًا إلا بعد تأكيد الإدارة.
+                              </p>
+                            </>
+                          )}
                         </div>
                       )}
                     </>
                   ) : (
-                    /* Honest Empty State when no trial slots exist */
+                    /* Honest Empty State when no qualifying trial slots exist */
                     <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] text-center space-y-3">
                       <div className="w-10 h-10 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto">
                         <Calendar className="w-5 h-5" />
                       </div>
                       <div className="space-y-1">
                         <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                          لا توجد مواعيد تجريبية مضافة حاليًا
+                          {hasNoticeFilteredOutAllSlots
+                            ? 'لا توجد مواعيد متاحة للحجز المباشر ضمن المهلة المطلوبة حاليًا'
+                            : 'لا توجد مواعيد تجريبية مضافة حاليًا'}
                         </h3>
                         <p className="text-xs text-[#535E7B] leading-relaxed">
-                          يمكنك إرسال طلب تنسيق عبر إدارة شاطر لتحديد أقرب موعد تجربة مجانية ({toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة) يناسب جدولكم مع المعلم.
+                          {hasNoticeFilteredOutAllSlots && bookingPolicy
+                            ? `يتطلب الحجز المباشر توفر مهلة لا تقل عن ${formatMinimumNoticeArabic(
+                                bookingPolicy.minimumNoticeMinutes
+                              )} قبل بدء الحصة. يمكنك التنسيق الفوري عبر واتساب الإدارة لاختيار موعد يناسبكم.`
+                            : `يمكنك إرسال طلب تنسيق عبر إدارة شاطر لتحديد أقرب موعد تجربة مجانية (${toArabicDigits(
+                                tutor.trialDurationMinutes || 20
+                              )} دقيقة) يناسب جدولكم مع المعلم.`}
                         </p>
                       </div>
                       <button
@@ -2078,11 +2566,26 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
             <button
               type="button"
-              onClick={openTrialWhatsAppModal}
+              onClick={() => {
+                if (isDirectBookingEnabled && availableTrialDates.length > 0) {
+                  setIsDirectPanelOpen(true);
+                  scrollToBookingSection('trial');
+                } else {
+                  openTrialWhatsAppModal();
+                }
+              }}
               className="shrink-0 min-h-[44px] py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              <MessageCircle className="w-3.5 h-3.5 text-[#1F2A44]" />
-              <span>اطلب تجربة مجانية</span>
+              {isDirectBookingEnabled && availableTrialDates.length > 0 ? (
+                <CalendarCheck2 className="w-3.5 h-3.5 text-[#1F2A44]" />
+              ) : (
+                <MessageCircle className="w-3.5 h-3.5 text-[#1F2A44]" />
+              )}
+              <span>
+                {isDirectBookingEnabled && availableTrialDates.length > 0
+                  ? 'احجز تجربة مجانية'
+                  : 'اطلب تجربة مجانية'}
+              </span>
             </button>
           </div>,
           document.body

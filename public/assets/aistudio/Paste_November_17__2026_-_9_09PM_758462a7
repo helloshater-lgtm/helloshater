@@ -1,0 +1,880 @@
+# أمر 08 (أ) من 3: أساس نظام التصميم
+
+**قواعد التنفيذ:**
+- نفّذ المطلوب **بالحرف**، وما تغيّرش أي حاجة تانية، وما تضيفش تحسينات من عندك.
+- الملفات المكتوبة «استبدل المحتوى بالكامل»: امسح محتوى الملف القديم وحط النص ده مكانه زي ما هو (ولو الملف مش موجود، أنشئه).
+- الملفات المكتوبة «patch»: طبّق الفرق (السطور بـ `-` تتشال، وبـ `+` تتضاف).
+- ما تحفظش نص الأمر ده كملف جوه المشروع، وما تشغّلش أي SQL.
+- **ما ترفعش على GitHub لسه.** الرفع بيكون مرة واحدة بعد آخر جزء (ج).
+
+### استبدل المحتوى بالكامل: `src/components/ui/Modal.tsx`
+
+```tsx
+import React, { useEffect, useId, useRef } from 'react';
+
+// The one window used by every form and detail view.
+//  - Phone: a sheet that rises from the bottom, as tall as its content (up to 92% of the screen).
+//  - Computer: centered, in one of three fixed widths.
+//  - Fixed title bar on top and fixed action bar at the bottom; only the middle scrolls.
+//  - Esc closes it, the page behind does not scroll, and keyboard focus stays inside.
+
+export type ModalSize = 'sm' | 'md' | 'lg';
+
+const WIDTH: Record<ModalSize, string> = {
+  sm: 'sm:max-w-[440px]',
+  md: 'sm:max-w-[560px]',
+  lg: 'sm:max-w-[720px]',
+};
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+let openCount = 0;
+
+export interface ModalProps {
+  open: boolean;
+  onClose: () => void;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  /** Material Symbols icon name shown next to the title */
+  icon?: string;
+  size?: ModalSize;
+  /** Buttons shown in the fixed bottom bar */
+  footer?: React.ReactNode;
+  /** Message shown right above the buttons (e.g. why saving failed), where the user is looking */
+  footerMessage?: React.ReactNode;
+  /** Wrap the body and footer in a form so Enter submits and the footer submit button works */
+  onSubmit?: (e: React.FormEvent) => void;
+  /** Close when the dark background is clicked (default true; turn off for long forms) */
+  closeOnBackdrop?: boolean;
+  /**
+   * The children lay out their own scrolling body and bottom bar (older windows moved onto this
+   * frame). They are placed in a flex column under the title bar instead of the standard body.
+   */
+  bare?: boolean;
+  /** Extra content under the title (e.g. a progress bar) */
+  headerExtra?: React.ReactNode;
+  children: React.ReactNode;
+}
+
+export const Modal: React.FC<ModalProps> = ({
+  open,
+  onClose,
+  title,
+  description,
+  icon,
+  size = 'md',
+  footer,
+  footerMessage,
+  onSubmit,
+  closeOnBackdrop = true,
+  bare = false,
+  headerExtra,
+  children,
+}) => {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const descId = useId();
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    // Lock the page behind (counted, so stacked windows unlock correctly)
+    openCount += 1;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // Focus the first field (or the panel) when the window opens
+    const t = window.setTimeout(() => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const firstField = panel.querySelector<HTMLElement>('[data-autofocus], input:not([type="hidden"]), select, textarea');
+      (firstField || panel).focus({ preventScroll: true });
+    }, 30);
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key === 'Tab' && panelRef.current) {
+        const items = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+          (el) => el.offsetParent !== null || el === document.activeElement
+        );
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('keydown', onKey);
+      openCount = Math.max(0, openCount - 1);
+      if (openCount === 0) document.body.style.overflow = prevOverflow;
+      previouslyFocused?.focus?.({ preventScroll: true });
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const body = bare ? (
+    <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+  ) : (
+    <>
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">{children}</div>
+      {footer && (
+        <div className="shrink-0 border-t border-line-soft bg-surface px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-4">
+          {footerMessage && <div className="mb-3">{footerMessage}</div>}
+          {/* Children in order [secondary, primary]: in RTL the primary sits on the left, wide on phones */}
+          <div className="flex items-center justify-end gap-3 [&>*:last-child]:flex-1 sm:[&>*:last-child]:flex-none">
+            {footer}
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" dir="rtl">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-ink/50 animate-in fade-in duration-150"
+        onClick={closeOnBackdrop ? onClose : undefined}
+      />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descId : undefined}
+        tabIndex={-1}
+        className={`relative flex w-full ${WIDTH[size]} max-h-[92dvh] sm:max-h-[86dvh] flex-col overflow-hidden rounded-t-[var(--radius-panel)] sm:rounded-[var(--radius-panel)] bg-surface text-ink shadow-[var(--shadow-panel)] outline-none animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-200`}
+      >
+        {/* Grab handle (phone) */}
+        <div aria-hidden="true" className="sm:hidden flex justify-center pt-2.5">
+          <span className="h-1 w-10 rounded-full bg-line" />
+        </div>
+
+        <header className="shrink-0 flex items-start gap-3 border-b border-line-soft px-5 pt-3 pb-4 sm:px-6 sm:pt-5">
+          {icon && (
+            <span aria-hidden="true" className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+              <span className="material-symbols-outlined !text-[22px]">{icon}</span>
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
+            <h2 id={titleId} className="text-lg font-bold leading-snug text-ink">
+              {title}
+            </h2>
+            {description && (
+              <p id={descId} className="mt-0.5 text-sm leading-relaxed text-muted">
+                {description}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق"
+            className="-mt-1 -ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted hover:bg-canvas hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-500 cursor-pointer"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-[22px]">
+              close
+            </span>
+          </button>
+        </header>
+        {headerExtra && <div className="shrink-0 border-b border-line-soft px-5 py-3 sm:px-6">{headerExtra}</div>}
+
+        {onSubmit ? (
+          <form onSubmit={onSubmit} noValidate className="flex min-h-0 flex-1 flex-col">
+            {body}
+          </form>
+        ) : (
+          body
+        )}
+      </div>
+    </div>
+  );
+};
+```
+
+### استبدل المحتوى بالكامل: `src/components/ui/Button.tsx`
+
+```tsx
+import React from 'react';
+
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonSize = 'md' | 'sm';
+
+const VARIANT: Record<ButtonVariant, string> = {
+  primary: 'bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800 shadow-xs',
+  secondary: 'bg-surface text-ink border border-line hover:bg-canvas active:bg-line-soft',
+  ghost: 'bg-transparent text-brand-700 hover:bg-brand-50 active:bg-brand-100',
+  danger: 'bg-surface text-danger-600 border border-danger-600/30 hover:bg-danger-50',
+};
+
+const SIZE: Record<ButtonSize, string> = {
+  md: 'min-h-12 px-5 text-base gap-2',
+  sm: 'min-h-10 px-4 text-sm gap-1.5',
+};
+
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  /** Material Symbols icon name shown before the label */
+  icon?: string;
+  loading?: boolean;
+  fullWidth?: boolean;
+}
+
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ variant = 'primary', size = 'md', icon, loading, fullWidth, className = '', children, disabled, type = 'button', ...rest }, ref) => (
+    <button
+      ref={ref}
+      type={type}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      className={`inline-flex items-center justify-center rounded-[var(--radius-control)] font-bold transition-colors cursor-pointer select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-55 ${VARIANT[variant]} ${SIZE[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
+      {...rest}
+    >
+      {loading ? (
+        <span aria-hidden="true" className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+      ) : (
+        icon && (
+          <span aria-hidden="true" className="material-symbols-outlined text-[20px]">
+            {icon}
+          </span>
+        )
+      )}
+      <span>{children}</span>
+    </button>
+  )
+);
+Button.displayName = 'Button';
+```
+
+### استبدل المحتوى بالكامل: `src/components/ui/Form.tsx`
+
+```tsx
+import React, { useId } from 'react';
+
+// Form building blocks. Every field: 48px tall, 16px text (no iPhone zoom), the label above,
+// help text under it, and the error in the same spot, linked for screen readers.
+
+const CONTROL =
+  'block w-full min-h-12 rounded-[var(--radius-control)] border bg-field px-3.5 text-base text-ink placeholder:text-muted/70 ' +
+  'transition-colors focus:outline-none focus:ring-3 focus:ring-brand-500/20 disabled:bg-canvas disabled:text-muted';
+
+const borderFor = (error?: string) => (error ? 'border-danger-600 focus:border-danger-600' : 'border-line focus:border-brand-500');
+
+interface FieldContext {
+  id: string;
+  describedBy?: string;
+  error?: string;
+}
+const FieldCtx = React.createContext<FieldContext | null>(null);
+
+export interface FieldProps {
+  label: React.ReactNode;
+  required?: boolean;
+  hint?: React.ReactNode;
+  error?: string;
+  /** Extra element aligned with the label (e.g. a small link) */
+  action?: React.ReactNode;
+  className?: string;
+  /** Fixed id for the control (otherwise one is generated) */
+  id?: string;
+  children: React.ReactNode;
+}
+
+export const Field: React.FC<FieldProps> = ({ label, required, hint, error, action, className = '', id: fixedId, children }) => {
+  const generatedId = useId();
+  const id = fixedId || generatedId;
+  const hintId = hint ? `${id}-hint` : undefined;
+  const errorId = error ? `${id}-error` : undefined;
+  const describedBy = [errorId, hintId].filter(Boolean).join(' ') || undefined;
+  return (
+    <FieldCtx.Provider value={{ id, describedBy, error }}>
+      <div className={className}>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <label htmlFor={id} className="text-sm font-bold text-ink-soft">
+            {label}
+            {required && (
+              <span className="text-danger-600" aria-hidden="true">
+                {' '}*
+              </span>
+            )}
+          </label>
+          {action}
+        </div>
+        {children}
+        {error ? (
+          <p id={errorId} role="alert" className="mt-1.5 text-sm font-medium text-danger-600">
+            {error}
+          </p>
+        ) : (
+          hint && (
+            <p id={hintId} className="mt-1.5 text-[13px] leading-relaxed text-muted">
+              {hint}
+            </p>
+          )
+        )}
+      </div>
+    </FieldCtx.Provider>
+  );
+};
+
+function useFieldProps(error?: string) {
+  const ctx = React.useContext(FieldCtx);
+  const err = error ?? ctx?.error;
+  return { id: ctx?.id, 'aria-describedby': ctx?.describedBy, 'aria-invalid': err ? true : undefined, err };
+}
+
+export const TextInput = React.forwardRef<
+  HTMLInputElement,
+  React.InputHTMLAttributes<HTMLInputElement> & { error?: string; suffix?: React.ReactNode }
+>(({ className = '', error, suffix, ...rest }, ref) => {
+  const { err, ...a11y } = useFieldProps(error);
+  const input = <input ref={ref} {...a11y} {...rest} className={`${CONTROL} ${borderFor(err)} ${suffix ? 'pl-14' : ''} ${className}`} />;
+  if (!suffix) return input;
+  return (
+    <div className="relative">
+      {input}
+      <span className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-sm text-muted">{suffix}</span>
+    </div>
+  );
+});
+TextInput.displayName = 'TextInput';
+
+export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement> & { error?: string }>(
+  ({ className = '', error, children, ...rest }, ref) => {
+    const { err, ...a11y } = useFieldProps(error);
+    return (
+      <div className="relative">
+        <select
+          ref={ref}
+          {...a11y}
+          {...rest}
+          className={`${CONTROL} ${borderFor(err)} appearance-none pl-10 truncate cursor-pointer ${className}`}
+        >
+          {children}
+        </select>
+        {/* Wrapper does the centering: the icon font's own CSS forces display:inline-block */}
+        <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted">
+          <span className="material-symbols-outlined !text-[20px]">expand_more</span>
+        </span>
+      </div>
+    );
+  }
+);
+Select.displayName = 'Select';
+
+export const TextArea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement> & { error?: string }>(
+  ({ className = '', error, rows = 3, ...rest }, ref) => {
+    const { err, ...a11y } = useFieldProps(error);
+    return <textarea ref={ref} rows={rows} {...a11y} {...rest} className={`${CONTROL} ${borderFor(err)} py-3 leading-relaxed resize-y ${className}`} />;
+  }
+);
+TextArea.displayName = 'TextArea';
+
+// A group of choices shown as buttons that wrap onto new lines (never overflow the screen).
+export interface ChoiceOption<T extends string | number> {
+  value: T;
+  label: React.ReactNode;
+}
+
+export function ChoiceGroup<T extends string | number>({
+  label,
+  options,
+  value,
+  onChange,
+  multiple,
+  columns,
+  required,
+  hint,
+  error,
+}: {
+  label: React.ReactNode;
+  options: ChoiceOption<T>[];
+  value: T | T[] | undefined;
+  onChange: (value: any) => void;
+  multiple?: boolean;
+  /** Fixed number of columns; otherwise buttons size to their text and wrap */
+  columns?: 2 | 3 | 4 | 7;
+  required?: boolean;
+  hint?: React.ReactNode;
+  error?: string;
+}) {
+  const id = useId();
+  const selected = (v: T) => (Array.isArray(value) ? value.includes(v) : value === v);
+  const toggle = (v: T) => {
+    if (!multiple) return onChange(v);
+    const list = Array.isArray(value) ? value : [];
+    onChange(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  };
+  const grid = columns
+    ? { 2: 'grid grid-cols-2', 3: 'grid grid-cols-3', 4: 'grid grid-cols-4', 7: 'grid grid-cols-4 sm:grid-cols-7' }[columns]
+    : 'flex flex-wrap';
+  return (
+    <div>
+      <p id={`${id}-label`} className="mb-1.5 text-sm font-bold text-ink-soft">
+        {label}
+        {required && (
+          <span className="text-danger-600" aria-hidden="true">
+            {' '}*
+          </span>
+        )}
+      </p>
+      <div role={multiple ? 'group' : 'radiogroup'} aria-labelledby={`${id}-label`} className={`${grid} gap-2`}>
+        {options.map((o) => {
+          const on = selected(o.value);
+          return (
+            <button
+              key={String(o.value)}
+              type="button"
+              role={multiple ? undefined : 'radio'}
+              aria-checked={multiple ? undefined : on}
+              aria-pressed={multiple ? on : undefined}
+              onClick={() => toggle(o.value)}
+              className={`min-h-11 rounded-[var(--radius-control)] border px-3.5 text-[15px] font-bold transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-brand-500 ${
+                on ? 'border-brand-600 bg-brand-600 text-white' : 'border-line bg-surface text-ink-soft hover:border-brand-300 hover:bg-brand-50'
+              }`}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+      {error ? (
+        <p role="alert" className="mt-1.5 text-sm font-medium text-danger-600">
+          {error}
+        </p>
+      ) : (
+        hint && <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{hint}</p>
+      )}
+    </div>
+  );
+}
+
+// A titled group of fields inside a form.
+export const FormSection: React.FC<{ title?: React.ReactNode; description?: React.ReactNode; children: React.ReactNode }> = ({
+  title,
+  description,
+  children,
+}) => (
+  <section className="space-y-4 border-b border-line-soft pb-6 last:border-b-0 last:pb-0">
+    {title && (
+      <div>
+        <h3 className="text-base font-bold text-ink">{title}</h3>
+        {description && <p className="mt-0.5 text-[13px] text-muted">{description}</p>}
+      </div>
+    )}
+    {children}
+  </section>
+);
+
+// Short notice inside forms (info / warning / error / success).
+export const Notice: React.FC<{ tone?: 'info' | 'warning' | 'danger' | 'success'; children: React.ReactNode }> = ({
+  tone = 'info',
+  children,
+}) => {
+  const styles = {
+    info: 'bg-brand-50 text-brand-800 border-brand-100',
+    warning: 'bg-warning-50 text-warning-700 border-warning-700/20',
+    danger: 'bg-danger-50 text-danger-600 border-danger-600/20',
+    success: 'bg-success-50 text-success-700 border-success-700/20',
+  }[tone];
+  return (
+    <div role={tone === 'danger' ? 'alert' : undefined} className={`rounded-[var(--radius-control)] border px-3.5 py-3 text-sm leading-relaxed ${styles}`}>
+      {children}
+    </div>
+  );
+};
+```
+
+### استبدل المحتوى بالكامل: `src/components/common/ScheduleFields.tsx`
+
+```tsx
+import React from 'react';
+import {
+  FAMILY_LOCATIONS,
+  WEEKDAYS_AR,
+  convertCairoSlot,
+  findFamilyLocation,
+  suggestFamilyLocationFromPhone,
+  zoneLabel,
+} from '../../utils/schedule';
+import { ChoiceGroup, Field, Select } from '../ui/Form';
+
+// Where the family lives. Sets both the country and the time zone used to show them session times.
+export const FamilyLocationSelect: React.FC<{
+  timezone?: string;
+  countryCode?: string;
+  onChange: (value: { timezone?: string; countryCode?: string }) => void;
+  id?: string;
+  /** Parent's full WhatsApp number, used to suggest the country when none is chosen yet. */
+  parentPhone?: string;
+}> = ({ timezone, countryCode, onChange, parentPhone, id = 'family-location' }) => {
+  const current = findFamilyLocation(timezone, countryCode);
+  // Suggest only once a real number is typed (the country code alone is not enough)
+  const hasNumber = (parentPhone || '').replace(/\D/g, '').length >= 8;
+  const suggestion = !current && hasNumber ? suggestFamilyLocationFromPhone(parentPhone) : undefined;
+  return (
+    <Field
+      id={id}
+      label="بلد إقامة الأسرة"
+      hint="ولي الأمر بيشوف مواعيد الحصص بتوقيت بلده، والمعلم بيشوفها بتوقيت القاهرة."
+    >
+      <Select
+        value={current?.key || ''}
+        onChange={(e) => {
+          const loc = FAMILY_LOCATIONS.find((l) => l.key === e.target.value);
+          onChange(loc ? { timezone: loc.timezone, countryCode: loc.countryCode } : { timezone: undefined, countryCode: undefined });
+        }}
+      >
+        <option value="">غير محدد (بتوقيت القاهرة)</option>
+        {FAMILY_LOCATIONS.map((l) => (
+          <option key={l.key} value={l.key}>
+            {l.label}
+          </option>
+        ))}
+      </Select>
+      {suggestion && (
+        <button
+          type="button"
+          onClick={() => onChange({ timezone: suggestion.timezone, countryCode: suggestion.countryCode })}
+          className="mt-2 inline-flex min-h-10 items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3.5 text-sm font-bold text-brand-700 hover:bg-brand-100 cursor-pointer"
+        >
+          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">
+            lightbulb
+          </span>
+          من رقم الواتساب: {suggestion.label}، اضغط للاختيار
+        </button>
+      )}
+    </Field>
+  );
+};
+
+// Days of the week with a time per day, entered in Cairo time.
+// `dayTimes` holds 24h "HH:MM" values keyed by Arabic day name.
+export const WeeklyScheduleEditor: React.FC<{
+  selectedDays: string[];
+  dayTimes: Record<string, string>;
+  onChange: (days: string[], times: Record<string, string>) => void;
+  duration?: number;
+  onDurationChange?: (minutes: number) => void;
+  familyTimezone?: string;
+  daysError?: string;
+}> = ({ selectedDays, dayTimes, onChange, duration, onDurationChange, familyTimezone, daysError }) => {
+  const ordered = WEEKDAYS_AR.filter((d) => selectedDays.includes(d));
+  const showFamily = !!familyTimezone && familyTimezone !== 'Africa/Cairo';
+
+  return (
+    <div className="space-y-4">
+      <ChoiceGroup
+        label="أيام الحصص"
+        required
+        multiple
+        columns={7}
+        options={WEEKDAYS_AR.map((d) => ({ value: d, label: d }))}
+        value={selectedDays}
+        error={daysError}
+        onChange={(days: string[]) => {
+          const times: Record<string, string> = {};
+          for (const d of days) times[d] = dayTimes[d] || '';
+          onChange(days, times);
+        }}
+      />
+
+      {ordered.length > 0 && (
+        <div className="rounded-[var(--radius-control)] border border-line-soft bg-canvas/60 p-3 sm:p-4">
+          <p className="mb-2.5 text-sm font-bold text-ink-soft">وقت كل حصة (بتوقيت القاهرة)</p>
+          <ul className="space-y-2">
+            {ordered.map((day) => {
+              const time = dayTimes[day] || '';
+              const family = showFamily && time ? convertCairoSlot(day, time, familyTimezone) : null;
+              return (
+                <li key={day} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[var(--radius-control)] bg-surface px-3 py-2.5 border border-line-soft">
+                  <label htmlFor={`time-${day}`} className="w-20 shrink-0 text-[15px] font-bold text-ink">
+                    {day}
+                  </label>
+                  <input
+                    id={`time-${day}`}
+                    type="time"
+                    dir="ltr"
+                    required
+                    value={time}
+                    onChange={(e) => onChange(selectedDays, { ...dayTimes, [day]: e.target.value })}
+                    className="min-h-11 w-36 rounded-[var(--radius-control)] border border-line bg-field px-3 text-center text-base font-bold text-ink focus:border-brand-500 focus:outline-none focus:ring-3 focus:ring-brand-500/20"
+                  />
+                  {/* The field already shows the Cairo time; only add what the family sees */}
+                  {!time ? (
+                    <span className="text-sm text-muted">اختر الوقت</span>
+                  ) : (
+                    family && (
+                      <span className="text-sm font-bold text-brand-700">
+                        عند الأسرة: {family.day !== day ? `${family.day} ` : ''}
+                        {family.time} ({zoneLabel(familyTimezone).replace('بتوقيت ', '')})
+                      </span>
+                    )
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {onDurationChange && (
+        <ChoiceGroup
+          label="مدة الحصة"
+          columns={3}
+          options={[30, 45, 60].map((m) => ({ value: m, label: `${m} دقيقة` }))}
+          value={duration}
+          onChange={onDurationChange}
+        />
+      )}
+    </div>
+  );
+};
+```
+
+### استبدل المحتوى بالكامل: `design-preview.html`
+
+```tsx
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>معاينة التصميم</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=block" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/design-preview/main.tsx"></script>
+  </body>
+</html>
+```
+
+### استبدل المحتوى بالكامل: `src/design-preview/main.tsx`
+
+```tsx
+// Local design preview: open forms with sample data, no sign-in needed.
+// Run: npx vite --config vite.preview.config.ts  →  /design-preview.html?view=edit-student
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import '../index.css';
+import { EditStudentModal } from '../components/modals/EditStudentModal';
+import { AddStudentModal } from '../components/modals/AddStudentModal';
+import { AddTeacherModal } from '../components/modals/AddTeacherModal';
+import { StudentDetailsModal } from '../components/modals/StudentDetailsModal';
+import { VacationModal } from '../components/modals/VacationModal';
+import { LogSessionModal } from '../components/modals/LogSessionModal';
+import { ActivityLogModal } from '../components/modals/ActivityLogModal';
+import { StudentsListView } from '../components/views/StudentsListView';
+import type { Student } from '../types';
+
+const sampleStudent = {
+  id: 'preview-1',
+  name: 'طالب تجريبي للمعاينة',
+  teacherId: 't2',
+  parentPhone: '+966583194463',
+  subscriptionFee: 800,
+  teacherCost: 400,
+  subscriptionDate: '2026-10-01',
+  lastReportDate: '2026-09-29',
+  status: 'active',
+  notes: '',
+  surahProgress: 'طالب جديد بالحلقة',
+  initials: 'ط',
+  scheduleDays: ['الأحد', 'الأربعاء'],
+  sessionTime: '02:00 م بتوقيت مكة',
+  packageSessionsCount: 8,
+} as Student;
+
+const view = new URLSearchParams(location.search).get('view') || 'edit-student';
+const close = () => {};
+
+function Preview() {
+  return (
+    <div className="min-h-screen bg-canvas p-6 text-ink" dir="rtl">
+      <p className="text-sm text-muted">معاينة التصميم: {view}</p>
+      {view === 'edit-student' && <EditStudentModal isOpen student={sampleStudent} onClose={close} />}
+      {view === 'add-student' && <AddStudentModal isOpen onClose={close} />}
+      {view === 'add-teacher' && <AddTeacherModal isOpen onClose={close} />}
+      {view === 'student-details' && (
+        <StudentDetailsModal isOpen student={sampleStudent} onClose={close} onEditStudent={close} onAddReport={close} onManageVacation={close} />
+      )}
+      {view === 'vacation' && <VacationModal isOpen student={sampleStudent} onClose={close} />}
+      {view === 'log-session' && <LogSessionModal isOpen student={sampleStudent} onClose={close} />}
+      {view === 'activity-log' && <ActivityLogModal isOpen onClose={close} />}
+      {view === 'students' && <StudentsListView onAddStudent={close} onEditStudent={close} onAddReport={close} onManageVacation={close} />}
+    </div>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(<Preview />);
+```
+
+### استبدل المحتوى بالكامل: `src/design-preview/mockAppContext.tsx`
+
+```tsx
+// Stand-in for AppContext used only by the local design preview (design-preview.html).
+// Returns sample data for the fields the forms read; any other key is a harmless no-op.
+import React from 'react';
+
+const teachers = [
+  { id: 't1', name: 'الأستاذة فاطمة الزهراء', circleName: 'حلقة النور', supervisorId: 's1' },
+  { id: 't2', name: 'الشيخ محمد أبو شتا', circleName: 'حلقة الفرقان', supervisorId: 's1' },
+];
+const supervisors = [{ id: 's1', name: 'الشيخ أنس', role: 'sub_supervisor', title: 'المشرف التعليمي', department: 'الشؤون التعليمية' }];
+
+const values: Record<string, any> = {
+  currentUser: { id: 'm1', name: 'المدير (معاينة)', role: new URLSearchParams(location.search).get('role') || 'manager', title: 'المدير' },
+  visibleTeachers: teachers,
+  teachers,
+  supervisors,
+  visibleStudents: [
+    { id: 'p1', name: 'طالب تجريبي أول', teacherId: 't1', parentPhone: '+966500000001', subscriptionFee: 800, status: 'active', lastReportDate: '2026-11-10', surahProgress: 'جزء عمّ', initials: 'ط' },
+    { id: 'p2', name: 'طالبة تجريبية ثانية باسم طويل شوية', teacherId: 't2', parentPhone: '+201000000002', subscriptionFee: 600, status: 'active', lastReportDate: '2026-09-29', surahProgress: '', initials: 'ط' },
+    { id: 'p3', name: 'طالب تجريبي ثالث', teacherId: 't1', parentPhone: '', subscriptionFee: 1000, status: 'vacation', lastReportDate: '2026-11-01', surahProgress: '', initials: 'ط' },
+  ],
+  students: [],
+  getDaysSinceLastReport: (d: string) => Math.round((Date.now() - new Date(d).getTime()) / 86400000),
+  isOverdue: (d: string) => (Date.now() - new Date(d).getTime()) / 86400000 > 30,
+  getReportStatusInfo: () => ({ isOverdue: true, badgeText: 'متأخر 49 يوم', label: '', color: '', bg: '', text: '', days: 49 }),
+  getTeacherById: (id: string) => teachers.find((t) => t.id === id),
+  getSupervisorById: (id: string) => supervisors.find((s) => s.id === id),
+  // Sample previous session with homework, so the quick logging card shows
+  getStudentSessionLogs: () => [
+    {
+      id: 'log-1',
+      studentId: 'preview-1',
+      teacherId: 't2',
+      sessionNumber: 1,
+      sessionDate: '2026-11-15',
+      attendance: 'attended',
+      homework: 'حفظ الآيات 1-10 من سورة الملك',
+      nextTasks: [],
+      memorizationSegments: [],
+      revisionSegments: [],
+    },
+  ],
+  sessionLogs: [],
+  packages: [],
+  reports: [],
+  activityLogs: [
+    { id: 'a1', action: 'إضافة طالب جديد إلى النظام', studentName: 'طالب تجريبي', userName: 'المدير', details: 'مثال لسطر في سجل النشاط', timestamp: new Date().toISOString() },
+  ],
+  observations: [],
+  getActivePackage: () => undefined,
+  getStudentPackages: () => [],
+};
+
+const app = new Proxy(values, {
+  get: (target, key: string) => (key in target ? target[key] : async () => {}),
+});
+
+export const useApp = () => app as any;
+export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
+export type ParentLoginLink = any;
+```
+
+### استبدل المحتوى بالكامل: `vite.preview.config.ts`
+
+```tsx
+// Local design preview only (not part of the production build).
+// Swaps the real AppContext (which needs a signed-in user) for sample data.
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: [{ find: /^(\.\.\/)+context\/AppContext$/, replacement: path.resolve(import.meta.dirname, 'src/design-preview/mockAppContext.tsx') }],
+  },
+  server: { port: 4318, strictPort: true },
+});
+```
+
+### patch
+
+```diff
+diff --git a/src/index.css b/src/index.css
+index 2a5bece..f4c6c7a 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -1,9 +1,53 @@
+ @import "tailwindcss";
+ 
++/* ------------------------------------------------------------------ */
++/* Design tokens: the one source for colors, radii and shadows.        */
++/* Use them as Tailwind classes: bg-brand-600, text-ink, border-line…  */
++/* ------------------------------------------------------------------ */
++@theme {
++  --color-brand-50: #eef7f8;
++  --color-brand-100: #d6ecef;
++  --color-brand-200: #acd8de;
++  --color-brand-300: #7cbfc8;
++  --color-brand-500: #1a7b88;
++  --color-brand-600: #156c78;
++  --color-brand-700: #125862;
++  --color-brand-800: #0e464e;
++
++  --color-ink: #1d1d1f;
++  --color-ink-soft: #3c4446;
++  --color-muted: #5f6b6d;
++  --color-line: #d5dde0;
++  --color-line-soft: #e8edef;
++  --color-canvas: #f5f5f7;
++  --color-surface: #ffffff;
++  --color-field: #ffffff;
++
++  --color-danger-50: #fef3f2;
++  --color-danger-600: #b42318;
++  --color-success-50: #ecfdf3;
++  --color-success-700: #067647;
++  --color-warning-50: #fffaeb;
++  --color-warning-700: #b54708;
++
++  --radius-control: 0.75rem;
++  --radius-panel: 1.25rem;
++  --shadow-panel: 0 24px 64px -12px rgb(16 24 40 / 0.28);
++}
++
+ @layer base {
+   html, body, button, input, select, textarea, optgroup, h1, h2, h3, h4, h5, h6, p, span, a, label, div {
+     font-family: 'Tajawal', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+   }
++  /* Phones: text in a field smaller than 16px makes iPhone zoom the page when the field is
++     focused, which breaks the layout. This keeps every field at 16px on small screens. */
++  @media (max-width: 767px) {
++    input:not([type='checkbox']):not([type='radio']):not([type='range']),
++    select,
++    textarea {
++      font-size: 16px !important;
++    }
++  }
+   html, body {
+     margin: 0;
+     padding: 0;
+```
+
+بعد التنفيذ: كمّل على أمر 08 (ب).

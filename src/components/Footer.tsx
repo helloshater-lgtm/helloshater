@@ -1,11 +1,12 @@
 import React from 'react';
+import { AppView } from '../types';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
 import { trackWhatsAppClicked } from '../services/analytics';
 import { openConsentSettings } from '../services/consentService';
 import { toArabicDigits } from '../utils/formatters';
 
 interface FooterProps {
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard' | 'privacy' | 'terms') => void;
+  onNavigate: (view: AppView) => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
@@ -73,6 +74,13 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               className="min-h-[40px] px-1 hover:text-[#0D4E8B] transition-colors cursor-pointer"
             >
               كيف نبدأ؟
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('my-trials')}
+              className="min-h-[40px] px-1 hover:text-[#0D4E8B] transition-colors cursor-pointer"
+            >
+              حجوزاتي
             </button>
             <button
               type="button"

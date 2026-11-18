@@ -953,3 +953,39 @@ export interface AdminLeadBookingDraft {
   quranLevelId?: string | null;
 }
 
+export type AppView =
+  | 'home'
+  | 'tutor-profile'
+  | 'join-as-tutor'
+  | 'admin'
+  | 'tutor-dashboard'
+  | 'my-trials'
+  | 'privacy'
+  | 'terms';
+
+export type DirectTrialBookingStatus = 'confirmed' | 'completed' | 'cancelled';
+
+export interface DirectTrialBookingPolicy {
+  minimumNoticeMinutes: number;
+  trialDurationMinutes: number;
+  directBookingAvailable: boolean;
+}
+
+export interface DirectTrialBooking {
+  id: string;
+  slotId: string | null;
+  tutorId: string;
+  tutorName: string;
+  startsAt: string;
+  endsAt: string;
+  timezone: string;
+  status: DirectTrialBookingStatus;
+  meetingUrl: string | null;
+  createdAt: string;
+}
+
+export interface AdminDirectTrialBooking extends DirectTrialBooking {
+  guardianName: string;
+  guardianWhatsApp: string;
+}
+

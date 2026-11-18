@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TutorPortalService } from '../../services/tutorPortalService';
+import { DirectTrialBookingService } from '../../services/directTrialBookingService';
 import {
   Tutor,
   TutorPortalContext,
@@ -7,10 +8,12 @@ import {
   ApprovedSpecializationItem,
   TutorPrivateSlot,
   TutorGroup,
+  DirectTrialBooking,
 } from '../../types';
 import { TutorApplicationService } from '../../services/tutorApplicationService';
 import { TutorAuthModal } from './TutorAuthModal';
 import { TutorProfileView } from '../TutorProfileView';
+import { TutorDirectTrialsTab } from './TutorDirectTrialsTab';
 import {
   formatTutorExperience,
   formatSessionPriceSummary,
@@ -69,7 +72,14 @@ interface TutorDashboardViewProps {
   onNavigateToPublicProfile?: (tutorId: string) => void;
 }
 
-type DashboardTab = 'overview' | 'pricing' | 'profile-draft' | 'trials' | 'private' | 'groups';
+type DashboardTab =
+  | 'overview'
+  | 'pricing'
+  | 'profile-draft'
+  | 'trials'
+  | 'direct-trials'
+  | 'private'
+  | 'groups';
 
 export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   onNavigateHome,
@@ -297,6 +307,26 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const [previewTutorData, setPreviewTutorData] = useState<Tutor | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
+  // 6. Direct Trial Bookings State ("الحجوزات التجريبية")
+  const [directTrialBookings, setDirectTrialBookings] = useState<DirectTrialBooking[]>([]);
+  const [isLoadingDirectTrials, setIsLoadingDirectTrials] = useState(false);
+  const [directTrialsLoadError, setDirectTrialsLoadError] = useState<string | null>(null);
+
+  const loadDirectTrials = async () => {
+    setIsLoadingDirectTrials(true);
+    setDirectTrialsLoadError(null);
+    try {
+      const list = await DirectTrialBookingService.tutorGetMyDirectTrials();
+      setDirectTrialBookings(list);
+    } catch (err: any) {
+      setDirectTrialsLoadError(
+        err?.message || 'تعذر تحميل الحجوزات التجريبية المباشرة.'
+      );
+    } finally {
+      setIsLoadingDirectTrials(false);
+    }
+  };
+
   // Load Data & Verify Eligibility
   const loadPortalData = async (preserveTextInputs = false) => {
     if (!preserveTextInputs) {
@@ -344,6 +374,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         loadTrialSlots(),
         loadPrivateSlots(),
         loadGroups(),
+        loadDirectTrials(),
       ]);
     } catch (err: any) {
       setContext(null);
@@ -2047,6 +2078,40 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             {validFutureGroups.length}
           </span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('direct-trials')}
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === 'direct-trials'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
+          }`}
+        >
+          <Calendar className="w-4 h-4 shrink-0" />
+          <span>الحجوزات التجريبية</span>
+          {(() => {
+            const confirmedCount = directTrialBookings.filter(
+              (b) => b.status === 'confirmed'
+            ).length;
+            const missingLinkCount = directTrialBookings.filter(
+              (b) => b.status === 'confirmed' && !b.meetingUrl
+            ).length;
+            return (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  activeTab === 'direct-trials'
+                    ? 'bg-white/20 text-white'
+                    : missingLinkCount > 0
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                {confirmedCount}
+              </span>
+            );
+          })()}
+        </button>
       </div>
 
       {/* ========================================================================= */}
@@ -2845,6 +2910,15 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {activeTab === 'direct-trials' && (
+        <TutorDirectTrialsTab
+          bookings={directTrialBookings}
+          isLoading={isLoadingDirectTrials}
+          loadError={directTrialsLoadError}
+          onRefresh={loadDirectTrials}
+        />
       )}
 
       {/* ========================================================================= */}

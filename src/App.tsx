@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import {
+  AppView,
   SearchCriteria,
   Tutor,
   Stage,
@@ -28,9 +29,11 @@ import { HomeView } from './components/HomeView';
 import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
 import { LegalPagesView } from './components/LegalPagesView';
+import { MyTrialsView } from './components/MyTrialsView';
 import { ConsentBanner } from './components/ConsentBanner';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { SHATIR_CONFIG } from './config/shatirConfig';
+import { DirectTrialBookingService } from './services/directTrialBookingService';
 import {
   trackPageView,
   trackTutorProfileOpened,
@@ -53,15 +56,6 @@ const TutorDashboardView = lazy(() =>
     default: mod.TutorDashboardView,
   }))
 );
-
-type AppView =
-  | 'home'
-  | 'tutor-profile'
-  | 'join-as-tutor'
-  | 'admin'
-  | 'tutor-dashboard'
-  | 'privacy'
-  | 'terms';
 
 const DEFAULT_DOCUMENT_TITLE =
   'شاطر كلاسيز — Shatir Classes | منصة أولياء الأمور لاختيار أفضل المعلمين الخصوصيين';
@@ -144,6 +138,9 @@ export default function App() {
     } else if (view === 'admin') {
       window.location.hash = '#admin';
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (view === 'my-trials') {
+      window.location.hash = '#my-trials';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (view === 'privacy') {
       window.location.hash = '#privacy';
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -211,6 +208,51 @@ export default function App() {
     };
   }, [refreshTutorAccountStatus]);
 
+  // Resume intended direct-trial target (?direct_return=tutor/<id> or ?direct_return=my-trials)
+  // cleanly once Supabase detects/consumes OTP magic-link session tokens without dropping hash auth params
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search || '');
+    const directReturn = params.get('direct_return');
+    if (!directReturn) return;
+
+    const applyDirectReturnRoute = () => {
+      const hash = window.location.hash || '';
+      if (hash.includes('access_token=') || hash.includes('refresh_token=')) {
+        return false;
+      }
+
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('direct_return');
+      cleanUrl.searchParams.delete('code');
+      const targetHash = directReturn.startsWith('#')
+        ? directReturn
+        : `#${directReturn}`;
+      window.history.replaceState(null, '', `${cleanUrl.pathname}${cleanUrl.search}${targetHash}`);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      return true;
+    };
+
+    if (applyDirectReturnRoute()) return;
+
+    const unsubscribe = DirectTrialBookingService.onAuthStateChange((user) => {
+      if (user) {
+        window.setTimeout(() => {
+          applyDirectReturnRoute();
+        }, 80);
+      }
+    });
+
+    const fallbackTimer = window.setTimeout(() => {
+      applyDirectReturnRoute();
+    }, 1500);
+
+    return () => {
+      unsubscribe();
+      window.clearTimeout(fallbackTimer);
+    };
+  }, []);
+
   // Sync with window.location.hash for shareable links & browser back navigation
   useEffect(() => {
     const handleHashChange = () => {
@@ -218,6 +260,10 @@ export default function App() {
         document.body.style.overflow = '';
       }
       const hash = window.location.hash;
+      // Preserve Supabase implicit-flow auth callback hash while Supabase SDK processes it
+      if (hash.includes('access_token=') || hash.includes('refresh_token=')) {
+        return;
+      }
       if (hash.startsWith('#tutor/')) {
         const id = hash.replace('#tutor/', '');
         setSelectedTutorId(id);
@@ -226,6 +272,9 @@ export default function App() {
         setCurrentView('join-as-tutor');
       } else if (hash === '#tutor-dashboard') {
         setCurrentView('tutor-dashboard');
+      } else if (hash === '#my-trials') {
+        setCurrentView('my-trials');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       } else if (hash.startsWith('#admin')) {
         setCurrentView('admin');
       } else if (hash === '#privacy') {
@@ -259,6 +308,9 @@ export default function App() {
       resetTutorProfileTracking();
     } else if (currentView === 'tutor-dashboard') {
       trackPageView('/#tutor-dashboard', 'لوحة المعلم | شاطر كلاسيز');
+      resetTutorProfileTracking();
+    } else if (currentView === 'my-trials') {
+      trackPageView('/#my-trials', 'حجوزاتي | شاطر كلاسيز');
       resetTutorProfileTracking();
     } else if (currentView === 'admin') {
       trackPageView('/#admin', 'لوحة إدارة شاطر كلاسيز');
@@ -364,6 +416,8 @@ export default function App() {
     if (typeof document === 'undefined') return;
     if (currentView === 'tutor-profile' && currentTutor?.name) {
       document.title = `${currentTutor.name} | شاطر كلاسيز`;
+    } else if (currentView === 'my-trials') {
+      document.title = 'حجوزاتي | شاطر كلاسيز';
     } else if (currentView === 'privacy') {
       document.title = 'سياسة الخصوصية | شاطر كلاسيز';
     } else if (currentView === 'terms') {
@@ -499,6 +553,7 @@ export default function App() {
                 tutor={currentTutor}
                 criteria={savedCriteria || undefined}
                 onBack={handleBackToResults}
+                onNavigateToMyTrials={() => handleNavigate('my-trials')}
                 stageName={stageName}
                 gradeName={gradeName}
                 subjectName={subjectName}
@@ -569,6 +624,13 @@ export default function App() {
           >
             <AdminDashboardView onNavigateHome={() => handleNavigate('home')} />
           </Suspense>
+        )}
+
+        {currentView === 'my-trials' && (
+          <MyTrialsView
+            onNavigateHome={() => handleNavigate('home')}
+            onSelectTutor={(tutorId) => handleSelectTutor(tutorId)}
+          />
         )}
 
         {(currentView === 'privacy' || currentView === 'terms') && (

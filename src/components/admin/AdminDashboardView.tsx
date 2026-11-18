@@ -18,6 +18,8 @@ import { AdminApplicationDetailView } from './AdminApplicationDetailView';
 import { AdminClassesManagementView } from './AdminClassesManagementView';
 import { AdminStatisticsView } from './AdminStatisticsView';
 import { AdminParentLeadsView } from './AdminParentLeadsView';
+import { AdminDirectTrialsView } from './AdminDirectTrialsView';
+import { DirectTrialBookingService } from '../../services/directTrialBookingService';
 import { TutorProfileView } from '../TutorProfileView';
 import {
   ShieldCheck,
@@ -46,12 +48,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Top Nav Tab: 'tutors' | 'parent-leads' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
+  // Top Nav Tab: 'tutors' | 'parent-leads' | 'direct-trials' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
   const [activeTab, setActiveTab] = useState<
-    'tutors' | 'parent-leads' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
+    | 'tutors'
+    | 'parent-leads'
+    | 'direct-trials'
+    | 'recent-edits'
+    | 'applications'
+    | 'classes'
+    | 'statistics'
   >('tutors');
   const [pendingApplicationsCount, setPendingApplicationsCount] = useState<number>(0);
   const [newParentLeadsCount, setNewParentLeadsCount] = useState<number>(0);
+  const [missingLinkTrialsCount, setMissingLinkTrialsCount] = useState<number>(0);
   const [leadBookingDraft, setLeadBookingDraft] = useState<AdminLeadBookingDraft | null>(null);
 
   // Sub-Views: 'list' | 'edit' | 'new' | 'preview' | 'app-detail'
@@ -134,6 +143,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
       loadRecentEditsAndDrafts();
       AdminService.getParentLeads('new', 200)
         .then((leads) => setNewParentLeadsCount(leads.length))
+        .catch(() => {});
+      DirectTrialBookingService.adminGetDirectTrialBookings()
+        .then((list) => {
+          const missing = list.filter(
+            (b) => b.status === 'confirmed' && !b.meetingUrl
+          ).length;
+          setMissingLinkTrialsCount(missing);
+        })
         .catch(() => {});
     }
   }, [currentAdmin, currentMode]);
@@ -752,6 +769,30 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
         <button
           type="button"
           onClick={() => {
+            setActiveTab('direct-trials');
+            setCurrentMode('list');
+          }}
+          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'direct-trials'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
+          }`}
+        >
+          <Calendar className="w-4 h-4" />
+          <span>الحجوزات التجريبية</span>
+          {missingLinkTrialsCount > 0 && (
+            <span
+              className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center"
+              title="حجوزات ينقصها رابط الحصة"
+            >
+              {missingLinkTrialsCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
             setActiveTab('classes');
             setCurrentMode('list');
           }}
@@ -821,6 +862,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
             setActiveTab('classes');
             setCurrentMode('list');
           }}
+        />
+      ) : activeTab === 'direct-trials' ? (
+        <AdminDirectTrialsView
+          tutorsList={tutorsList}
+          onCountChange={(counts) => setMissingLinkTrialsCount(counts.missingLink)}
         />
       ) : activeTab === 'classes' ? (
         <AdminClassesManagementView

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { AppView } from '../types';
 import { TutorAccountNavStatus } from '../services/tutorApplicationService';
 import { Menu, X, Loader2 } from 'lucide-react';
 
 interface HeaderProps {
-  currentView: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard' | 'privacy' | 'terms';
-  onNavigate: (view: 'home' | 'tutor-profile' | 'join-as-tutor' | 'admin' | 'tutor-dashboard' | 'privacy' | 'terms') => void;
+  currentView: AppView;
+  onNavigate: (view: AppView) => void;
   onScrollToSelector?: () => void;
   onOpenHelpModal?: () => void;
   tutorNavStatus: TutorAccountNavStatus;
@@ -163,6 +164,22 @@ export const Header: React.FC<HeaderProps> = ({
             أسئلة تهمّك
           </a>
 
+          <a
+            href="#my-trials"
+            onClick={(e) => {
+              e.preventDefault();
+              setIsMobileMenuOpen(false);
+              onNavigate('my-trials');
+            }}
+            className={`transition-colors py-1.5 whitespace-nowrap shrink-0 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0D4E8B] rounded-md ${
+              currentView === 'my-trials'
+                ? 'text-[#0D4E8B] underline underline-offset-8 decoration-2'
+                : 'text-[#1F2A44] hover:text-[#0D4E8B]'
+            }`}
+          >
+            حجوزاتي
+          </a>
+
           {tutorNavStatus === 'loading' ? (
             <span
               className="inline-flex items-center gap-1.5 text-[#64748B] py-1 text-xs font-bold select-none whitespace-nowrap shrink-0"
@@ -252,6 +269,22 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center min-h-[44px] px-3.5 rounded-xl text-sm font-['Cairo'] font-bold text-[#1F2A44] hover:bg-[#F0F6FD] hover:text-[#0D4E8B] transition-colors"
           >
             أسئلة تهمّك
+          </a>
+
+          <a
+            href="#my-trials"
+            onClick={(e) => {
+              e.preventDefault();
+              setIsMobileMenuOpen(false);
+              onNavigate('my-trials');
+            }}
+            className={`flex items-center min-h-[44px] px-3.5 rounded-xl text-sm font-['Cairo'] font-bold transition-colors ${
+              currentView === 'my-trials'
+                ? 'bg-[#F0F6FD] text-[#0D4E8B]'
+                : 'text-[#1F2A44] hover:bg-[#F0F6FD] hover:text-[#0D4E8B]'
+            }`}
+          >
+            حجوزاتي
           </a>
 
           {tutorNavStatus === 'loading' ? (

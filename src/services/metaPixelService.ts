@@ -31,6 +31,7 @@ export type PublicOrExcludedAppView =
   | 'join-as-tutor'
   | 'admin'
   | 'tutor-dashboard'
+  | 'my-trials'
   | 'privacy'
   | 'terms';
 
@@ -41,7 +42,7 @@ const PUBLIC_PARENT_VIEWS = new Set<PublicOrExcludedAppView>([
   'terms',
 ]);
 
-const EXCLUDED_HASH_PREFIXES = ['#admin', '#tutor-dashboard', '#join-as-tutor'];
+const EXCLUDED_HASH_PREFIXES = ['#admin', '#tutor-dashboard', '#join-as-tutor', '#my-trials'];
 
 const SENSITIVE_QURAN_REGEX =
   /(القرآن|قرآن|تجويد|تحفيظ|التحفيظ|نور\s*البيان|quran|noor[_\s-]*bayan|tajweed|tahfiz|agegroupid|levelid)/i;
