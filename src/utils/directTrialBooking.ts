@@ -566,3 +566,221 @@ export function clearPendingDirectTrialDraft(): void {
     // Ignore storage errors
   }
 }
+
+export const DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY =
+  'shatir_direct_trial_return_target_v1';
+const DIRECT_TRIAL_RETURN_TARGET_TTL_MS = 60 * 60 * 1000; // 60 minutes
+
+export interface DirectTrialReturnTargetRecord {
+  target: string;
+  savedAt: number;
+}
+
+/**
+ * Allows only valid direct-trial return destinations:
+ * - 'my-trials'
+ * - 'tutor/<id>'
+ */
+export function sanitizeDirectTrialReturnTarget(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  let clean = raw.trim();
+  if (!clean) return null;
+  if (clean.startsWith('/#')) clean = clean.slice(2);
+  if (clean.startsWith('#')) clean = clean.slice(1);
+  if (clean.startsWith('/')) clean = clean.slice(1);
+
+  if (clean === 'my-trials') return 'my-trials';
+  if (/^tutor\/[a-zA-Z0-9_-]{1,120}$/.test(clean)) {
+    return clean;
+  }
+  return null;
+}
+
+/**
+ * Temporarily saves ONLY the return destination and timestamp in browser localStorage
+ * so a magic-link opening in a second tab can still resume if Supabase strips query params.
+ */
+export function saveDirectTrialReturnTarget(
+  target: string,
+  nowMs: number = Date.now()
+): boolean {
+  if (typeof window === 'undefined') return false;
+  const cleanTarget = sanitizeDirectTrialReturnTarget(target);
+  if (!cleanTarget) return false;
+  try {
+    const payload: DirectTrialReturnTargetRecord = {
+      target: cleanTarget,
+      savedAt: nowMs,
+    };
+    window.localStorage.setItem(
+      DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY,
+      JSON.stringify(payload)
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadDirectTrialReturnTarget(
+  nowMs: number = Date.now()
+): DirectTrialReturnTargetRecord | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<DirectTrialReturnTargetRecord>;
+    const cleanTarget = sanitizeDirectTrialReturnTarget(parsed?.target);
+    const savedAt = typeof parsed?.savedAt === 'number' ? parsed.savedAt : NaN;
+    if (!cleanTarget || !Number.isFinite(savedAt)) {
+      window.localStorage.removeItem(DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY);
+      return null;
+    }
+    if (nowMs - savedAt > DIRECT_TRIAL_RETURN_TARGET_TTL_MS || savedAt - nowMs > 60_000) {
+      window.localStorage.removeItem(DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY);
+      return null;
+    }
+    return {
+      target: cleanTarget,
+      savedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearDirectTrialReturnTarget(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export interface DirectTrialCallbackUrlInfo {
+  directReturnTarget: string | null;
+  isEmailAuthCallback: boolean;
+}
+
+/**
+ * Inspects initial search & hash strings captured on page open to detect
+ * direct_return params and Supabase email-login callback parameters.
+ */
+export function detectDirectTrialAuthCallbackFromLocation(
+  search: string,
+  hash: string
+): DirectTrialCallbackUrlInfo {
+  const safeSearch = String(search || '');
+  const safeHash = String(hash || '');
+  const searchParams = new URLSearchParams(
+    safeSearch.startsWith('?') ? safeSearch.slice(1) : safeSearch
+  );
+  const directReturnTarget = sanitizeDirectTrialReturnTarget(
+    searchParams.get('direct_return')
+  );
+
+  const searchType = (searchParams.get('type') || '').toLowerCase();
+  const hasSearchAuthCallback =
+    searchParams.has('code') ||
+    searchParams.has('token_hash') ||
+    searchType === 'magiclink' ||
+    searchType === 'email';
+
+  const rawHash = safeHash.startsWith('#') ? safeHash.slice(1) : safeHash;
+  const hashParams = new URLSearchParams(rawHash);
+  const hashType = (hashParams.get('type') || '').toLowerCase();
+  const hashLower = rawHash.toLowerCase();
+  const hasHashAuthCallback =
+    hashParams.has('access_token') ||
+    hashParams.has('refresh_token') ||
+    hashType === 'magiclink' ||
+    hashType === 'email' ||
+    hashLower.includes('access_token=') ||
+    hashLower.includes('refresh_token=');
+
+  return {
+    directReturnTarget,
+    isEmailAuthCallback: hasSearchAuthCallback || hasHashAuthCallback,
+  };
+}
+
+export interface ResolvedTrialSelectionResult {
+  selectedDate: string;
+  selectedSlotId: string;
+  restoredDraft: PendingDirectTrialDraft | null;
+  draftSlotUnavailable: boolean;
+}
+
+/**
+ * Selects the default earliest trial date & first slot FIRST, and THEN restores
+ * any matching saved draft slot so the default first slot never overwrites the parent's selection.
+ */
+export function resolveInitialTrialSlotSelection(params: {
+  validTrialSlots: TutorAvailableSlot[];
+  draft: PendingDirectTrialDraft | null;
+  isDirectBookingEnabled: boolean;
+  currentSelectedDate?: string;
+  currentSelectedSlotId?: string;
+}): ResolvedTrialSelectionResult {
+  const slots = Array.isArray(params.validTrialSlots) ? params.validTrialSlots : [];
+  if (slots.length === 0) {
+    return {
+      selectedDate: '',
+      selectedSlotId: '',
+      restoredDraft: null,
+      draftSlotUnavailable: Boolean(params.isDirectBookingEnabled && params.draft),
+    };
+  }
+
+  const slotsByDate = new Map<string, TutorAvailableSlot[]>();
+  for (const slot of slots) {
+    const list = slotsByDate.get(slot.slotDate) || [];
+    list.push(slot);
+    slotsByDate.set(slot.slotDate, list);
+  }
+  const availableDates = Array.from(slotsByDate.keys()).sort((a, b) => a.localeCompare(b));
+
+  // Step 1: Apply default selection (or keep valid existing manual selection if no draft override)
+  let selectedDate = availableDates[0];
+  let selectedSlotId = (slotsByDate.get(selectedDate) || [])[0]?.id || '';
+
+  if (
+    params.currentSelectedSlotId &&
+    params.currentSelectedDate &&
+    availableDates.includes(params.currentSelectedDate) &&
+    slots.some(
+      (s) => s.id === params.currentSelectedSlotId && s.slotDate === params.currentSelectedDate
+    )
+  ) {
+    selectedDate = params.currentSelectedDate;
+    selectedSlotId = params.currentSelectedSlotId;
+  }
+
+  // Step 2: Apply saved draft slot restoration AFTER default selection
+  if (params.isDirectBookingEnabled && params.draft) {
+    const matchingSlot = slots.find((s) => s.id === params.draft!.slotId);
+    if (matchingSlot) {
+      return {
+        selectedDate: matchingSlot.slotDate,
+        selectedSlotId: matchingSlot.id,
+        restoredDraft: params.draft,
+        draftSlotUnavailable: false,
+      };
+    }
+    return {
+      selectedDate,
+      selectedSlotId,
+      restoredDraft: params.draft,
+      draftSlotUnavailable: true,
+    };
+  }
+
+  return {
+    selectedDate,
+    selectedSlotId,
+    restoredDraft: null,
+    draftSlotUnavailable: false,
+  };
+}
+

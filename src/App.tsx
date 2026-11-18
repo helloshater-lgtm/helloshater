@@ -3,7 +3,7 @@
  * Main Application Orchestrator
  */
 
-import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import {
   AppView,
   SearchCriteria,
@@ -34,6 +34,11 @@ import { ConsentBanner } from './components/ConsentBanner';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { SHATIR_CONFIG } from './config/shatirConfig';
 import { DirectTrialBookingService } from './services/directTrialBookingService';
+import {
+  detectDirectTrialAuthCallbackFromLocation,
+  loadDirectTrialReturnTarget,
+  clearDirectTrialReturnTarget,
+} from './utils/directTrialBooking';
 import {
   trackPageView,
   trackTutorProfileOpened,
@@ -75,9 +80,29 @@ export default function App() {
   const [savedCriteria, setSavedCriteria] = useState<SearchCriteria | null>(null);
   const [savedResults, setSavedResults] = useState<Tutor[]>([]);
   const [savedScrollPosition, setSavedScrollPosition] = useState<number>(0);
+  const savedScrollPositionRef = useRef<number>(0);
+  savedScrollPositionRef.current = savedScrollPosition;
   const [marketingConsentGranted, setMarketingConsentGranted] = useState<boolean>(() =>
     Boolean(SHATIR_CONFIG.metaPixelEnabled) && isMarketingConsentGranted()
   );
+
+  // Capture initial landing URL/hash synchronously before any Supabase client init mutates it
+  const initialLandingRef = useRef<{
+    directReturnTarget: string | null;
+    isEmailAuthCallback: boolean;
+  } | null>(null);
+  if (initialLandingRef.current === null) {
+    const search = typeof window !== 'undefined' ? window.location.search || '' : '';
+    const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+    initialLandingRef.current = detectDirectTrialAuthCallbackFromLocation(search, hash);
+  }
+  const hasPendingAuthReturn = Boolean(
+    initialLandingRef.current.directReturnTarget ||
+      initialLandingRef.current.isEmailAuthCallback
+  );
+  const [isResolvingAuthReturn, setIsResolvingAuthReturn] =
+    useState<boolean>(hasPendingAuthReturn);
+  const hasResolvedAuthReturnRef = useRef<boolean>(false);
 
   // Taxonomy for profile breadcrumbs
   const [stages, setStages] = useState<Stage[]>([]);
@@ -208,98 +233,128 @@ export default function App() {
     };
   }, [refreshTutorAccountStatus]);
 
-  // Resume intended direct-trial target (?direct_return=tutor/<id> or ?direct_return=my-trials)
-  // cleanly once Supabase detects/consumes OTP magic-link session tokens without dropping hash auth params
+  const syncViewFromLocationHash = useCallback(() => {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
+    const hash = window.location.hash;
+    // Preserve Supabase implicit-flow auth callback hash while Supabase SDK processes it
+    if (hash.includes('access_token=') || hash.includes('refresh_token=')) {
+      return;
+    }
+    if (hash.startsWith('#tutor/')) {
+      const id = hash.replace('#tutor/', '');
+      setSelectedTutorId(id);
+      setCurrentView('tutor-profile');
+    } else if (hash === '#join-as-tutor') {
+      setCurrentView('join-as-tutor');
+    } else if (hash === '#tutor-dashboard') {
+      setCurrentView('tutor-dashboard');
+    } else if (hash === '#my-trials') {
+      setCurrentView('my-trials');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (hash.startsWith('#admin')) {
+      setCurrentView('admin');
+    } else if (hash === '#privacy') {
+      setCurrentView('privacy');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (hash === '#terms') {
+      setCurrentView('terms');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      setCurrentView('home');
+      const scrollY = savedScrollPositionRef.current;
+      if (scrollY > 0) {
+        setTimeout(() => {
+          window.scrollTo({ top: scrollY, behavior: 'smooth' });
+        }, 60);
+      }
+    }
+  }, []);
+
+  // Resolve email-login return destination strictly AFTER DirectTrialBookingService.getCurrentSessionUser()
+  // completes — no fixed timeout, and normal Home visits remain untouched.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search || '');
-    const directReturn = params.get('direct_return');
-    if (!directReturn) return;
+    if (typeof window === 'undefined' || hasResolvedAuthReturnRef.current) return;
+    hasResolvedAuthReturnRef.current = true;
 
-    const applyDirectReturnRoute = () => {
-      const hash = window.location.hash || '';
-      if (hash.includes('access_token=') || hash.includes('refresh_token=')) {
-        return false;
-      }
+    const landing = initialLandingRef.current;
+    if (!landing || (!landing.directReturnTarget && !landing.isEmailAuthCallback)) {
+      setIsResolvingAuthReturn(false);
+      return;
+    }
 
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete('direct_return');
-      cleanUrl.searchParams.delete('code');
-      const targetHash = directReturn.startsWith('#')
-        ? directReturn
-        : `#${directReturn}`;
-      window.history.replaceState(null, '', `${cleanUrl.pathname}${cleanUrl.search}${targetHash}`);
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-      return true;
-    };
+    let isMounted = true;
 
-    if (applyDirectReturnRoute()) return;
+    DirectTrialBookingService.getCurrentSessionUser()
+      .then((sessionUser) => {
+        if (!isMounted) return;
 
-    const unsubscribe = DirectTrialBookingService.onAuthStateChange((user) => {
-      if (user) {
-        window.setTimeout(() => {
-          applyDirectReturnRoute();
-        }, 80);
-      }
-    });
+        let resolvedTarget = landing.directReturnTarget;
+        if (!resolvedTarget && landing.isEmailAuthCallback && sessionUser) {
+          resolvedTarget = loadDirectTrialReturnTarget()?.target || null;
+        }
 
-    const fallbackTimer = window.setTimeout(() => {
-      applyDirectReturnRoute();
-    }, 1500);
+        if (resolvedTarget || (landing.isEmailAuthCallback && sessionUser)) {
+          clearDirectTrialReturnTarget();
+        }
+
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('direct_return');
+        cleanUrl.searchParams.delete('code');
+        cleanUrl.searchParams.delete('token_hash');
+        cleanUrl.searchParams.delete('type');
+
+        if (resolvedTarget) {
+          const targetHash = `#${resolvedTarget}`;
+          window.history.replaceState(
+            null,
+            '',
+            `${cleanUrl.pathname}${cleanUrl.search}${targetHash}`
+          );
+          syncViewFromLocationHash();
+        } else {
+          const currentHash = window.location.hash || '';
+          const strippedHash =
+            currentHash.includes('access_token=') ||
+            currentHash.includes('refresh_token=') ||
+            currentHash.includes('type=magiclink') ||
+            currentHash.includes('type=email')
+              ? ''
+              : currentHash;
+          window.history.replaceState(
+            null,
+            '',
+            `${cleanUrl.pathname}${cleanUrl.search}${strippedHash}`
+          );
+          syncViewFromLocationHash();
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        syncViewFromLocationHash();
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsResolvingAuthReturn(false);
+        }
+      });
 
     return () => {
-      unsubscribe();
-      window.clearTimeout(fallbackTimer);
+      isMounted = false;
     };
-  }, []);
+  }, [syncViewFromLocationHash]);
 
   // Sync with window.location.hash for shareable links & browser back navigation
   useEffect(() => {
-    const handleHashChange = () => {
-      if (typeof document !== 'undefined') {
-        document.body.style.overflow = '';
-      }
-      const hash = window.location.hash;
-      // Preserve Supabase implicit-flow auth callback hash while Supabase SDK processes it
-      if (hash.includes('access_token=') || hash.includes('refresh_token=')) {
-        return;
-      }
-      if (hash.startsWith('#tutor/')) {
-        const id = hash.replace('#tutor/', '');
-        setSelectedTutorId(id);
-        setCurrentView('tutor-profile');
-      } else if (hash === '#join-as-tutor') {
-        setCurrentView('join-as-tutor');
-      } else if (hash === '#tutor-dashboard') {
-        setCurrentView('tutor-dashboard');
-      } else if (hash === '#my-trials') {
-        setCurrentView('my-trials');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } else if (hash.startsWith('#admin')) {
-        setCurrentView('admin');
-      } else if (hash === '#privacy') {
-        setCurrentView('privacy');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } else if (hash === '#terms') {
-        setCurrentView('terms');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } else {
-        setCurrentView('home');
-        if (savedScrollPosition > 0) {
-          setTimeout(() => {
-            window.scrollTo({ top: savedScrollPosition, behavior: 'smooth' });
-          }, 60);
-        }
-      }
-    };
-
-    handleHashChange();
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [savedScrollPosition]);
+    syncViewFromLocationHash();
+    window.addEventListener('hashchange', syncViewFromLocationHash);
+    return () => window.removeEventListener('hashchange', syncViewFromLocationHash);
+  }, [syncViewFromLocationHash]);
 
   // Central Google Analytics 4 page_view and profile opened tracking
   useEffect(() => {
+    if (isResolvingAuthReturn) return;
     if (currentView === 'home') {
       trackPageView('/', 'شاطر كلاسيز — منصة أولياء الأمور لاختيار أفضل المعلمين الخصوصيين');
       resetTutorProfileTracking();
@@ -325,11 +380,11 @@ export default function App() {
       trackPageView(`/#tutor/${selectedTutorId}`, 'ملف المعلم | شاطر كلاسيز');
       trackTutorProfileOpened(selectedTutorId);
     }
-  }, [currentView, selectedTutorId]);
+  }, [currentView, selectedTutorId, isResolvingAuthReturn]);
 
   // Meta Pixel PageView tracking (gated by feature toggle, marketing consent, and strict non-Quran isolation)
   useEffect(() => {
-    if (!SHATIR_CONFIG.metaPixelEnabled || !marketingConsentGranted) return;
+    if (!SHATIR_CONFIG.metaPixelEnabled || !marketingConsentGranted || isResolvingAuthReturn) return;
 
     if (currentView === 'home') {
       MetaPixelService.resetTutorViewTracking();
@@ -530,16 +585,25 @@ export default function App() {
 
       {/* Main View Router */}
       <main className="flex-1 w-full">
-        {currentView === 'home' && (
-          <HomeView
-            onSelectTutor={handleSelectTutor}
-            onNavigateToJoin={() => handleNavigate('join-as-tutor')}
-            onOpenHelpModal={() => setIsHelpModalOpen(true)}
-            savedCriteria={savedCriteria}
-            savedResults={savedResults}
-            onSaveCriteria={handleSaveSearchState}
-          />
-        )}
+        {isResolvingAuthReturn ? (
+          <div className="max-w-md mx-auto my-20 p-10 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
+            <p className="text-sm font-medium text-[#64748B]">
+              جاري استكمال تسجيل الدخول وتوجيهك لوجهتك...
+            </p>
+          </div>
+        ) : (
+          <>
+            {currentView === 'home' && (
+              <HomeView
+                onSelectTutor={handleSelectTutor}
+                onNavigateToJoin={() => handleNavigate('join-as-tutor')}
+                onOpenHelpModal={() => setIsHelpModalOpen(true)}
+                savedCriteria={savedCriteria}
+                savedResults={savedResults}
+                onSaveCriteria={handleSaveSearchState}
+              />
+            )}
 
         {currentView === 'tutor-profile' && (
           <div className="w-full">
@@ -633,12 +697,14 @@ export default function App() {
           />
         )}
 
-        {(currentView === 'privacy' || currentView === 'terms') && (
-          <LegalPagesView
-            page={currentView}
-            onNavigateHome={() => handleNavigate('home')}
-            onSwitchPage={(page) => handleNavigate(page)}
-          />
+            {(currentView === 'privacy' || currentView === 'terms') && (
+              <LegalPagesView
+                page={currentView}
+                onNavigateHome={() => handleNavigate('home')}
+                onSwitchPage={(page) => handleNavigate(page)}
+              />
+            )}
+          </>
         )}
       </main>
 

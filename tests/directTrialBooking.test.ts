@@ -8,6 +8,13 @@ import {
   validateMeetingUrl,
   buildAdminDirectTrialGuardianWhatsAppDraft,
   buildAdminDirectTrialTutorWhatsAppDraft,
+  DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY,
+  sanitizeDirectTrialReturnTarget,
+  saveDirectTrialReturnTarget,
+  loadDirectTrialReturnTarget,
+  clearDirectTrialReturnTarget,
+  detectDirectTrialAuthCallbackFromLocation,
+  resolveInitialTrialSlotSelection,
 } from '../src/utils/directTrialBooking';
 import {
   DirectTrialBookingService,
@@ -378,9 +385,170 @@ function testAdminDraftsAndMetaExclusion() {
   assert.equal(isExcludedMetaRoute('my-trials', '#my-trials'), true);
 }
 
+// 6. Direct-trial return destination fallback, URL detection & slot-2 draft restoration
+function testReturnDestinationAndSlotRestoration() {
+  // Sanitization allowlist
+  assert.equal(sanitizeDirectTrialReturnTarget('my-trials'), 'my-trials');
+  assert.equal(sanitizeDirectTrialReturnTarget('#my-trials'), 'my-trials');
+  assert.equal(sanitizeDirectTrialReturnTarget('tutor/tutor-abc_123'), 'tutor/tutor-abc_123');
+  assert.equal(sanitizeDirectTrialReturnTarget('#tutor/tutor-abc_123'), 'tutor/tutor-abc_123');
+  assert.equal(sanitizeDirectTrialReturnTarget('admin'), null);
+  assert.equal(sanitizeDirectTrialReturnTarget('tutor-dashboard'), null);
+  assert.equal(sanitizeDirectTrialReturnTarget('https://evil.example/tutor/1'), null);
+  assert.equal(sanitizeDirectTrialReturnTarget('tutor/1/extra'), null);
+
+  // Mock browser localStorage for return-target storage test
+  const memStore = new Map<string, string>();
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    localStorage: {
+      getItem: (k: string) => (memStore.has(k) ? memStore.get(k)! : null),
+      setItem: (k: string, v: string) => memStore.set(k, v),
+      removeItem: (k: string) => memStore.delete(k),
+    },
+  };
+
+  try {
+    const t0 = 1_700_000_000_000;
+    assert.equal(saveDirectTrialReturnTarget('tutor/tutor-2', t0), true);
+    const rawJson = memStore.get(DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY);
+    assert.ok(rawJson);
+    const parsed = JSON.parse(rawJson!);
+    // Stores ONLY destination ('target') and timestamp ('savedAt')
+    assert.deepEqual(Object.keys(parsed).sort(), ['savedAt', 'target']);
+    assert.equal(parsed.target, 'tutor/tutor-2');
+    assert.equal(parsed.savedAt, t0);
+
+    const loaded = loadDirectTrialReturnTarget(t0 + 5 * 60_000);
+    assert.deepEqual(loaded, { target: 'tutor/tutor-2', savedAt: t0 });
+
+    // Expires cleanly after 60 minutes
+    assert.equal(loadDirectTrialReturnTarget(t0 + 61 * 60_000), null);
+    assert.equal(memStore.has(DIRECT_TRIAL_RETURN_TARGET_STORAGE_KEY), false);
+
+    saveDirectTrialReturnTarget('my-trials', t0);
+    assert.equal(loadDirectTrialReturnTarget(t0 + 1000)?.target, 'my-trials');
+    clearDirectTrialReturnTarget();
+    assert.equal(loadDirectTrialReturnTarget(t0 + 1000), null);
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
+
+  // URL detection separates normal visits from email auth callbacks (with or without direct_return)
+  assert.deepEqual(detectDirectTrialAuthCallbackFromLocation('', ''), {
+    directReturnTarget: null,
+    isEmailAuthCallback: false,
+  });
+  assert.deepEqual(detectDirectTrialAuthCallbackFromLocation('', '#tutor/tutor-1'), {
+    directReturnTarget: null,
+    isEmailAuthCallback: false,
+  });
+  assert.deepEqual(
+    detectDirectTrialAuthCallbackFromLocation(
+      '?direct_return=tutor%2Ftutor-1',
+      '#access_token=abc&type=magiclink'
+    ),
+    {
+      directReturnTarget: 'tutor/tutor-1',
+      isEmailAuthCallback: true,
+    }
+  );
+  assert.deepEqual(
+    detectDirectTrialAuthCallbackFromLocation('', '#access_token=abc&refresh_token=xyz'),
+    {
+      directReturnTarget: null,
+      isEmailAuthCallback: true,
+    }
+  );
+  assert.deepEqual(detectDirectTrialAuthCallbackFromLocation('?code=pkce_123', ''), {
+    directReturnTarget: null,
+    isEmailAuthCallback: true,
+  });
+
+  // Deterministic slot resolution: default first slot runs first, draft restores 2nd slot AFTER it
+  const multiSlots: TutorAvailableSlot[] = [
+    {
+      id: 'slot-1',
+      tutorId: 'tutor-1',
+      slotDate: '2026-12-05',
+      startTime: '16:00:00',
+      endTime: '16:20:00',
+      timezone: 'Africa/Cairo',
+      isAvailable: true,
+    },
+    {
+      id: 'slot-2',
+      tutorId: 'tutor-1',
+      slotDate: '2026-12-05',
+      startTime: '18:00:00',
+      endTime: '18:20:00',
+      timezone: 'Africa/Cairo',
+      isAvailable: true,
+    },
+    {
+      id: 'slot-3',
+      tutorId: 'tutor-1',
+      slotDate: '2026-12-07',
+      startTime: '20:00:00',
+      endTime: '20:20:00',
+      timezone: 'Africa/Cairo',
+      isAvailable: true,
+    },
+  ];
+
+  const defaultOnly = resolveInitialTrialSlotSelection({
+    validTrialSlots: multiSlots,
+    draft: null,
+    isDirectBookingEnabled: true,
+  });
+  assert.equal(defaultOnly.selectedSlotId, 'slot-1');
+  assert.equal(defaultOnly.selectedDate, '2026-12-05');
+
+  const restoredSecond = resolveInitialTrialSlotSelection({
+    validTrialSlots: multiSlots,
+    draft: {
+      tutorId: 'tutor-1',
+      slotId: 'slot-2',
+      savedAt: Date.now(),
+    },
+    isDirectBookingEnabled: true,
+    currentSelectedDate: '2026-12-05',
+    currentSelectedSlotId: 'slot-1', // Even if slot-1 was previously defaulted!
+  });
+  assert.equal(restoredSecond.selectedSlotId, 'slot-2');
+  assert.equal(restoredSecond.selectedDate, '2026-12-05');
+  assert.equal(restoredSecond.draftSlotUnavailable, false);
+
+  const restoredLaterDay = resolveInitialTrialSlotSelection({
+    validTrialSlots: multiSlots,
+    draft: {
+      tutorId: 'tutor-1',
+      slotId: 'slot-3',
+      savedAt: Date.now(),
+    },
+    isDirectBookingEnabled: true,
+  });
+  assert.equal(restoredLaterDay.selectedSlotId, 'slot-3');
+  assert.equal(restoredLaterDay.selectedDate, '2026-12-07');
+  assert.equal(restoredLaterDay.draftSlotUnavailable, false);
+
+  const unavailableDraft = resolveInitialTrialSlotSelection({
+    validTrialSlots: multiSlots,
+    draft: {
+      tutorId: 'tutor-1',
+      slotId: 'slot-deleted',
+      savedAt: Date.now(),
+    },
+    isDirectBookingEnabled: true,
+  });
+  assert.equal(unavailableDraft.selectedSlotId, 'slot-1');
+  assert.equal(unavailableDraft.draftSlotUnavailable, true);
+}
+
 async function main() {
   await testServiceRpcs();
   testAdminDraftsAndMetaExclusion();
+  testReturnDestinationAndSlotRestoration();
   console.log('ALL DIRECT TRIAL BOOKING TESTS PASSED ✅');
 }
 

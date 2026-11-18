@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Tutor,
@@ -20,6 +20,10 @@ import {
   savePendingDirectTrialDraft,
   loadPendingDirectTrialDraft,
   clearPendingDirectTrialDraft,
+  saveDirectTrialReturnTarget,
+  loadDirectTrialReturnTarget,
+  clearDirectTrialReturnTarget,
+  resolveInitialTrialSlotSelection,
 } from '../utils/directTrialBooking';
 import { VideoModal } from './VideoModal';
 import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
@@ -145,6 +149,9 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
   // Direct booking interactive flow state
   const [isDirectPanelOpen, setIsDirectPanelOpen] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(
+    () => !isPreviewMode && !isUnpublishedProfile
+  );
   const [authUser, setAuthUser] = useState<{ id: string; email?: string | null } | null>(null);
   const [otpEmail, setOtpEmail] = useState('');
   const [isSendingOtp, setIsSendingOtp] = useState(false);
@@ -156,6 +163,11 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   const [isConfirmingDirectBooking, setIsConfirmingDirectBooking] = useState(false);
   const [confirmedDirectBooking, setConfirmedDirectBooking] =
     useState<DirectTrialBooking | null>(null);
+  const appliedDraftKeyRef = useRef<string | null>(null);
+  const selectedTrialSelectionRef = useRef<{ date: string; slotId: string }>({
+    date: '',
+    slotId: '',
+  });
 
   // Private 1:1 slots & Groups state
   const [rawPrivateSlots, setRawPrivateSlots] = useState<TutorPrivateSlot[]>([]);
@@ -355,75 +367,139 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     };
   }, [tutor.id, previewTrialSlots, isUnpublishedProfile]);
 
-  // Track Supabase parent auth session + restore pending direct-booking draft after OTP return
+  // Track Supabase parent auth session cleanly
   useEffect(() => {
-    if (isPreviewMode || isUnpublishedProfile) return;
+    if (isPreviewMode || isUnpublishedProfile) {
+      setIsCheckingAuth(false);
+      return;
+    }
     let isMounted = true;
+    setIsCheckingAuth(true);
 
     DirectTrialBookingService.getCurrentSessionUser()
       .then((user) => {
         if (!isMounted) return;
         setAuthUser(user);
+        if (user && loadDirectTrialReturnTarget()?.target === `tutor/${tutor.id}`) {
+          clearDirectTrialReturnTarget();
+        }
       })
       .catch(() => {
         if (isMounted) setAuthUser(null);
+      })
+      .finally(() => {
+        if (isMounted) setIsCheckingAuth(false);
       });
 
     const unsubscribe = DirectTrialBookingService.onAuthStateChange((user) => {
       if (!isMounted) return;
       setAuthUser(user);
+      setIsCheckingAuth(false);
+      if (user && loadDirectTrialReturnTarget()?.target === `tutor/${tutor.id}`) {
+        clearDirectTrialReturnTarget();
+      }
     });
 
     return () => {
       isMounted = false;
       unsubscribe();
     };
-  }, [isPreviewMode, isUnpublishedProfile]);
+  }, [isPreviewMode, isUnpublishedProfile, tutor.id]);
 
-  // Restore saved draft (without auto-confirming!) when validTrialSlots load
+  // Reset per-tutor draft application tracking when switching tutors
   useEffect(() => {
-    if (!isDirectBookingEnabled || validTrialSlots.length === 0) return;
-    const draft = loadPendingDirectTrialDraft(tutor.id);
-    if (!draft) return;
+    appliedDraftKeyRef.current = null;
+    selectedTrialSelectionRef.current = { date: '', slotId: '' };
+  }, [tutor.id]);
 
-    const matchingSlot = validTrialSlots.find((s) => s.id === draft.slotId);
-    if (matchingSlot) {
-      setSelectedTrialDate(matchingSlot.slotDate);
-      setSelectedTrialSlotId(matchingSlot.id);
-    }
-    if (draft.guardianName && !guardianName) {
-      setGuardianName(draft.guardianName);
-    }
-    if (draft.countryCode) {
-      setWhatsappCountryCode(draft.countryCode);
-    }
-    if (draft.localPhone && !whatsappLocalPhone) {
-      setWhatsappLocalPhone(draft.localPhone);
-    }
-    setIsDirectPanelOpen(true);
-  }, [isDirectBookingEnabled, tutor.id, validTrialSlots]);
-
-  // Initialize earliest trial date & first slot automatically when validTrialSlots load
+  // Select default earliest date & first slot FIRST, and THEN restore saved draft slot
   useEffect(() => {
-    if (availableTrialDates.length > 0) {
-      const stillValidSelected = validTrialSlots.some(
-        (s) => s.id === selectedTrialSlotId
-      );
-      if (stillValidSelected && selectedTrialDate && availableTrialDates.includes(selectedTrialDate)) {
-        return;
-      }
-      const firstDate = availableTrialDates[0];
-      setSelectedTrialDate(firstDate);
-      setTrialDayWindowStart(0);
-      const firstDaySlots = trialSlotsByDate.get(firstDate) || [];
-      if (firstDaySlots.length > 0) {
-        setSelectedTrialSlotId(firstDaySlots[0].id);
+    if (isLoadingTrialSlots || isLoadingPolicy) return;
+
+    const rawDraft =
+      isDirectBookingEnabled && !isPreviewMode && !isUnpublishedProfile
+        ? loadPendingDirectTrialDraft(tutor.id)
+        : null;
+    const draftKey = rawDraft
+      ? `${rawDraft.tutorId}:${rawDraft.slotId}:${rawDraft.savedAt}`
+      : null;
+    const draftToApply =
+      rawDraft && draftKey && draftKey !== appliedDraftKeyRef.current
+        ? rawDraft
+        : null;
+
+    const resolution = resolveInitialTrialSlotSelection({
+      validTrialSlots,
+      draft: draftToApply,
+      isDirectBookingEnabled,
+      currentSelectedDate: selectedTrialSelectionRef.current.date,
+      currentSelectedSlotId: selectedTrialSelectionRef.current.slotId,
+    });
+
+    selectedTrialSelectionRef.current = {
+      date: resolution.selectedDate,
+      slotId: resolution.selectedSlotId,
+    };
+    setSelectedTrialDate(resolution.selectedDate);
+    setSelectedTrialSlotId(resolution.selectedSlotId);
+
+    if (resolution.selectedDate && availableTrialDates.length > 0) {
+      const dateIdx = availableTrialDates.indexOf(resolution.selectedDate);
+      if (dateIdx >= 0) {
+        const windowSize = 4;
+        setTrialDayWindowStart((prev) => {
+          if (dateIdx < prev || dateIdx >= prev + windowSize) {
+            return Math.max(
+              0,
+              Math.min(dateIdx, Math.max(0, availableTrialDates.length - windowSize))
+            );
+          }
+          return prev;
+        });
       }
     } else {
-      setSelectedTrialDate('');
-      setSelectedTrialSlotId('');
+      setTrialDayWindowStart(0);
     }
-  }, [availableTrialDates, trialSlotsByDate, validTrialSlots, selectedTrialSlotId, selectedTrialDate]);
+
+    if (draftToApply && draftKey && resolution.restoredDraft) {
+      appliedDraftKeyRef.current = draftKey;
+      if (draftToApply.guardianName) {
+        setGuardianName((prev) => prev || draftToApply.guardianName || '');
+      }
+      if (draftToApply.countryCode) {
+        setWhatsappCountryCode(draftToApply.countryCode);
+      }
+      if (draftToApply.localPhone) {
+        setWhatsappLocalPhone((prev) => prev || draftToApply.localPhone || '');
+      }
+      setActiveBookingTab('trial');
+      setIsDirectPanelOpen(true);
+
+      if (resolution.draftSlotUnavailable && validTrialSlots.length > 0) {
+        setDirectBookingError(
+          'الموعد الذي اخترته سابقاً لم يعد متاحاً. تم تحديد أقرب موعد متاح بدلاً منه، ويمكنك تعديله قبل تأكيد الحجز.'
+        );
+      }
+
+      if (typeof document !== 'undefined') {
+        window.setTimeout(() => {
+          document.getElementById('booking-widget-section')?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+          });
+        }, 120);
+      }
+    }
+  }, [
+    tutor.id,
+    isLoadingTrialSlots,
+    isLoadingPolicy,
+    isDirectBookingEnabled,
+    isPreviewMode,
+    isUnpublishedProfile,
+    validTrialSlots,
+    availableTrialDates,
+  ]);
 
   // Fetch Private Slots & Groups
   useEffect(() => {
@@ -618,12 +694,17 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     const daySlots = trialSlotsByDate.get(dateStr) || [];
     if (daySlots.length > 0) {
       const firstSlot = daySlots[0];
+      selectedTrialSelectionRef.current = { date: dateStr, slotId: firstSlot.id };
       setSelectedTrialSlotId(firstSlot.id);
       trackTrialSlotSelected(tutor.id, firstSlot.id);
+    } else {
+      selectedTrialSelectionRef.current = { date: dateStr, slotId: '' };
     }
   };
 
   const handleSelectTrialTime = (slot: TutorAvailableSlot) => {
+    selectedTrialSelectionRef.current = { date: slot.slotDate, slotId: slot.id };
+    setSelectedTrialDate(slot.slotDate);
     setSelectedTrialSlotId(slot.id);
     trackTrialSlotSelected(tutor.id, slot.id);
   };
@@ -684,6 +765,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     setDirectBookingError(null);
     setIsSendingOtp(true);
     try {
+      const returnTarget = `tutor/${tutor.id}`;
       savePendingDirectTrialDraft({
         tutorId: tutor.id,
         slotId: selectedTrialSlot.id,
@@ -691,7 +773,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
         countryCode: whatsappCountryCode,
         localPhone: whatsappLocalPhone.trim() || undefined,
       });
-      const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=${encodeURIComponent(`tutor/${tutor.id}`)}`;
+      saveDirectTrialReturnTarget(returnTarget);
+      const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=${encodeURIComponent(returnTarget)}`;
       await DirectTrialBookingService.signInParentWithOtp(otpEmail, redirectUrl);
       setOtpSentEmail(otpEmail.trim());
     } catch (err: any) {
@@ -734,6 +817,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
         whatsapp: phoneValidation.displayPhone,
       });
       clearPendingDirectTrialDraft();
+      clearDirectTrialReturnTarget();
       setConfirmedDirectBooking(booked);
       setIsDirectPanelOpen(false);
       await refreshTrialSlots().catch(() => {});
@@ -1841,6 +1925,11 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                                     تحتاج مساعدة في الاختيار؟ تنسيق عبر واتساب الإدارة
                                   </button>
                                 </>
+                              ) : isCheckingAuth ? (
+                                <div className="p-4 rounded-xl bg-white border border-[#CBD5E1] flex items-center justify-center gap-2 text-xs text-[#64748B]">
+                                  <Loader2 className="w-4 h-4 text-[#0D4E8B] animate-spin" />
+                                  <span>جاري التحقق من جلسة الدخول...</span>
+                                </div>
                               ) : !authUser ? (
                                 <div className="p-3.5 rounded-xl bg-white border border-[#CBD5E1] space-y-3">
                                   <div className="flex items-center justify-between gap-2">

@@ -4,6 +4,9 @@ import { DirectTrialBookingService } from '../services/directTrialBookingService
 import {
   formatBookingInOwnTimezone,
   getDirectTrialStatusMeta,
+  saveDirectTrialReturnTarget,
+  loadDirectTrialReturnTarget,
+  clearDirectTrialReturnTarget,
 } from '../utils/directTrialBooking';
 import {
   CalendarCheck2,
@@ -68,6 +71,9 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
         setCurrentUser(user);
         setAuthChecked(true);
         if (user) {
+          if (loadDirectTrialReturnTarget()?.target === 'my-trials') {
+            clearDirectTrialReturnTarget();
+          }
           loadBookings();
         }
       })
@@ -83,6 +89,9 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
       setCurrentUser(user);
       setAuthChecked(true);
       if (user) {
+        if (loadDirectTrialReturnTarget()?.target === 'my-trials') {
+          clearDirectTrialReturnTarget();
+        }
         loadBookings();
       } else {
         setBookings([]);
@@ -101,6 +110,7 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
     setIsSendingOtp(true);
     try {
       const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=my-trials`;
+      saveDirectTrialReturnTarget('my-trials');
       await DirectTrialBookingService.signInParentWithOtp(emailInput, redirectUrl);
       setOtpSentEmail(emailInput.trim());
     } catch (err: any) {
