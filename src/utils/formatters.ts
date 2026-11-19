@@ -2604,3 +2604,42 @@ export function evaluateTutorApplicationCompleteness(input: {
 
 
 
+
+/**
+ * Tutor profile «بيدرّس إيه»: one row per program/subject built from the tutor's
+ * approved offerings (works even when tutor_subjects_taught_summary is empty).
+ * Quran: grouped by program with its age groups. School: grouped by subject with grades and curricula.
+ */
+export function buildTutorTeachingGroups(tutor: Tutor): Array<{ title: string; detail: string }> {
+  const groups: Array<{ title: string; detail: string; order: number }> = [];
+  const quran = (tutor.offerings || []).filter((o): o is QuranOffering => o.track === 'quran');
+  const byLevel = new Map<string, Set<string>>();
+  for (const o of quran) {
+    if (!CANONICAL_QURAN_LEVELS[o.levelId]) continue;
+    const set = byLevel.get(o.levelId) || new Set<string>();
+    const ag = CANONICAL_QURAN_AGE_GROUPS[o.ageGroupId];
+    if (ag) set.add(`${ag.name} (${ag.ageRange})`);
+    byLevel.set(o.levelId, set);
+  }
+  byLevel.forEach((ages, levelId) => {
+    const level = CANONICAL_QURAN_LEVELS[levelId];
+    groups.push({ title: level.name, detail: Array.from(ages).join('، '), order: level.displayOrder });
+  });
+
+  const school = (tutor.offerings || []).filter((o): o is SchoolOffering => o.track === 'school');
+  const bySubject = new Map<string, { grades: Set<string>; curricula: Set<string> }>();
+  for (const o of school) {
+    const subject = SUBJECT_ARABIC_NAMES[o.subjectId];
+    if (!subject) continue;
+    const entry = bySubject.get(subject) || { grades: new Set<string>(), curricula: new Set<string>() };
+    if (GRADE_ARABIC_NAMES[o.gradeId]) entry.grades.add(GRADE_ARABIC_NAMES[o.gradeId]);
+    if (CURRICULUM_ARABIC_NAMES[o.curriculumType]) entry.curricula.add(CURRICULUM_ARABIC_NAMES[o.curriculumType]);
+    bySubject.set(subject, entry);
+  }
+  bySubject.forEach((entry, subject) => {
+    const parts = [Array.from(entry.grades).join('، '), Array.from(entry.curricula).join('، ')].filter(Boolean);
+    groups.push({ title: subject, detail: parts.join(' · '), order: 100 });
+  });
+
+  return groups.sort((a, b) => a.order - b.order).map(({ title, detail }) => ({ title, detail }));
+}

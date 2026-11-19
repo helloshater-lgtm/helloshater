@@ -51,6 +51,7 @@ import {
   formatSlotDateArabic,
   getTimezoneArabicLabel,
   toArabicDigits,
+  buildTutorTeachingGroups,
 } from '../utils/formatters';
 import {
   ArrowRight,
@@ -78,6 +79,7 @@ import {
   Mail,
   AlertCircle,
   CalendarCheck2,
+  Gift,
 } from 'lucide-react';
 
 interface TutorProfileViewProps {
@@ -136,7 +138,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
   const [previewBookingNotice, setPreviewBookingNotice] = useState<string | null>(null);
 
   // Active tab in the compact booking widget
-  const [activeBookingTab, setActiveBookingTab] = useState<BookingTabType>('trial');
+  const [activeBookingTab, setActiveBookingTab] = useState<BookingTabType>('private');
 
   // Trial slots & direct trial booking policy state
   const [rawTrialSlots, setRawTrialSlots] = useState<TutorAvailableSlot[]>([]);
@@ -473,7 +475,11 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
       if (draftToApply.localPhone) {
         setWhatsappLocalPhone((prev) => prev || draftToApply.localPhone || '');
       }
-      setActiveBookingTab('trial');
+      if (!isPreviewMode && !isUnpublishedProfile && typeof window !== 'undefined') {
+        // Continue the parent's pending choice on the dedicated booking page
+        window.location.hash = `#book/${tutor.id}`;
+        return;
+      }
       setIsDirectPanelOpen(true);
 
       if (resolution.draftSlotUnavailable && validTrialSlots.length > 0) {
@@ -1021,9 +1027,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
   useEffect(() => {
     if (!initialFocusBooking || isUnpublishedProfile) return;
-    setActiveBookingTab('trial');
     const timer = window.setTimeout(() => {
-      document.getElementById('booking-widget-section')?.scrollIntoView({
+      document.getElementById('trial-card')?.scrollIntoView({
         behavior: 'smooth',
         block: 'start',
       });
@@ -1031,8 +1036,76 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     return () => window.clearTimeout(timer);
   }, [initialFocusBooking, tutor.id, isUnpublishedProfile]);
 
+  // ---- Profile layout helpers (redesign) ----
+  const profileTeachingGroups = (() => {
+    const fromOfferings = buildTutorTeachingGroups(tutor);
+    if (fromOfferings.length > 0) return fromOfferings;
+    return (tutor.subjectsTaughtSummary || []).map((item) => ({
+      title: normalizeLegacyAgeGroupText(item.title || ''),
+      detail: [item.gradesRange, item.curriculumNote]
+        .filter(Boolean)
+        .map((t) => normalizeLegacyAgeGroupText(String(t)))
+        .join(' · '),
+    }));
+  })();
+  const profileSharedDetail =
+    profileTeachingGroups.length > 1 &&
+    profileTeachingGroups.every((g) => g.detail && g.detail === profileTeachingGroups[0].detail)
+      ? profileTeachingGroups[0].detail
+      : '';
+  const profileSpecChips = (() => {
+    if (profileTeachingGroups.length > 0) return profileTeachingGroups.map((g) => g.title);
+    const fromLabel = String(specializationInfo.primaryLabel || '')
+      .split(/\s*[•،]\s*/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const fromSummary = (tutor.subjectsTaughtSummary || [])
+      .map((i) => normalizeLegacyAgeGroupText(i.title || '').trim())
+      .filter(Boolean);
+    return Array.from(new Set(fromLabel.length > 0 ? fromLabel : fromSummary));
+  })();
+  const profileAgeText = String(specializationInfo.secondaryLabel || '')
+    .split(/\s*•\s*/)
+    .filter(Boolean)
+    .join('، ');
+  const profilePrice = formatSessionPriceSummary({
+    minPrice: tutor.hourlyRateMin,
+    maxPrice: tutor.hourlyRateMax,
+    currency: tutor.currency,
+    durationMinutes: tutor.sessionDurationMinutes,
+    useArabicDigits: true,
+  });
+  const profileNextTrialSlots = validTrialSlots.slice(0, 4);
+  const profileCanBookDirect = isDirectBookingEnabled && validTrialSlots.length > 0;
+
+  const [isTrialCardVisible, setIsTrialCardVisible] = useState(true);
+  useEffect(() => {
+    const el = typeof document !== 'undefined' ? document.getElementById('trial-card') : null;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([entry]) => setIsTrialCardVisible(entry.isIntersecting), {
+      threshold: 0.15,
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [tutor.id]);
+
+  // «احجز تجربة مجانية» → dedicated booking page (optionally with a preselected slot)
+  const goToTrialBooking = (slotId?: string) => {
+    if (isPreviewMode || isUnpublishedProfile) {
+      setPreviewBookingNotice(
+        isUnpublishedProfile
+          ? 'دي معاينة خاصة بيك. الحجز هيتفتح لأولياء الأمور بعد نشر ملفك.'
+          : 'دي معاينة لملفك. أولياء الأمور بيحجزوا من هنا وبيروحوا لصفحة اختيار الموعد.'
+      );
+      return;
+    }
+    window.location.hash = `#book/${tutor.id}${slotId ? `/${slotId}` : ''}`;
+  };
+
   // Bio text combination without fabrication
-  const primaryBioText = (tutor.helpChildSummary || tutor.helpChildQuote || '').trim();
+  const primaryBioText = (tutor.helpChildSummary || tutor.helpChildQuote || '')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
   const secondaryBioText =
     tutor.helpChildQuote &&
     tutor.helpChildQuote.trim() !== primaryBioText
@@ -1077,433 +1150,359 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
 
   return (
     <div className="w-full pb-24 lg:pb-16 animate-fade-in">
-      {/* Top Breadcrumb & Back Bar */}
-      <div className="w-full py-2.5 mb-4 sm:mb-6 border-b border-[#E2E8F0] bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between flex-wrap gap-2 text-xs sm:text-sm">
-          <div className="flex items-center gap-2 flex-wrap text-[#535E7B]">
-            <button
-              type="button"
-              onClick={onBack}
-              className="min-h-[44px] px-2.5 rounded-xl text-[#0D4E8B] hover:text-[#003767] hover:bg-[#F0F6FD] font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <ArrowRight className="w-4 h-4" />
-              <span>{hasCriteria ? 'العودة إلى نتائج البحث' : 'العودة لاختيار معلم'}</span>
-            </button>
-            <span className="text-slate-300">/</span>
-            <span className="font-bold text-[#1F2A44]">
-              {specializationInfo.primaryLabel}
-            </span>
-            {specializationInfo.secondaryLabel && (
-              <>
-                <span className="text-slate-300">•</span>
-                <span className="text-[#535E7B]">{specializationInfo.secondaryLabel}</span>
-              </>
-            )}
-          </div>
-
-          <span className="text-[11px] font-bold text-[#0D4E8B] bg-[#F0F5FA] px-2.5 py-1 rounded-lg border border-[#D1DCFE]">
-            {hasVerifiedQualification ? 'ملف المعلم المعتمد' : 'ملف المعلم'}
-          </span>
-        </div>
+      {/* Back bar (no repeated specialization text) */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-3 sm:pt-5">
+        <button
+          type="button"
+          onClick={onBack}
+          className="min-h-[44px] -mr-2 px-2 rounded-xl text-[#0D4E8B] hover:bg-[#F0F6FD] text-sm font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+        >
+          <ArrowRight className="w-4 h-4" />
+          <span>{hasCriteria ? 'نتائج البحث' : 'كل المعلمين'}</span>
+        </button>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-        {/* ========================================================================= */}
-        {/* 1. CONCISE PROFILE HEADER (رأس ملف مختصر يجمع العناصر الأساسية للقرار) */}
-        {/* ========================================================================= */}
-        <section
-          aria-label="ملخص المعلم"
-          className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-[#E2E8F0] shadow-xs"
-        >
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-            {/* Right side: Avatar, Name, Specialization, Headline, Badges */}
-            <div className="flex items-start gap-3.5 sm:gap-5 flex-1 min-w-0">
-              <div className="relative shrink-0">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-[#F0F5FA] border-2 border-[#E2E8F0] flex items-center justify-center text-[#0D4E8B] text-xl sm:text-2xl font-bold font-['Cairo']">
-                  {tutor.avatarUrl ? (
-                    <img
-                      src={tutor.avatarUrl}
-                      alt={`${tutor.honorific} ${tutor.name}`}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <span>{tutor.name.charAt(0)}</span>
-                  )}
-                </div>
-                {hasVerifiedQualification && (
-                  <span
-                    className="absolute -bottom-1 -left-1 w-6 h-6 rounded-full bg-[#0D4E8B] text-white flex items-center justify-center shadow-xs border-2 border-white"
-                    title="تمت مراجعة المؤهلات"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </span>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 space-y-4 sm:space-y-6">
+        {/* ========================= HEADER ========================= */}
+        <section aria-label="ملخص المعلم" className="bg-white rounded-3xl p-5 sm:p-7 border border-[#E2E8F0] shadow-xs">
+          <div className="flex flex-row gap-4 sm:gap-6">
+            <div className="relative shrink-0 self-start">
+              <div className="w-20 h-20 sm:w-32 sm:h-32 rounded-3xl overflow-hidden bg-[#F0F5FA] border border-[#E2E8F0] flex items-center justify-center text-[#0D4E8B] text-3xl font-extrabold font-['Cairo']">
+                {tutor.avatarUrl ? (
+                  <img
+                    src={tutor.avatarUrl}
+                    alt={`${tutor.honorific} ${tutor.name}`}
+                    className="w-full h-full object-cover object-top"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <span>{tutor.name.charAt(0)}</span>
+                )}
+              </div>
+              {hasVerifiedQualification && (
+                <span
+                  className="absolute -bottom-1.5 -left-1.5 w-8 h-8 rounded-full bg-[#0D4E8B] text-white flex items-center justify-center border-[3px] border-white"
+                  title="تمت مراجعة المؤهلات"
+                >
+                  <Check className="w-4 h-4" strokeWidth={3} />
+                </span>
+              )}
+            </div>
+
+            <div className="flex-1 min-w-0 space-y-3">
+              <div className="space-y-1">
+                <h1 className="font-['Cairo'] text-xl sm:text-3xl font-extrabold text-[#1F2A44] leading-tight">
+                  {tutor.honorific} {tutor.name}
+                </h1>
+                {descriptiveHeadline && (
+                  <p className="text-sm sm:text-base text-[#475569] leading-relaxed line-clamp-2">{descriptiveHeadline}</p>
                 )}
               </div>
 
-              <div className="flex-1 min-w-0 space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="font-['Cairo'] text-lg sm:text-2xl font-extrabold text-[#1F2A44] leading-snug">
-                    {tutor.honorific} {tutor.name}
-                  </h1>
-
-                  {/* Verified Credentials Badge: strictly only when at least one qualification has verified === true */}
-                  {hasVerifiedQualification && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>تمت مراجعة المؤهلات</span>
-                    </span>
-                  )}
-
-                  {/* Honest Rating or New Badge without star */}
+              {/* Key facts, one calm row */}
+              <ul className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[#1F2A44]">
+                <li className="flex items-center gap-1.5 font-bold">
                   {hasValidReviews ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold">
-                      <Star className="w-3 h-3 fill-[#FFC629] text-[#FFC629]" />
+                    <>
+                      <Star className="w-4 h-4 fill-[#FFC629] text-[#FFC629]" />
                       <span>{toArabicDigits(tutor.rating?.toFixed(1) || '')}</span>
-                      <span className="text-[#64748B] font-normal">
-                        ({toArabicDigits(tutor.reviewsCount)})
-                      </span>
-                    </span>
+                      <span className="text-[#64748B] font-normal">({toArabicDigits(tutor.reviewsCount)} تقييم)</span>
+                    </>
                   ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-[#535E7B] text-[11px] font-bold">
-                      جديد على شاطر
-                    </span>
+                    <>
+                      <Sparkles className="w-4 h-4 text-[#0D4E8B]" strokeWidth={1.75} />
+                      <span>جديد على شاطر</span>
+                    </>
                   )}
-                </div>
-
-                {/* Approved Specialization & Age Group / Grade */}
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="inline-flex items-center gap-1 font-bold text-[#0D4E8B] bg-[#F0F5FA] px-2.5 py-0.5 rounded-md border border-[#D1DCFE]">
-                    <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                    <span>{specializationInfo.primaryLabel}</span>
-                  </span>
-                  {specializationInfo.secondaryLabel && (
-                    <span className="inline-flex items-center font-bold text-[#1F2A44] bg-[#F8F9FC] px-2.5 py-0.5 rounded-md border border-[#E2E8F0]">
-                      {specializationInfo.secondaryLabel}
-                    </span>
-                  )}
-                  <span className="inline-flex items-center gap-1 font-medium text-[#535E7B] bg-[#F8F9FC] px-2.5 py-0.5 rounded-md border border-[#E2E8F0]">
-                    <Clock className="w-3 h-3 text-[#0D4E8B] shrink-0" />
+                </li>
+                {experienceText && (
+                  <li className="flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-[#64748B]" strokeWidth={1.75} />
                     <span>{experienceText}</span>
-                  </span>
-                </div>
+                  </li>
+                )}
+                {hasVerifiedQualification && (
+                  <li className="flex items-center gap-1.5 text-emerald-700 font-bold">
+                    <ShieldCheck className="w-4 h-4" strokeWidth={1.75} />
+                    <span>مؤهلات تمت مراجعتها</span>
+                  </li>
+                )}
+              </ul>
 
-                {/* Descriptive Headline */}
-                <p className="text-xs sm:text-sm font-bold text-[#1F2A44] leading-relaxed pt-0.5">
-                  {descriptiveHeadline}
+            </div>
+          </div>
+          <div className="mt-4 space-y-2.5 sm:pr-[152px]">
+              {/* Specializations: first few chips + "+N" */}
+              {profileSpecChips.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {profileSpecChips.slice(0, 3).map((label) => (
+                    <span
+                      key={label}
+                      className="px-3 py-1.5 rounded-full bg-[#EBF3FC] text-[#0D4E8B] text-xs sm:text-sm font-bold"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                  {profileSpecChips.length > 3 && (
+                    <a
+                      href="#tutor-subjects"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        document.getElementById('tutor-subjects')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                      className="px-3 py-1.5 rounded-full bg-[#F1F5F9] text-[#475569] text-xs sm:text-sm font-bold hover:bg-[#E2E8F0]"
+                    >
+                      +{toArabicDigits(profileSpecChips.length - 3)}
+                    </a>
+                  )}
+                </div>
+              )}
+              {profileAgeText && (
+                <p className="text-xs sm:text-sm text-[#64748B] flex items-center gap-1.5">
+                  <Users className="w-4 h-4 shrink-0" strokeWidth={1.75} />
+                  <span>{profileAgeText}</span>
                 </p>
-              </div>
-            </div>
-
-            {/* Left side: Clear Session Price + Primary Trial CTA */}
-            <div className="pt-3 lg:pt-0 border-t lg:border-t-0 lg:border-r border-[#E2E8F0] lg:pr-6 flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end justify-between gap-3 shrink-0">
-              <div className="text-right lg:text-left space-y-0.5">
-                <span className="text-[11px] text-[#64748B] block">سعر الحصة الخاصة (١:١)</span>
-                <div className="font-['Cairo'] text-sm sm:text-base font-extrabold text-[#1F2A44]">
-                  {sessionPriceText}
-                </div>
-                <span className="text-[11px] font-bold text-emerald-700 block">
-                  التجربة الأولى مجانًا — {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => scrollToBookingSection('trial')}
-                className="py-2.5 px-5 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>اطلب تجربة مجانية</span>
-                <span className="text-[11px] font-bold bg-[#1F2A44]/10 px-2 py-0.5 rounded-md">
-                  {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة
-                </span>
-              </button>
-            </div>
+              )}
           </div>
         </section>
 
-        {/* ========================================================================= */}
-        {/* MAIN 2-COLUMN RESPONSIVE GRID */}
-        {/* ========================================================================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* ===================================================================== */}
-          {/* RIGHT COLUMN: DECISION SECTIONS (عن المعلم • طريقة التدريس • المؤهلات) */}
-          {/* ===================================================================== */}
-          <div className="lg:col-span-7 space-y-5 order-2 lg:order-1">
-            {/* SECTION 1: عن المعلم (About the Tutor & Approved Specializations) */}
-            <section
-              aria-label="عن المعلم"
-              className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-4"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#0D4E8B] flex items-center gap-2">
-                  <UserCheck className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>عن المعلم</span>
-                </h2>
-                {academicDegree && (
-                  <span className="text-[11px] font-medium text-[#535E7B] bg-[#F8F9FC] px-2.5 py-1 rounded-lg border border-[#E2E8F0]">
-                    {academicDegree}
-                  </span>
-                )}
-              </div>
-
-              {/* Tutor's own words preserved without italic distortion */}
-              {primaryBioText && (
-                <div className="text-xs sm:text-sm text-[#1F2A44] leading-relaxed space-y-2">
-                  <p>
-                    {isBioExpanded || primaryBioText.length <= 180
-                      ? primaryBioText
-                      : `${primaryBioText.slice(0, 180).trim()}...`}
-                  </p>
-
-                  {isBioExpanded && secondaryBioText && (
-                    <p className="text-[#535E7B] pt-1">{secondaryBioText}</p>
-                  )}
-
-                  {isBioExpanded &&
-                    tutor.targetStudentCases &&
-                    tutor.targetStudentCases.length > 0 && (
-                      <div className="pt-2 space-y-1.5">
-                        <span className="text-xs font-bold text-[#0D4E8B] block">
-                          الحالات التعليمية التي يركز عليها المعلم:
-                        </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {tutor.targetStudentCases.map((c, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-start gap-1.5 text-xs text-[#1F2A44] bg-[#F8F9FC] p-2.5 rounded-xl border border-[#E2E8F0]"
-                            >
-                              <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                              <span>{normalizeLegacyAgeGroupText(c)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                  {hasExpandableBio && (
-                    <button
-                      type="button"
-                      onClick={() => setIsBioExpanded((prev) => !prev)}
-                      className="text-xs font-bold text-[#0D4E8B] hover:underline inline-flex items-center gap-1 pt-1 cursor-pointer"
-                    >
-                      <span>{isBioExpanded ? 'عرض أقل' : 'اقرأ المزيد'}</span>
-                      {isBioExpanded ? (
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      ) : (
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                  )}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
+          {/* ========================= TRIAL CARD (sticky on desktop) ========================= */}
+          <aside id="trial-card" className="lg:col-span-5 lg:order-2 lg:sticky lg:top-24 space-y-4 scroll-mt-24">
+            <section aria-label="احجز تجربة مجانية" className="bg-white rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-sm space-y-4">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <span className="block text-xs text-[#64748B]">الحصة الخاصة</span>
+                  <span className="font-['Cairo'] text-2xl font-extrabold text-[#1F2A44]">{profilePrice.priceText}</span>
+                  <span className="text-sm text-[#64748B]"> / {profilePrice.durationText}</span>
                 </div>
-              )}
-
-              {/* Approved Specializations & Suitable Ages/Grades */}
-              {tutor.subjectsTaughtSummary && tutor.subjectsTaughtSummary.length > 0 && (
-                <div className="pt-3 border-t border-[#F2F3F6] space-y-2.5">
-                  <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                    التخصصات والفئات العمرية / الصفوف المعتمدة:
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {tutor.subjectsTaughtSummary.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] flex flex-col justify-between gap-2"
-                      >
-                        <div>
-                          <div className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                            {normalizeLegacyAgeGroupText(item.title)}
-                          </div>
-                          {item.curriculumNote && (
-                            <p className="text-[11px] text-[#535E7B] mt-0.5 leading-relaxed">
-                              {normalizeLegacyAgeGroupText(item.curriculumNote)}
-                            </p>
-                          )}
-                        </div>
-                        {item.gradesRange && (
-                          <div>
-                            <span className="inline-block px-2 py-0.5 rounded-md bg-white border border-[#E2E8F0] text-[#0D4E8B] font-bold text-[11px]">
-                              {normalizeLegacyAgeGroupText(item.gradesRange)}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Conditional Video Preview (only when real videoUrl exists) */}
-              {hasRealVideo && (
-                <div className="pt-3 border-t border-[#F2F3F6]">
-                  <div className="p-3.5 rounded-xl bg-[#F0F5FA] border border-[#D1DCFE] flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-[#0D4E8B] text-[#FFC629] flex items-center justify-center shrink-0">
-                        <Play className="w-4 h-4 fill-[#FFC629]" />
-                      </div>
-                      <div>
-                        <h4 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#0D4E8B]">
-                          فيديو تعريفي للمعلم
-                        </h4>
-                        {tutor.videoPreview?.description && (
-                          <p className="text-[11px] text-[#535E7B]">
-                            {tutor.videoPreview.description}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsVideoModalOpen(true)}
-                      className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-[#0D4E8B] hover:text-white text-[#0D4E8B] text-xs font-bold border border-[#CBD5E1] transition-colors cursor-pointer"
-                    >
-                      مشاهدة الفيديو
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {/* SECTION 2: طريقة التدريس (Teaching Methodology & Trial Session Goal) */}
-            <section
-              aria-label="طريقة التدريس"
-              className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-4"
-            >
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <h2 className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#0D4E8B] flex items-center gap-2">
-                  <Lightbulb className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>طريقة التدريس</span>
-                </h2>
-                <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-md border border-emerald-200">
-                  تقييم المستوى خلال التجربة المجانية
+                <span className="px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-extrabold flex items-center gap-1">
+                  <Gift className="w-3.5 h-3.5" strokeWidth={2} />
+                  أول تجربة مجانًا
                 </span>
               </div>
 
-              {tutor.methodologyPillars && tutor.methodologyPillars.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  {tutor.methodologyPillars.map((pillar, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3.5 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-5 h-5 rounded-md bg-[#0D4E8B] text-white flex items-center justify-center text-[11px] font-bold">
-                          {toArabicDigits(idx + 1)}
-                        </span>
-                        <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                          {pillar.title}
-                        </h3>
-                      </div>
-                      <p className="text-xs text-[#535E7B] leading-relaxed">
-                        {pillar.description}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* What happens in the 20-min free trial */}
-              {tutor.whatHappensInTrial && tutor.whatHappensInTrial.length > 0 && (
-                <div className="pt-3 border-t border-[#F2F3F6] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                      ماذا يحدث في التجربة المجانية ({toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة)؟
-                    </h3>
-                  </div>
-                  <p className="text-xs text-[#535E7B] leading-relaxed">
-                    العمر أو الصف يحدد الفئة المناسبة، وتساعد الحصة التجريبية على تقييم المستوى الفعلي للطفل ووضع خطة تناسبه قبل أي التزام مالي.
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-                    {tutor.whatHappensInTrial.map((step) => (
-                      <div
-                        key={step.stepNumber}
-                        className="p-3 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-1"
-                      >
-                        <div className="font-['Cairo'] text-xs font-bold text-[#0D4E8B]">
-                          {toArabicDigits(step.stepNumber)}. {step.title}
-                        </div>
-                        <p className="text-[11px] text-[#535E7B] leading-relaxed">
-                          {step.description}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {/* SECTION 3: المؤهلات (Qualifications & Experience) */}
-            <section
-              aria-label="المؤهلات"
-              className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-4"
-            >
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <h2 className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#0D4E8B] flex items-center gap-2">
-                  <GraduationCap className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>المؤهلات</span>
-                </h2>
-                <span className="text-xs font-bold text-[#1F2A44] bg-[#F8F9FC] px-2.5 py-1 rounded-lg border border-[#E2E8F0]">
-                  {experienceText}
-                </span>
-              </div>
-
-              {tutor.qualifications && tutor.qualifications.length > 0 ? (
-                <div className="space-y-2.5">
-                  {tutor.qualifications.map((q, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3.5 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0] flex items-start gap-2.5"
-                    >
-                      <span
-                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
-                          q.verified === true
-                            ? 'bg-[#0D4E8B]/10 text-[#0D4E8B]'
-                            : 'bg-slate-200/70 text-[#64748B]'
-                        }`}
-                      >
-                        {q.verified === true ? (
-                          <Check className="w-3 h-3" />
-                        ) : (
-                          <GraduationCap className="w-3 h-3" />
-                        )}
-                      </span>
-                      <div className="space-y-0.5">
-                        <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                          {q.title}
-                        </h3>
-                        {q.institution && (
-                          <p className="text-xs text-[#0D4E8B] font-medium">{q.institution}</p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-[#535E7B]">
-                  {academicDegree || 'معلم في منصة شاطر كلاسيز.'}
+              {previewBookingNotice && (
+                <p role="status" className="p-3 rounded-2xl bg-amber-50 text-amber-900 text-xs font-bold leading-relaxed">
+                  {previewBookingNotice}
                 </p>
               )}
+
+              {isLoadingTrialSlots || isLoadingPolicy ? (
+                <div className="py-4 flex justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin text-[#0D4E8B]" />
+                </div>
+              ) : profileNextTrialSlots.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-['Cairo'] text-sm font-extrabold text-[#1F2A44]">أقرب مواعيد التجربة</h2>
+                    <span className="text-[11px] text-[#64748B]">{activeTimezoneLabel}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {profileNextTrialSlots.map((slot) => {
+                      const d = formatSlotDateArabic(slot.slotDate, slot.timezone || 'Africa/Cairo');
+                      return (
+                        <button
+                          key={slot.id}
+                          type="button"
+                          data-trial-slot={slot.id}
+                          onClick={() => goToTrialBooking(slot.id)}
+                          className="p-2.5 rounded-2xl border-2 border-[#E2E8F0] hover:border-[#0D4E8B] text-right transition-colors cursor-pointer"
+                        >
+                          <span className="block text-xs font-bold text-[#64748B]">{d.relativeBadge || d.dayName} · {d.shortDate}</span>
+                          <span className="block font-['Cairo'] text-base font-extrabold text-[#1F2A44]">
+                            {formatTimeArabic12h(slot.startTime)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() => (profileCanBookDirect ? goToTrialBooking() : openTrialWhatsAppModal())}
+                className="w-full min-h-[52px] rounded-2xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] text-base font-extrabold shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {profileCanBookDirect ? <CalendarCheck2 className="w-5 h-5" /> : <MessageCircle className="w-5 h-5" />}
+                <span>{profileCanBookDirect ? 'احجز تجربة مجانية' : 'تنسيق التجربة عبر واتساب'}</span>
+              </button>
+              {profileCanBookDirect && validTrialSlots.length > profileNextTrialSlots.length && (
+                <button
+                  type="button"
+                  onClick={() => goToTrialBooking()}
+                  className="w-full text-sm font-bold text-[#0D4E8B] hover:underline cursor-pointer"
+                >
+                  كل المواعيد ({toArabicDigits(validTrialSlots.length)})
+                </button>
+              )}
+
+              <p className="pt-3 border-t border-[#F1F5F9] text-xs text-[#64748B] leading-relaxed flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#0D4E8B] shrink-0 mt-0.5" strokeWidth={1.75} />
+                <span>
+                  تجربة {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة أونلاين لتقييم مستوى طفلك والاطمئنان لأسلوب المعلم، من غير أي دفع، وفريق شاطر متابع معاك.
+                </span>
+              </p>
             </section>
-          </div>
+          </aside>
+
+          {/* ========================= MAIN COLUMN ========================= */}
+          <div className="lg:col-span-7 lg:order-1 space-y-4 sm:space-y-5">
+            {/* عن المعلم */}
+            {(primaryBioText || hasRealVideo) && (
+              <section aria-label="عن المعلم" className="bg-white rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-3">
+                <h2 className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">عن المعلم</h2>
+                {primaryBioText && (
+                  <div className="text-sm sm:text-base text-[#334155] leading-loose space-y-2">
+                    <p className="whitespace-pre-line">
+                      {isBioExpanded || primaryBioText.length <= 220
+                        ? primaryBioText
+                        : `${primaryBioText.slice(0, 220).trim()}…`}
+                    </p>
+                    {isBioExpanded && secondaryBioText && <p className="text-[#475569]">{secondaryBioText}</p>}
+                    {isBioExpanded && tutor.targetStudentCases && tutor.targetStudentCases.length > 0 && (
+                      <ul className="pt-1 space-y-1.5">
+                        {tutor.targetStudentCases.map((c, idx) => (
+                          <li key={idx} className="flex items-start gap-2 text-sm">
+                            <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-1" />
+                            <span>{normalizeLegacyAgeGroupText(c)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(primaryBioText.length > 220 || secondaryBioText || (tutor.targetStudentCases || []).length > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => setIsBioExpanded((prev) => !prev)}
+                        className="text-sm font-bold text-[#0D4E8B] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>{isBioExpanded ? 'عرض أقل' : 'اقرأ المزيد'}</span>
+                        {isBioExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {hasRealVideo && (
+                  <button
+                    type="button"
+                    onClick={() => setIsVideoModalOpen(true)}
+                    className="w-full p-3 rounded-2xl bg-[#F0F5FA] flex items-center gap-3 text-right cursor-pointer hover:bg-[#E5EEF8]"
+                  >
+                    <span className="w-10 h-10 rounded-xl bg-[#0D4E8B] text-[#FFC629] flex items-center justify-center shrink-0">
+                      <Play className="w-4 h-4 fill-[#FFC629]" />
+                    </span>
+                    <span className="font-['Cairo'] text-sm font-extrabold text-[#0D4E8B]">شاهد الفيديو التعريفي</span>
+                  </button>
+                )}
+              </section>
+            )}
+
+            {/* بيدرّس إيه */}
+            {profileTeachingGroups.length > 0 && (
+              <section id="tutor-subjects" aria-label="بيدرّس إيه" className="bg-white rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-3 scroll-mt-24">
+                <h2 className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">بيدرّس إيه</h2>
+                <ul className="divide-y divide-[#F1F5F9]">
+                  {profileTeachingGroups.map((g, idx) => (
+                    <li key={idx} className="py-3 first:pt-0 last:pb-0 flex items-start gap-3">
+                      <BookOpen className="w-5 h-5 text-[#0D4E8B] shrink-0 mt-0.5" strokeWidth={1.75} />
+                      <div className="min-w-0">
+                        <p className="text-sm sm:text-base font-bold text-[#1F2A44]">{g.title}</p>
+                        {g.detail && !profileSharedDetail && (
+                          <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed">{g.detail}</p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {/* المؤهلات والخبرة */}
+            {((tutor.qualifications && tutor.qualifications.length > 0) || academicDegree) && (
+              <section aria-label="المؤهلات والخبرة" className="bg-white rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-3">
+                <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                  <h2 className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">المؤهلات والخبرة</h2>
+                  {experienceText && <span className="text-sm text-[#64748B]">{experienceText}</span>}
+                </div>
+                <ul className="space-y-3">
+                  {(tutor.qualifications && tutor.qualifications.length > 0
+                    ? tutor.qualifications
+                    : [{ title: academicDegree, institution: '', verified: false } as any]
+                  ).map((q: any, idx: number) => (
+                    <li key={idx} className="flex items-start gap-3">
+                      <span
+                        className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                          q.verified === true ? 'bg-emerald-50 text-emerald-700' : 'bg-[#F1F5F9] text-[#64748B]'
+                        }`}
+                      >
+                        {q.verified === true ? <ShieldCheck className="w-4 h-4" /> : <GraduationCap className="w-4 h-4" />}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm sm:text-base font-bold text-[#1F2A44] leading-relaxed">{q.title}</p>
+                        {q.institution && <p className="text-xs sm:text-sm text-[#64748B]">{q.institution}</p>}
+                        {q.verified === true && <p className="text-xs font-bold text-emerald-700">تمت مراجعته من شاطر</p>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {/* طريقة التدريس — only when there is real content */}
+            {((tutor.methodologyPillars && tutor.methodologyPillars.length > 0) ||
+              (tutor.whatHappensInTrial && tutor.whatHappensInTrial.length > 0)) && (
+              <section aria-label="طريقة التدريس" className="bg-white rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-4">
+                <h2 className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">طريقة التدريس</h2>
+                {tutor.methodologyPillars && tutor.methodologyPillars.length > 0 && (
+                  <ul className="space-y-3">
+                    {tutor.methodologyPillars.map((pillar, idx) => (
+                      <li key={idx} className="flex items-start gap-3">
+                        <span className="w-7 h-7 rounded-lg bg-[#EBF3FC] text-[#0D4E8B] text-xs font-extrabold flex items-center justify-center shrink-0">
+                          {toArabicDigits(idx + 1)}
+                        </span>
+                        <div>
+                          <p className="text-sm sm:text-base font-bold text-[#1F2A44]">{pillar.title}</p>
+                          {pillar.description && <p className="text-xs sm:text-sm text-[#64748B] leading-relaxed">{pillar.description}</p>}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {tutor.whatHappensInTrial && tutor.whatHappensInTrial.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-[#F8FAFC] space-y-2">
+                    <p className="font-['Cairo'] text-sm font-extrabold text-[#1F2A44]">
+                      في التجربة المجانية ({toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة)
+                    </p>
+                    <ol className="space-y-1.5">
+                      {tutor.whatHappensInTrial.map((step) => (
+                        <li key={step.stepNumber} className="text-sm text-[#475569] leading-relaxed">
+                          <span className="font-bold text-[#0D4E8B]">{toArabicDigits(step.stepNumber)}. {step.title}</span>
+                          {step.description ? ` — ${step.description}` : ''}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+              </section>
+            )}
 
           {/* ===================================================================== */}
           {/* LEFT COLUMN: COMPACT BOOKING WIDGET (المواعيد والمجموعات) */}
           {/* ===================================================================== */}
-          <div
-            id="booking-widget-section"
-            className="lg:col-span-5 lg:sticky lg:top-24 space-y-4 order-1 lg:order-2 scroll-mt-20"
-          >
+          <div id="booking-widget-section" className="space-y-4 scroll-mt-24">
             <section
-              aria-label="المواعيد والمجموعات"
+              aria-label="الحصص الخاصة والمجموعات"
               className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-[#E2E8F0] shadow-sm space-y-4"
             >
               {/* Section Header + Timezone Indicator */}
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <h2 className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#1F2A44] flex items-center gap-2">
                   <CalendarDays className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>المواعيد والمجموعات</span>
+                  <span>الحصص الخاصة والمجموعات</span>
                 </h2>
                 <span className="text-[11px] font-bold text-[#0D4E8B] bg-[#F0F5FA] px-2.5 py-1 rounded-lg border border-[#D1DCFE]">
                   {activeTimezoneLabel}
@@ -1556,29 +1555,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
               <div
                 role="tablist"
                 aria-label="خيارات الحجز"
-                className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0]"
+                className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0]"
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeBookingTab === 'trial'}
-                  onClick={() => setActiveBookingTab('trial')}
-                  className={`py-2 px-2 rounded-lg font-['Cairo'] text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
-                    activeBookingTab === 'trial'
-                      ? 'bg-[#0D4E8B] text-white shadow-xs'
-                      : 'text-[#535E7B] hover:text-[#1F2A44]'
-                  }`}
-                >
-                  <span>تجربة مجانية</span>
-                  <span
-                    className={`text-[10px] ${
-                      activeBookingTab === 'trial' ? 'text-[#FFC629]' : 'text-emerald-700'
-                    }`}
-                  >
-                    {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة
-                  </span>
-                </button>
-
                 <button
                   type="button"
                   role="tab"
@@ -1625,527 +1603,6 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                   </span>
                 </button>
               </div>
-
-              {/* =============================================================== */}
-              {/* TAB 1: تجربة مجانية (Free 20-Minute Trial Session) */}
-              {/* =============================================================== */}
-              {activeBookingTab === 'trial' && (
-                <div className="space-y-4">
-                  {confirmedDirectBooking && (() => {
-                    const bookedTime = formatBookingInOwnTimezone(
-                      confirmedDirectBooking.startsAt,
-                      confirmedDirectBooking.endsAt,
-                      confirmedDirectBooking.timezone
-                    );
-                    return (
-                      <div className="p-4 sm:p-5 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-3">
-                        <div className="flex items-start gap-2.5">
-                          <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
-                          <div className="space-y-1">
-                            <h3 className="font-['Cairo'] text-sm sm:text-base font-extrabold text-emerald-950">
-                              تم تأكيد حجز التجربة المجانية بنجاح!
-                            </h3>
-                            <p className="text-xs text-emerald-900 leading-relaxed">
-                              تم تثبيت موعد الحصة التجريبية المجانية مع{' '}
-                              <strong>{confirmedDirectBooking.tutorName || tutor.name}</strong>:
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="p-3 rounded-xl bg-white border border-emerald-200 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                          <div>
-                            <span className="text-[11px] text-[#64748B] block">التاريخ:</span>
-                            <span className="font-bold text-[#1F2A44]">{bookedTime.fullDateLabel}</span>
-                          </div>
-                          <div>
-                            <span className="text-[11px] text-[#64748B] block">الوقت:</span>
-                            <span className="font-bold text-[#0D4E8B]">
-                              {bookedTime.timeRangeLabel} ({bookedTime.timezoneLabel})
-                            </span>
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-emerald-900 leading-relaxed">
-                          سيظهر رابط Google Meet أو Zoom داخل صفحة «حجوزاتي» فور إضافته من المعلم.
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={navigateToMyTrials}
-                          className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-['Cairo'] font-extrabold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                        >
-                          <CalendarCheck2 className="w-4 h-4" />
-                          <span>عرض تفاصيل الحجز في «حجوزاتي»</span>
-                        </button>
-                      </div>
-                    );
-                  })()}
-
-                  {isLoadingTrialSlots || isLoadingPolicy ? (
-                    <div className="py-8 flex flex-col items-center justify-center gap-2 text-xs text-[#64748B]">
-                      <Loader2 className="w-6 h-6 text-[#0D4E8B] animate-spin" />
-                      <span>جاري تحميل المواعيد التجريبية المتاحة...</span>
-                    </div>
-                  ) : availableTrialDates.length > 0 ? (
-                    <>
-                      {isDirectBookingEnabled && bookingPolicy && (
-                        <div className="px-3.5 py-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 flex items-center justify-between flex-wrap gap-2 text-[11px]">
-                          <span className="font-bold text-emerald-900 flex items-center gap-1.5">
-                            <CalendarCheck2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                            <span>الحجز المباشر الفوري مفعّل مجانًا</span>
-                          </span>
-                          <span className="font-medium text-emerald-800">
-                            مهلة الحجز: قبل الموعد بـ{' '}
-                            {formatMinimumNoticeArabic(bookingPolicy.minimumNoticeMinutes)} على الأقل
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Step 1: Available Days Strip + Next/Prev + Mini Calendar Toggle */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-[#1F2A44]">
-                            ١. اختر اليوم المتاح ({toArabicDigits(availableTrialDates.length)} أيام):
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {availableTrialDates.length > DAYS_WINDOW_SIZE && (
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={trialDayWindowStart === 0}
-                                  onClick={() =>
-                                    setTrialDayWindowStart((prev) => Math.max(0, prev - 1))
-                                  }
-                                  aria-label="الأيام السابقة"
-                                  className="p-1 rounded-lg border border-[#E2E8F0] text-[#1F2A44] disabled:opacity-35 hover:bg-[#F8F9FC] cursor-pointer"
-                                >
-                                  <ChevronRight className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    trialDayWindowStart + DAYS_WINDOW_SIZE >=
-                                    availableTrialDates.length
-                                  }
-                                  onClick={() =>
-                                    setTrialDayWindowStart((prev) =>
-                                      Math.min(
-                                        availableTrialDates.length - DAYS_WINDOW_SIZE,
-                                        prev + 1
-                                      )
-                                    )
-                                  }
-                                  aria-label="الأيام التالية"
-                                  className="p-1 rounded-lg border border-[#E2E8F0] text-[#1F2A44] disabled:opacity-35 hover:bg-[#F8F9FC] cursor-pointer"
-                                >
-                                  <ChevronLeft className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setShowTrialMiniCalendar((prev) => !prev)}
-                              className="px-2 py-1 rounded-lg border border-[#E2E8F0] bg-[#F8F9FC] hover:bg-[#F0F5FA] text-[11px] font-bold text-[#0D4E8B] flex items-center gap-1 cursor-pointer"
-                            >
-                              <Calendar className="w-3 h-3" />
-                              <span>{showTrialMiniCalendar ? 'إخفاء التقويم' : 'كل الأيام'}</span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Compact Mini Calendar Picker (All Available Dates) */}
-                        {showTrialMiniCalendar && (
-                          <div className="p-3 rounded-xl bg-[#F8F9FC] border border-[#D1DCFE] space-y-2">
-                            <span className="text-[11px] font-bold text-[#0D4E8B] block">
-                              الأيام المتاحة في جدول المعلم:
-                            </span>
-                            <div className="grid grid-cols-3 gap-1.5 max-h-40 overflow-y-auto">
-                              {availableTrialDates.map((dStr) => {
-                                const info = formatSlotDateArabic(dStr);
-                                const isSel = dStr === selectedTrialDate;
-                                return (
-                                  <button
-                                    key={dStr}
-                                    type="button"
-                                    onClick={() => handleSelectTrialDay(dStr)}
-                                    className={`p-2 rounded-lg border text-right text-[11px] font-bold transition-all cursor-pointer ${
-                                      isSel
-                                        ? 'bg-[#0D4E8B] text-white border-[#0D4E8B]'
-                                        : 'bg-white text-[#1F2A44] border-[#E2E8F0] hover:border-[#0D4E8B]'
-                                    }`}
-                                  >
-                                    <div className="truncate">{info.dayName}</div>
-                                    <div
-                                      className={`text-[10px] ${
-                                        isSel ? 'text-blue-100' : 'text-[#64748B]'
-                                      }`}
-                                    >
-                                      {info.shortDate}
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Horizontal Day Pills */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                          {visibleTrialDates.map((dateStr) => {
-                            const info = formatSlotDateArabic(dateStr);
-                            const count = (trialSlotsByDate.get(dateStr) || []).length;
-                            const isSelected = dateStr === selectedTrialDate;
-                            return (
-                              <button
-                                key={dateStr}
-                                type="button"
-                                onClick={() => handleSelectTrialDay(dateStr)}
-                                className={`py-2 px-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
-                                    : 'bg-[#F8F9FC] text-[#1F2A44] border-[#E2E8F0] hover:border-[#0D4E8B]/50'
-                                }`}
-                              >
-                                <div className="font-['Cairo'] text-xs font-bold truncate">
-                                  {info.dayName}
-                                </div>
-                                <div
-                                  className={`text-[11px] font-medium ${
-                                    isSelected ? 'text-blue-100' : 'text-[#535E7B]'
-                                  }`}
-                                >
-                                  {info.shortDate}
-                                </div>
-                                <div
-                                  className={`text-[10px] mt-0.5 font-bold ${
-                                    isSelected ? 'text-[#FFC629]' : 'text-emerald-700'
-                                  }`}
-                                >
-                                  {count === 1 ? 'موعد واحد' : `${toArabicDigits(count)} أوقات`}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Step 2: Compact Time Buttons for Selected Day */}
-                      {selectedTrialDate && (
-                        <div className="space-y-2">
-                          <span className="text-xs font-bold text-[#1F2A44] block">
-                            ٢. اختر الوقت المناسب ({activeTimezoneLabel}):
-                          </span>
-                          <div className="flex flex-wrap gap-2">
-                            {(trialSlotsByDate.get(selectedTrialDate) || []).map((slot) => {
-                              const isSelected = slot.id === selectedTrialSlotId;
-                              return (
-                                <button
-                                  key={slot.id}
-                                  type="button"
-                                  onClick={() => handleSelectTrialTime(slot)}
-                                  className={`px-3 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                                    isSelected
-                                      ? 'bg-[#F0F5FA] border-[#0D4E8B] text-[#0D4E8B] ring-1 ring-[#0D4E8B]'
-                                      : 'bg-white border-[#E2E8F0] text-[#1F2A44] hover:border-[#0D4E8B]/50'
-                                  }`}
-                                >
-                                  <Clock className="w-3.5 h-3.5 text-[#0D4E8B]" />
-                                  <span>
-                                    {formatTimeArabic12h(slot.startTime)} –{' '}
-                                    {formatTimeArabic12h(slot.endTime)}
-                                  </span>
-                                  {isSelected && <Check className="w-3.5 h-3.5 text-[#0D4E8B]" />}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Step 3: Unified Booking Summary & Direct Booking OR WhatsApp Fallback */}
-                      {selectedTrialSlot && selectedTrialSlotPayload && (
-                        <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#D1DCFE] space-y-3">
-                          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-2">
-                            <span className="font-['Cairo'] text-xs font-extrabold text-[#0D4E8B]">
-                              {isDirectBookingEnabled
-                                ? 'ملخص الحجز التجريبي المباشر'
-                                : 'ملخص طلب التجربة المجانية'}
-                            </span>
-                            <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                              مجانًا — ٠ ج.م
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <span className="text-[11px] text-[#64748B] block">التاريخ:</span>
-                              <span className="font-bold text-[#1F2A44]">
-                                {selectedTrialSlotPayload.dayName} {selectedTrialSlotPayload.date}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[11px] text-[#64748B] block">الوقت:</span>
-                              <span className="font-bold text-[#0D4E8B]">
-                                {selectedTrialSlotPayload.timeRange}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[11px] text-[#64748B] block">التخصص:</span>
-                              <span className="font-bold text-[#1F2A44]">
-                                {specializationInfo.primaryLabel}
-                                {specializationInfo.secondaryLabel
-                                  ? ` (${specializationInfo.secondaryLabel})`
-                                  : ''}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[11px] text-[#64748B] block">المدة والسعر:</span>
-                              <span className="font-bold text-emerald-700">
-                                {toArabicDigits(
-                                  bookingPolicy?.trialDurationMinutes ||
-                                    tutor.trialDurationMinutes ||
-                                    20
-                                )}{' '}
-                                دقيقة • مجانًا
-                              </span>
-                            </div>
-                          </div>
-
-                          {isDirectBookingEnabled ? (
-                            <div className="space-y-3 pt-1">
-                              {!isDirectPanelOpen ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setDirectBookingError(null);
-                                      setIsDirectPanelOpen(true);
-                                    }}
-                                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-                                  >
-                                    <CalendarCheck2 className="w-4 h-4 text-[#1F2A44]" />
-                                    <span>احجز التجربة المجانية مباشرة</span>
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={openTrialWhatsAppModal}
-                                    className="w-full py-1.5 text-[11px] font-bold text-[#0D4E8B] hover:underline text-center cursor-pointer"
-                                  >
-                                    تحتاج مساعدة في الاختيار؟ تنسيق عبر واتساب الإدارة
-                                  </button>
-                                </>
-                              ) : isCheckingAuth ? (
-                                <div className="p-4 rounded-xl bg-white border border-[#CBD5E1] flex items-center justify-center gap-2 text-xs text-[#64748B]">
-                                  <Loader2 className="w-4 h-4 text-[#0D4E8B] animate-spin" />
-                                  <span>جاري التحقق من جلسة الدخول...</span>
-                                </div>
-                              ) : !authUser ? (
-                                <div className="p-3.5 rounded-xl bg-white border border-[#CBD5E1] space-y-3">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-['Cairo'] text-xs font-extrabold text-[#1F2A44] flex items-center gap-1.5">
-                                      <Mail className="w-4 h-4 text-[#0D4E8B]" />
-                                      <span>١. سجّل الدخول ببريدك لتأكيد الحجز</span>
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setIsDirectPanelOpen(false)}
-                                      className="text-[11px] font-bold text-[#64748B] hover:text-[#1F2A44] cursor-pointer"
-                                    >
-                                      إغلاق
-                                    </button>
-                                  </div>
-
-                                  {otpSentEmail ? (
-                                    <EmailCodeVerifier compact email={otpSentEmail} onResend={resendDirectOtp} onChangeEmail={() => setOtpSentEmail(null)} />
-                                  ) : (
-                                    <form onSubmit={handleSendDirectOtp} className="space-y-2.5">
-                                      <p className="text-[11px] text-[#535E7B] leading-relaxed">
-                                        سنرسل كود دخول لبريدك الإلكتروني (بدون كلمة مرور) تكتبه هنا لتأكيد حجزك، ويظهر بعدها رابط الحصة في «حجوزاتي».
-                                      </p>
-                                      <input
-                                        type="email"
-                                        required
-                                        dir="ltr"
-                                        value={otpEmail}
-                                        onChange={(e) => setOtpEmail(e.target.value)}
-                                        placeholder="parent@example.com"
-                                        className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
-                                      />
-                                      {directBookingError && (
-                                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold flex items-start gap-1.5">
-                                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                                          <span>{directBookingError}</span>
-                                        </div>
-                                      )}
-                                      <button
-                                        type="submit"
-                                        disabled={isSendingOtp}
-                                        className="w-full min-h-[42px] py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-                                      >
-                                        {isSendingOtp ? (
-                                          <>
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                            <span>جاري الإرسال...</span>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Mail className="w-3.5 h-3.5" />
-                                            <span>إرسال كود الدخول لبريدك</span>
-                                          </>
-                                        )}
-                                      </button>
-                                    </form>
-                                  )}
-                                </div>
-                              ) : (
-                                <form
-                                  onSubmit={handleConfirmDirectTrialBooking}
-                                  className="p-3.5 rounded-xl bg-white border border-[#CBD5E1] space-y-3"
-                                >
-                                  <div className="flex items-center justify-between gap-2 text-[11px]">
-                                    <span className="font-bold text-emerald-800">
-                                      مسجل الدخول: <span dir="ltr">{authUser.email}</span>
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => DirectTrialBookingService.signOutSession()}
-                                      className="text-[#0D4E8B] font-bold hover:underline cursor-pointer"
-                                    >
-                                      تغيير البريد
-                                    </button>
-                                  </div>
-
-                                  <div className="space-y-1">
-                                    <label className="block text-[11px] font-bold text-[#1F2A44]">
-                                      اسم ولي الأمر
-                                    </label>
-                                    <input
-                                      type="text"
-                                      required
-                                      value={guardianName}
-                                      onChange={(e) => setGuardianName(e.target.value)}
-                                      placeholder="الاسم الثنائي لولي الأمر"
-                                      className="w-full min-h-[40px] px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
-                                    />
-                                  </div>
-
-                                  <div className="space-y-1">
-                                    <label className="block text-[11px] font-bold text-[#1F2A44]">
-                                      رقم واتساب (مع مفتاح الدولة)
-                                    </label>
-                                    <div className="grid grid-cols-12 gap-1.5">
-                                      <select
-                                        value={whatsappCountryCode}
-                                        onChange={(e) => setWhatsappCountryCode(e.target.value)}
-                                        className="col-span-5 min-h-[40px] px-2 py-2 rounded-xl border border-[#CBD5E1] bg-white text-[11px] font-bold text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
-                                        aria-label="المفتاح الدولي"
-                                      >
-                                        {PARENT_LEAD_COUNTRY_OPTIONS.map((opt) => (
-                                          <option key={opt.code} value={opt.code}>
-                                            {opt.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="tel"
-                                        required
-                                        dir="ltr"
-                                        value={whatsappLocalPhone}
-                                        onChange={(e) => setWhatsappLocalPhone(e.target.value)}
-                                        placeholder="01012345678"
-                                        className="col-span-7 min-h-[40px] px-3 py-2 rounded-xl border border-[#CBD5E1] text-xs text-[#1F2A44] focus:outline-hidden focus:border-[#0D4E8B]"
-                                      />
-                                    </div>
-                                  </div>
-
-                                  {directBookingError && (
-                                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold flex items-start gap-1.5">
-                                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                                      <span>{directBookingError}</span>
-                                    </div>
-                                  )}
-
-                                  <button
-                                    type="submit"
-                                    disabled={isConfirmingDirectBooking}
-                                    className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-                                  >
-                                    {isConfirmingDirectBooking ? (
-                                      <>
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                        <span>جاري تأكيد الحجز...</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <CheckCircle2 className="w-4 h-4" />
-                                        <span>تأكيد الحجز المجاني</span>
-                                      </>
-                                    )}
-                                  </button>
-
-                                  <p className="text-[10px] text-[#535E7B] text-center leading-relaxed">
-                                    لن يتم تأكيد الحجز وإغلاق الموعد إلا بعد الضغط على «تأكيد الحجز المجاني».
-                                  </p>
-                                </form>
-                              )}
-                            </div>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                onClick={openTrialWhatsAppModal}
-                                className="w-full min-h-[44px] py-3 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-                              >
-                                <MessageCircle className="w-4 h-4 text-[#1F2A44]" />
-                                <span>إرسال طلب التجربة عبر واتساب</span>
-                              </button>
-
-                              <p className="text-[11px] text-[#535E7B] leading-relaxed text-center">
-                                التواصل عبر واتساب هو طلب تنسيق، ولا يُعتبر الموعد مؤكدًا إلا بعد تأكيد الإدارة.
-                              </p>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    /* Honest Empty State when no qualifying trial slots exist */
-                    <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] text-center space-y-3">
-                      <div className="w-10 h-10 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto">
-                        <Calendar className="w-5 h-5" />
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                          {hasNoticeFilteredOutAllSlots
-                            ? 'لا توجد مواعيد متاحة للحجز المباشر ضمن المهلة المطلوبة حاليًا'
-                            : 'لا توجد مواعيد تجريبية مضافة حاليًا'}
-                        </h3>
-                        <p className="text-xs text-[#535E7B] leading-relaxed">
-                          {hasNoticeFilteredOutAllSlots && bookingPolicy
-                            ? `يتطلب الحجز المباشر توفر مهلة لا تقل عن ${formatMinimumNoticeArabic(
-                                bookingPolicy.minimumNoticeMinutes
-                              )} قبل بدء الحصة. يمكنك التنسيق الفوري عبر واتساب الإدارة لاختيار موعد يناسبكم.`
-                            : `يمكنك إرسال طلب تنسيق عبر إدارة شاطر لتحديد أقرب موعد تجربة مجانية (${toArabicDigits(
-                                tutor.trialDurationMinutes || 20
-                              )} دقيقة) يناسب جدولكم مع المعلم.`}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={openTrialWhatsAppModal}
-                        className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                        <span>طلب تنسيق تجربة مجانية عبر الإدارة</span>
-                      </button>
-                      <p className="text-[11px] text-[#64748B]">
-                        التواصل عبر واتساب هو طلب تنسيق، ولا يُعتبر الموعد مؤكدًا إلا بعد تأكيد الإدارة.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* =============================================================== */}
               {/* TAB 2: حصة خاصة (Paid Private 1:1 Sessions with Alternatives) */}
@@ -2613,17 +2070,8 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                 </div>
               )}
 
-              {/* Trust & Reassurance Footer inside Widget */}
-              <div className="pt-3 border-t border-[#E2E8F0] space-y-1.5 text-[11px] text-[#535E7B]">
-                <div className="flex items-center gap-1.5 text-[#0D4E8B] font-bold">
-                  <ShieldCheck className="w-4 h-4 text-[#0D4E8B] shrink-0" />
-                  <span>ضمان شاطر لراحة ولي الأمر</span>
-                </div>
-                <p className="leading-relaxed">
-                  تجربة مجانية لمدة {toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة لتقييم مستوى الطفل والاطمئنان لأسلوب المعلم، مع متابعة مباشرة من فريق شاطر.
-                </p>
-              </div>
             </section>
+          </div>
           </div>
         </div>
       </div>
@@ -2635,41 +2083,24 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
         createPortal(
           <div
             dir="rtl"
-            className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] px-4 py-2.5 shadow-lg flex items-center justify-between gap-3"
+            className={`lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] px-4 py-2.5 shadow-lg flex items-center justify-between gap-3 transition-transform duration-200 ${
+              isTrialCardVisible ? 'translate-y-full' : 'translate-y-0'
+            }`}
           >
             <div className="min-w-0 flex-1">
-              <div className="font-['Cairo'] font-extrabold text-xs text-[#1F2A44] truncate">
-                {sessionPriceText}
+              <div className="font-['Cairo'] font-extrabold text-sm text-[#1F2A44] truncate">
+                {profilePrice.priceText} <span className="font-normal text-[#64748B]">/ {profilePrice.durationText}</span>
               </div>
-              <div className="text-[11px] font-bold text-emerald-700 truncate">
-                {selectedTrialSlotPayload
-                  ? `تجربة مجانية: ${selectedTrialSlotPayload.dayName} ${selectedTrialSlotPayload.timeRange.split('–')[0]}`
-                  : `تجربة مجانية — ${toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة`}
-              </div>
+              <div className="text-xs font-bold text-emerald-700 truncate">أول تجربة مجانًا</div>
             </div>
 
             <button
               type="button"
-              onClick={() => {
-                if (isDirectBookingEnabled && availableTrialDates.length > 0) {
-                  setIsDirectPanelOpen(true);
-                  scrollToBookingSection('trial');
-                } else {
-                  openTrialWhatsAppModal();
-                }
-              }}
-              className="shrink-0 min-h-[44px] py-2.5 px-4 rounded-xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+              onClick={() => (profileCanBookDirect ? goToTrialBooking() : openTrialWhatsAppModal())}
+              className="shrink-0 min-h-[48px] py-2.5 px-5 rounded-2xl bg-[#FFC629] hover:bg-[#F0B517] text-[#1F2A44] font-['Cairo'] font-extrabold text-sm shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              {isDirectBookingEnabled && availableTrialDates.length > 0 ? (
-                <CalendarCheck2 className="w-3.5 h-3.5 text-[#1F2A44]" />
-              ) : (
-                <MessageCircle className="w-3.5 h-3.5 text-[#1F2A44]" />
-              )}
-              <span>
-                {isDirectBookingEnabled && availableTrialDates.length > 0
-                  ? 'احجز تجربة مجانية'
-                  : 'اطلب تجربة مجانية'}
-              </span>
+              {profileCanBookDirect ? <CalendarCheck2 className="w-4 h-4" /> : <MessageCircle className="w-4 h-4" />}
+              <span>{profileCanBookDirect ? 'احجز تجربة مجانية' : 'تنسيق التجربة'}</span>
             </button>
           </div>,
           document.body
