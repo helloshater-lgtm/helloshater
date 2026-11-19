@@ -15,7 +15,13 @@ import { TutorAuthModal } from './TutorAuthModal';
 import { TutorProfileView } from '../TutorProfileView';
 import { TutorDirectTrialsTab } from './TutorDirectTrialsTab';
 import { TutorCalendarTab, TutorCalendarAddRequest } from './TutorCalendarTab';
-import { TutorHomeStatusCard } from './TutorHomeStatusCard';
+import { TutorDashboardHome } from './TutorDashboardHome';
+import {
+  TutorDashboardBottomNav,
+  TutorDashboardSidebar,
+  TutorDashboardSubTabs,
+  TutorDashboardTab,
+} from './TutorDashboardNav';
 import {
   formatTutorExperience,
   formatSessionPriceSummary,
@@ -37,6 +43,7 @@ import {
   getCalendarDayOfWeek,
 } from '../../utils/formatters';
 import { evaluateTutorProfileReadiness } from '../../utils/tutorReadinessAndContact';
+import { hasBookingEnded } from '../../utils/directTrialBooking';
 import {
   GraduationCap,
   Calendar,
@@ -66,6 +73,8 @@ import {
   LogIn,
   LogOut,
   RefreshCw,
+  MoreVertical,
+  House,
 } from 'lucide-react';
 
 interface TutorDashboardViewProps {
@@ -74,15 +83,7 @@ interface TutorDashboardViewProps {
   onNavigateToPublicProfile?: (tutorId: string) => void;
 }
 
-type DashboardTab =
-  | 'overview'
-  | 'calendar'
-  | 'pricing'
-  | 'profile-draft'
-  | 'trials'
-  | 'direct-trials'
-  | 'private'
-  | 'groups';
+type DashboardTab = TutorDashboardTab;
 
 export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   onNavigateHome,
@@ -98,6 +99,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
   // Active Tab: First page is 'overview' showing setup steps and quick actions
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const [calendarAddRequest, setCalendarAddRequest] = useState<TutorCalendarAddRequest | null>(null);
 
   // Opens the calendar tab, optionally with the "add slot" dialog preset to trial/private
@@ -1653,6 +1655,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   };
 
   const completedStepsCount = unifiedReadiness.completedRequirementsCount ?? 0;
+
+  const upcomingConfirmedBookings = directTrialBookings
+    .filter((b) => b.status === 'confirmed' && !hasBookingEnded(b.endsAt))
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
+  const navBadges = {
+    bookings: upcomingConfirmedBookings.filter((b) => !b.meetingUrl).length,
+  };
   const missingProfileItems = readinessSteps.filter((s) => !s.completed);
   const profileStrengthPercent = unifiedReadiness.completionPercentage ?? 0;
 
@@ -1721,89 +1730,103 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   }
 
   return (
-    <div className="max-w-5xl mx-auto py-6 sm:py-8 px-3 sm:px-6 lg:px-8 space-y-6" dir="rtl">
-      {/* 1. Header Bar */}
-      <div className="bg-white rounded-3xl p-4 sm:p-6 border border-[#E2E8F0] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
-          <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden bg-slate-100 border border-[#CBD5E1] shrink-0 flex items-center justify-center">
-            {tutor.avatarUrl && !isAvatarBrokenAtRuntime ? (
-              <img
-                src={tutor.avatarUrl}
-                alt={tutor.name}
-                onError={() => setIsAvatarBrokenAtRuntime(true)}
-                onLoad={() => setIsAvatarBrokenAtRuntime(false)}
-                className="w-full h-full object-cover"
+    <div className="max-w-6xl mx-auto pt-4 pb-28 sm:pt-6 md:pb-10 px-3 sm:px-6 lg:px-8" dir="rtl">
+      <div className="md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 items-start">
+      <TutorDashboardSidebar activeTab={activeTab} onSelectTab={setActiveTab} badges={navBadges} />
+      <div className="min-w-0 space-y-4 sm:space-y-5">
+      {/* 1. Compact header: who + status (once) + preview + account menu */}
+      <header className="bg-white rounded-3xl px-4 py-3.5 sm:px-5 sm:py-4 border border-[#E2E8F0] shadow-xs flex items-center gap-3">
+        <div className="relative w-12 h-12 rounded-2xl overflow-hidden bg-slate-100 border border-[#E2E8F0] shrink-0 flex items-center justify-center">
+          {tutor.avatarUrl && !isAvatarBrokenAtRuntime ? (
+            <img
+              src={tutor.avatarUrl}
+              alt={tutor.name}
+              onError={() => setIsAvatarBrokenAtRuntime(true)}
+              onLoad={() => setIsAvatarBrokenAtRuntime(false)}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <User className="w-6 h-6 text-slate-400" strokeWidth={1.75} />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#1F2A44] truncate">
+            أهلًا {tutor.honorific} {tutor.name}
+          </h1>
+          <span
+            className={`inline-flex items-center gap-1.5 mt-0.5 text-xs font-bold ${
+              tutor.isPublished ? 'text-emerald-700' : 'text-amber-700'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${tutor.isPublished ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            {tutor.isPublished ? 'ملفك منشور ومتاح للحجز' : 'ملفك غير منشور بعد'}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={handleOpenParentPreview}
+          disabled={isLoadingPreview}
+          aria-label="معاينة ملفي كما يراه ولي الأمر"
+          className="h-11 w-11 sm:w-auto sm:px-4 rounded-2xl border border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#0D4E8B] text-sm font-bold flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-60"
+        >
+          {isLoadingPreview ? <Loader2 className="w-5 h-5 animate-spin" /> : <Eye className="w-5 h-5" strokeWidth={1.75} />}
+          <span className="hidden sm:inline">معاينة ملفي</span>
+        </button>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsAccountMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={isAccountMenuOpen}
+            aria-label="خيارات الحساب"
+            className="h-11 w-11 rounded-2xl border border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] flex items-center justify-center cursor-pointer"
+          >
+            <MoreVertical className="w-5 h-5" strokeWidth={1.75} />
+          </button>
+          {isAccountMenuOpen && (
+            <>
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                onClick={() => setIsAccountMenuOpen(false)}
+                className="fixed inset-0 z-40 cursor-default"
               />
-            ) : (
-              <User className="w-7 h-7 text-slate-400" />
-            )}
-            {tutor.verifiedCredentials && (
-              <span
-                className="absolute -bottom-1 -left-1 w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] shadow-xs"
-                title="معتمد"
+              <div
+                role="menu"
+                className="absolute left-0 top-12 z-50 w-56 bg-white rounded-2xl border border-[#E2E8F0] shadow-lg p-1.5"
               >
-                <ShieldCheck className="w-3.5 h-3.5" />
-              </span>
-            )}
-          </div>
-
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="font-['Cairo'] text-base sm:text-xl font-bold text-[#1F2A44]">
-                مرحباً {tutor.honorific} {tutor.name}
-              </h1>
-              <span
-                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                  tutor.isPublished
-                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                    : 'bg-amber-50 text-amber-800 border border-amber-200'
-                }`}
-              >
-                {tutor.isPublished
-                  ? 'ملفك منشور ومتاح للحجز'
-                  : 'ملفك قيد التجهيز وغير ظاهر لأولياء الأمور'}
-              </span>
-            </div>
-            <p className="text-xs text-[#64748B] mt-1 line-clamp-1">
-              {tutor.headline || 'معلم معتمد في منصة شاطر كلاسيز'}
-            </p>
-          </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    onNavigateHome();
+                  }}
+                  className="w-full h-11 px-3 rounded-xl flex items-center gap-2.5 text-sm font-bold text-[#1F2A44] hover:bg-[#F8FAFC] cursor-pointer"
+                >
+                  <House className="w-4 h-4" strokeWidth={1.75} />
+                  <span>الصفحة الرئيسية للموقع</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsAccountMenuOpen(false);
+                    handleSignOut();
+                  }}
+                  className="w-full h-11 px-3 rounded-xl flex items-center gap-2.5 text-sm font-bold text-rose-700 hover:bg-rose-50 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" strokeWidth={1.75} />
+                  <span>تسجيل الخروج</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
+      </header>
 
-        {/* Preview & Account Actions */}
-        <div className="grid grid-cols-[1fr_auto_auto] md:flex items-center gap-2 w-full md:w-auto md:justify-end shrink-0">
-          <button
-            type="button"
-            onClick={handleOpenParentPreview}
-            disabled={isLoadingPreview}
-            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-          >
-            {isLoadingPreview ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Eye className="w-4 h-4" />
-            )}
-            <span>شوف ملفك زي ولي الأمر</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onNavigateHome}
-            className="px-3 py-2 min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1F2A44] transition-all cursor-pointer"
-          >
-            الرئيسية
-          </button>
-
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="px-3 py-2 min-h-[44px] rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>خروج</span>
-          </button>
-        </div>
-      </div>
+      <TutorDashboardSubTabs activeTab={activeTab} onSelectTab={setActiveTab} />
 
       {/* Global Feedback Alerts */}
       {errorMessage && (
@@ -1826,297 +1849,25 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         </div>
       )}
 
-      {/* 2. Navigation Tabs (Responsive on 320px/390px mobile & desktop) */}
-      <div className="flex items-center gap-1.5 sm:gap-2 border-b border-[#CBD5E1] pb-2 overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setActiveTab('overview')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'overview'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <GraduationCap className="w-4 h-4 shrink-0" />
-          <span>الرئيسية</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('calendar')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'calendar'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <Calendar className="w-4 h-4 shrink-0" />
-          <span>التقويم</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('profile-draft')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'profile-draft'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <Edit3 className="w-4 h-4 shrink-0" />
-          <span>صورتي ونبذتي</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('pricing')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'pricing'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <DollarSign className="w-4 h-4 shrink-0" />
-          <span>سعري ومدة الحصة</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('private')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'private'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <CalendarCheck2 className="w-4 h-4 shrink-0" />
-          <span>الحصص الخاصة (1:1)</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-              activeTab === 'private' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-            }`}
-          >
-            {validFuturePrivateSlots.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('trials')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'trials'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <Clock3 className="w-4 h-4 shrink-0" />
-          <span>التجارب المجانية (20 د)</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-              activeTab === 'trials' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-            }`}
-          >
-            {validFutureTrialSlots.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('groups')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'groups'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <Users className="w-4 h-4 shrink-0" />
-          <span>المجموعات</span>
-          <span
-            className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-              activeTab === 'groups' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-            }`}
-          >
-            {validFutureGroups.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('direct-trials')}
-          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-            activeTab === 'direct-trials'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
-          }`}
-        >
-          <Calendar className="w-4 h-4 shrink-0" />
-          <span>الحجوزات التجريبية</span>
-          {(() => {
-            const confirmedCount = directTrialBookings.filter(
-              (b) => b.status === 'confirmed'
-            ).length;
-            const missingLinkCount = directTrialBookings.filter(
-              (b) => b.status === 'confirmed' && !b.meetingUrl
-            ).length;
-            return (
-              <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  activeTab === 'direct-trials'
-                    ? 'bg-white/20 text-white'
-                    : missingLinkCount > 0
-                    ? 'bg-amber-100 text-amber-800'
-                    : 'bg-slate-100 text-slate-700'
-                }`}
-              >
-                {confirmedCount}
-              </span>
-            );
-          })()}
-        </button>
-      </div>
-
       {/* ========================================================================= */}
       {/* SECTION 0: FIRST PAGE — PROFILE READINESS STEPS & OVERVIEW */}
       {/* ========================================================================= */}
       {activeTab === 'overview' && (
-        <div className="space-y-6 animate-fade-in">
-          <TutorHomeStatusCard
-            isPublished={Boolean(tutor.isPublished)}
-            steps={readinessSteps}
-            completedCount={completedStepsCount}
-            percent={profileStrengthPercent}
-            evaluationError={Boolean(unifiedReadiness.evaluationError)}
-            evaluationErrorMessage={unifiedReadiness.evaluationErrorMessage}
-            confirmedTrialsCount={directTrialBookings.filter((b) => b.status === 'confirmed').length}
-            missingMeetingLinkCount={
-              directTrialBookings.filter((b) => b.status === 'confirmed' && !b.meetingUrl).length
-            }
-            isLoadingPreview={isLoadingPreview}
-            onRetry={() => loadPortalData(true)}
-            onStepAction={handleReadinessStepAction}
-            onOpenCalendar={() => openCalendar()}
-            onOpenPreview={handleOpenParentPreview}
-          />
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs flex flex-col justify-between gap-3">
-              <div className="space-y-1">
-                <span className="text-xs text-[#64748B] font-bold block">سعري ومدة الحصة الفردية</span>
-                <div className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#0D4E8B]">
-                  {
-                    formatSessionPriceSummary({
-                      minPrice: tutor.hourlyRateMin,
-                      maxPrice: tutor.hourlyRateMax,
-                      currency: tutor.currency,
-                      durationMinutes: tutor.sessionDurationMinutes,
-                    }).combinedText
-                  }
-                </div>
-                <span className="text-[11px] text-[#64748B] block">
-                  للحصة الواحدة • يُحفظ ويُنشر مباشرةً في ملفك
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab('pricing')}
-                className="px-3 py-2 min-h-[40px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-xs font-bold text-[#0D4E8B] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>تعديل السعر ومدة الحصة</span>
-              </button>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs flex flex-col justify-between gap-3">
-              <div className="space-y-1">
-                <span className="text-xs text-[#64748B] font-bold block">الخبرة التعليمية</span>
-                <div className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
-                  {formatTutorExperience(tutor.yearsOfExperience, tutor.experienceBadgeText) ||
-                    'معلم معتمد'}
-                </div>
-                <span className="text-[11px] text-[#64748B] block">
-                  تظهر موحّدة في بطاقة البحث والملف العام
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab('profile-draft')}
-                className="px-3 py-2 min-h-[40px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-xs font-bold text-[#0D4E8B] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span>تعديل صورتي ونبذتي</span>
-              </button>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs flex flex-col justify-between gap-3">
-              <div className="space-y-1">
-                <span className="text-xs text-[#64748B] font-bold block">
-                  المواعيد المستقبلية المتاحة
-                </span>
-                <div className="font-['Cairo'] text-lg font-extrabold text-[#0D4E8B]">
-                  {validFuturePrivateSlots.length} حصة خاصة • {validFutureTrialSlots.length} تجريبية
-                </div>
-                <span className="text-[11px] text-emerald-800 font-bold block">
-                  {validFutureGroups.length} مجموعة نشطة • {futurePrivateBookedCount} حصة خاصة محجوزة
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('private')}
-                  className="px-2.5 py-2 min-h-[40px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-xs font-bold text-[#0D4E8B] transition-colors cursor-pointer"
-                >
-                  إضافة موعد
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('groups');
-                    handleOpenNewGroupWizard();
-                  }}
-                  className="px-2.5 py-2 min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-[#1F2A44] transition-colors cursor-pointer"
-                >
-                  إنشاء مجموعة
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Approved Specializations Card */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-              <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-[#0D4E8B]" />
-                <span>تخصصاتي المعتمدة في منصة شاطر ({specializations.length})</span>
-              </h3>
-              <span className="text-xs text-[#64748B]">
-                التخصصات المعتمدة في ملفك التي يمكنك فتح مواعيد ومجموعات لها
-              </span>
-            </div>
-
-            {specializations.length === 0 ? (
-              <p className="text-xs text-[#64748B]">لم يتم ربط تخصصات معتمدة بعد.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {specializations.map((spec) => (
-                  <div
-                    key={spec.id}
-                    className="p-3.5 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] flex items-center gap-3"
-                  >
-                    <div className="w-8 h-8 rounded-xl bg-blue-50 text-[#0D4E8B] flex items-center justify-center shrink-0">
-                      <CheckCircle2 className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-xs sm:text-sm text-[#1F2A44]">{spec.label}</h4>
-                      <span className="text-[10px] text-[#64748B]">
-                        {spec.track === 'school' ? 'المسار المدرسي' : 'مسار القرآن والتأسيس'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <TutorDashboardHome
+          isPublished={Boolean(tutor.isPublished)}
+          steps={readinessSteps}
+          completedCount={completedStepsCount}
+          evaluationError={Boolean(unifiedReadiness.evaluationError)}
+          evaluationErrorMessage={unifiedReadiness.evaluationErrorMessage}
+          upcomingBookings={upcomingConfirmedBookings}
+          availableSlotsCount={validFutureTrialSlots.length + validFuturePrivateSlots.length}
+          specializations={specializations}
+          onRetry={() => loadPortalData(true)}
+          onStepAction={handleReadinessStepAction}
+          onOpenCalendar={(addType) => openCalendar(addType)}
+          onOpenBookings={() => setActiveTab('direct-trials')}
+          onOpenPreview={handleOpenParentPreview}
+        />
       )}
 
       {/* ========================================================================= */}
@@ -5109,6 +4860,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           </form>
         </div>
       )}
+      </div>
+      </div>
+      <TutorDashboardBottomNav activeTab={activeTab} onSelectTab={setActiveTab} badges={navBadges} />
     </div>
   );
 };

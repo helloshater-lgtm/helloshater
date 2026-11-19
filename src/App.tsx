@@ -726,7 +726,9 @@ export default function App() {
       />
 
       {/* Persistent Floating WhatsApp Action Button */}
-      <WhatsAppFloatingButton hideOnMobileSticky={currentView === 'tutor-profile'} />
+      <WhatsAppFloatingButton
+        hideOnMobileSticky={currentView === 'tutor-profile' || currentView === 'tutor-dashboard'}
+      />
     </div>
   );
 }
