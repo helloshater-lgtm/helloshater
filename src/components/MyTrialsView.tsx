@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { DirectTrialBooking } from '../types';
+import { DirectTrialBooking, ParentChild, ParentDashboardBooking } from '../types';
+import { ParentDashboardService } from '../services/parentDashboardService';
+import { ParentBookingExtras, ParentChildrenSection } from './ParentDashboardParts';
 import { DirectTrialBookingService } from '../services/directTrialBookingService';
 import {
   formatBookingInOwnTimezone,
@@ -50,13 +52,22 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
   const [isLoadingBookings, setIsLoadingBookings] = useState(false);
   const [bookingsError, setBookingsError] = useState<string | null>(null);
   const [copiedBookingId, setCopiedBookingId] = useState<string | null>(null);
+  // Parent dashboard (migration 023). null = not available yet -> old list only.
+  const [children, setChildren] = useState<ParentChild[] | null>(null);
 
   const loadBookings = useCallback(async () => {
     setIsLoadingBookings(true);
     setBookingsError(null);
     try {
-      const list = await DirectTrialBookingService.parentGetMyTrialBookings();
-      setBookings(list);
+      const dashboard = await ParentDashboardService.getDashboard().catch(() => null);
+      if (dashboard) {
+        setChildren(dashboard.children);
+        setBookings(dashboard.bookings);
+      } else {
+        setChildren(null);
+        const list = await DirectTrialBookingService.parentGetMyTrialBookings();
+        setBookings(list);
+      }
     } catch (err: any) {
       setBookingsError(err?.message || 'تعذر تحميل حجوزاتك التجريبية حالياً.');
     } finally {
@@ -277,6 +288,8 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
             </span>
           </div>
 
+          {children !== null && <ParentChildrenSection children={children} onChanged={loadBookings} />}
+
           {bookingsError && (
             <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5">
               <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
@@ -284,7 +297,7 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
             </div>
           )}
 
-          {isLoadingBookings ? (
+          {isLoadingBookings && bookings.length === 0 ? (
             <div className="bg-white rounded-3xl border border-[#E2E8F0] p-12 text-center flex flex-col items-center justify-center gap-3">
               <Loader2 className="w-7 h-7 text-[#0D4E8B] animate-spin" />
               <p className="text-xs sm:text-sm text-[#64748B]">جاري تحميل حجوزاتك...</p>
@@ -435,6 +448,14 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
                           </div>
                         )}
                       </div>
+                    )}
+
+                    {children !== null && (
+                      <ParentBookingExtras
+                        booking={booking as ParentDashboardBooking}
+                        children={children}
+                        onChanged={loadBookings}
+                      />
                     )}
 
                     {booking.status === 'completed' && (

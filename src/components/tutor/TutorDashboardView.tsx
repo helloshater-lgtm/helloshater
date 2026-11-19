@@ -1668,8 +1668,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const upcomingConfirmedBookings = directTrialBookings
     .filter((b) => b.status === 'confirmed' && !hasBookingEnded(b.endsAt))
     .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
+  // Ended sessions still marked confirmed = the tutor hasn't written the report yet
+  const pendingReportBookings = directTrialBookings.filter(
+    (b) => b.status === 'confirmed' && hasBookingEnded(b.endsAt)
+  );
   const navBadges = {
-    bookings: upcomingConfirmedBookings.filter((b) => !b.meetingUrl).length,
+    bookings:
+      upcomingConfirmedBookings.filter((b) => !b.meetingUrl).length + pendingReportBookings.length,
   };
   const missingProfileItems = readinessSteps.filter((s) => !s.completed);
   const profileStrengthPercent = unifiedReadiness.completionPercentage ?? 0;
@@ -1876,6 +1881,8 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           onOpenCalendar={(addType) => openCalendar(addType)}
           onOpenBookings={() => setActiveTab('direct-trials')}
           onOpenPreview={handleOpenParentPreview}
+          shareLink={tutor.isPublished ? { tutorId: tutor.id, displayName: `${tutor.honorific || 'أ.'} ${tutor.name}` } : null}
+          pendingReportsCount={pendingReportBookings.length}
         />
       )}
 

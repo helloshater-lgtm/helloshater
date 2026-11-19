@@ -35,7 +35,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  Link2,
 } from 'lucide-react';
+import { buildTrialBookingUrl, buildTrialBookingWhatsAppShareUrl } from '../../utils/bookingLinks';
 
 interface AdminTutorsListViewProps {
   tutors: AdminTutorListItem[];
@@ -1298,6 +1300,10 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
                         <span>معاينة</span>
                       </button>
 
+                      {tutor.isPublished && (
+                        <AdminBookingLinkButton tutorId={tutor.id} tutorName={`${tutor.honorific || 'أ.'} ${tutor.name}`} />
+                      )}
+
                       <button
                         type="button"
                         onClick={() => onEditTutor(tutor.id, 'basics')}
@@ -2062,5 +2068,44 @@ export const AdminTutorsListView: React.FC<AdminTutorsListViewProps> = ({
         </div>
       )}
     </div>
+  );
+};
+
+/** Copies the direct trial-booking link (for ads / WhatsApp) — opens #book/<tutorId>. */
+const AdminBookingLinkButton: React.FC<{ tutorId: string; tutorName: string }> = ({ tutorId, tutorName }) => {
+  const [copied, setCopied] = React.useState(false);
+  const url = buildTrialBookingUrl(tutorId, { source: 'ads' });
+  if (!url) return null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(url);
+          } catch {
+            window.prompt('انسخ رابط الحجز:', url);
+          }
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 2000);
+        }}
+        className="min-h-[40px] px-3 py-1.5 rounded-xl text-[#0D4E8B] border border-[#D1DCFE] hover:bg-[#F0F6FD] text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
+        title={`رابط حجز مباشر للإعلانات: ${url}`}
+        data-admin-booking-link={url}
+      >
+        <Link2 className="w-3.5 h-3.5" />
+        <span>{copied ? 'اتنسخ الرابط' : 'رابط الحجز'}</span>
+      </button>
+      <a
+        href={buildTrialBookingWhatsAppShareUrl(tutorId, tutorName, 'whatsapp')}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="min-h-[40px] px-2.5 py-1.5 rounded-xl text-white bg-[#25D366] hover:bg-[#1EBE5A] text-xs font-bold flex items-center"
+        title="مشاركة رابط الحجز على واتساب"
+        aria-label="مشاركة رابط الحجز على واتساب"
+      >
+        <MessageCircle className="w-3.5 h-3.5" />
+      </a>
+    </span>
   );
 };

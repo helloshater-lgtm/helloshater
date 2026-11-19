@@ -18,6 +18,7 @@ import {
 import { ApprovedSpecializationItem, DirectTrialBooking } from '../../types';
 import { toArabicDigits } from '../../utils/formatters';
 import { formatBookingInOwnTimezone } from '../../utils/directTrialBooking';
+import { ShareBookingLink } from '../ShareBookingLink';
 
 export interface TutorHomeStep {
   key: string;
@@ -42,6 +43,10 @@ interface TutorDashboardHomeProps {
   onOpenCalendar: (addType?: 'trial' | 'private') => void;
   onOpenBookings: () => void;
   onOpenPreview: () => void;
+  /** Published tutors get a ready-to-share booking link (#book/<id>). */
+  shareLink?: { tutorId: string; displayName: string } | null;
+  /** Ended trial sessions that still need the tutor's report. */
+  pendingReportsCount?: number;
 }
 
 /** Short verb for the next-step button. */
@@ -90,6 +95,8 @@ export const TutorDashboardHome: React.FC<TutorDashboardHomeProps> = ({
   onOpenCalendar,
   onOpenBookings,
   onOpenPreview,
+  shareLink,
+  pendingReportsCount = 0,
 }) => {
   const total = steps.length || 6;
   const missing = steps.filter((s) => !s.completed);
@@ -119,6 +126,12 @@ export const TutorDashboardHome: React.FC<TutorDashboardHomeProps> = ({
     title = missingLinks.length === 1 ? 'أضف رابط الحصة للحجز القادم' : `أضف روابط ${toArabicDigits(missingLinks.length)} حجوزات`;
     text = 'وليّ الأمر بيستنى الرابط في صفحة «حجوزاتي».';
     action = { label: 'إضافة الرابط', onClick: onOpenBookings };
+  } else if (pendingReportsCount > 0) {
+    tone = 'amber';
+    icon = <Sparkles {...ICON} />;
+    title = pendingReportsCount === 1 ? 'اكتب تقرير الحصة التجريبية' : `اكتب تقارير ${toArabicDigits(pendingReportsCount)} حصص تجريبية`;
+    text = 'وليّ الأمر بيستنى يعرف مستوى طفله وتوصيتك بعد التجربة.';
+    action = { label: 'كتابة التقرير', onClick: onOpenBookings };
   } else if (nextStep) {
     tone = 'amber';
     icon = <Sparkles {...ICON} />;
@@ -294,6 +307,16 @@ export const TutorDashboardHome: React.FC<TutorDashboardHomeProps> = ({
           </button>
         ))}
       </section>
+
+      {shareLink && (
+        <ShareBookingLink
+          tutorId={shareLink.tutorId}
+          tutorDisplayName={shareLink.displayName}
+          source="tutor_share"
+          title="شارك رابط الحجز بتاعك"
+          subtitle="ابعته لأولياء الأمور أو حطه في صفحاتك. بيفتح صفحة حجز التجربة معاك على طول."
+        />
+      )}
 
       {/* 4. Profile checklist (collapsed when complete) */}
       {!evaluationError && steps.length > 0 && (
