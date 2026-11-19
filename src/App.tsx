@@ -30,6 +30,7 @@ import { TutorProfileView } from './components/TutorProfileView';
 import { TutorRegistrationView } from './components/TutorRegistrationView';
 import { LegalPagesView } from './components/LegalPagesView';
 import { MyTrialsView } from './components/MyTrialsView';
+import { TrialBookingView } from './components/TrialBookingView';
 import { ConsentBanner } from './components/ConsentBanner';
 import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { SHATIR_CONFIG } from './config/shatirConfig';
@@ -38,6 +39,8 @@ import {
   detectDirectTrialAuthCallbackFromLocation,
   loadDirectTrialReturnTarget,
   clearDirectTrialReturnTarget,
+  getDirectTrialAuthErrorMessage,
+  type DirectTrialCallbackUrlInfo,
 } from './utils/directTrialBooking';
 import {
   trackPageView,
@@ -68,6 +71,7 @@ const DEFAULT_DOCUMENT_TITLE =
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
   const [selectedTutorId, setSelectedTutorId] = useState<string | null>(null);
+  const [bookingTutorId, setBookingTutorId] = useState<string | null>(null);
   const [focusTutorBooking, setFocusTutorBooking] = useState<boolean>(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState<boolean>(false);
   const [currentTutor, setCurrentTutor] = useState<Tutor | null>(null);
@@ -87,10 +91,7 @@ export default function App() {
   );
 
   // Capture initial landing URL/hash synchronously before any Supabase client init mutates it
-  const initialLandingRef = useRef<{
-    directReturnTarget: string | null;
-    isEmailAuthCallback: boolean;
-  } | null>(null);
+  const initialLandingRef = useRef<DirectTrialCallbackUrlInfo | null>(null);
   if (initialLandingRef.current === null) {
     const search = typeof window !== 'undefined' ? window.location.search || '' : '';
     const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
@@ -103,6 +104,7 @@ export default function App() {
   const [isResolvingAuthReturn, setIsResolvingAuthReturn] =
     useState<boolean>(hasPendingAuthReturn);
   const hasResolvedAuthReturnRef = useRef<boolean>(false);
+  const [authReturnNotice, setAuthReturnNotice] = useState<string | null>(null);
 
   // Taxonomy for profile breadcrumbs
   const [stages, setStages] = useState<Stage[]>([]);
@@ -246,6 +248,10 @@ export default function App() {
       const id = hash.replace('#tutor/', '');
       setSelectedTutorId(id);
       setCurrentView('tutor-profile');
+    } else if (hash.startsWith('#book/')) {
+      setBookingTutorId(hash.replace('#book/', ''));
+      setCurrentView('trial-booking');
+      window.scrollTo({ top: 0 });
     } else if (hash === '#join-as-tutor') {
       setCurrentView('join-as-tutor');
     } else if (hash === '#tutor-dashboard') {
@@ -290,12 +296,18 @@ export default function App() {
       .then((sessionUser) => {
         if (!isMounted) return;
 
+        // Failed link (used/expired): return the parent to the saved page and explain,
+        // keeping the saved destination so the next link they request also returns there.
+        const hasFailedLink = Boolean(landing.authErrorCode) && !sessionUser;
+
         let resolvedTarget = landing.directReturnTarget;
-        if (!resolvedTarget && landing.isEmailAuthCallback && sessionUser) {
+        if (!resolvedTarget && landing.isEmailAuthCallback && (sessionUser || hasFailedLink)) {
           resolvedTarget = loadDirectTrialReturnTarget()?.target || null;
         }
 
-        if (resolvedTarget || (landing.isEmailAuthCallback && sessionUser)) {
+        if (hasFailedLink) {
+          setAuthReturnNotice(getDirectTrialAuthErrorMessage(landing.authErrorCode));
+        } else if (resolvedTarget || (landing.isEmailAuthCallback && sessionUser)) {
           clearDirectTrialReturnTarget();
         }
 
@@ -304,6 +316,9 @@ export default function App() {
         cleanUrl.searchParams.delete('code');
         cleanUrl.searchParams.delete('token_hash');
         cleanUrl.searchParams.delete('type');
+        cleanUrl.searchParams.delete('error');
+        cleanUrl.searchParams.delete('error_code');
+        cleanUrl.searchParams.delete('error_description');
 
         if (resolvedTarget) {
           const targetHash = `#${resolvedTarget}`;
@@ -319,7 +334,9 @@ export default function App() {
             currentHash.includes('access_token=') ||
             currentHash.includes('refresh_token=') ||
             currentHash.includes('type=magiclink') ||
-            currentHash.includes('type=email')
+            currentHash.includes('type=email') ||
+            currentHash.includes('error_code=') ||
+            currentHash.startsWith('#error=')
               ? ''
               : currentHash;
           window.history.replaceState(
@@ -363,6 +380,9 @@ export default function App() {
       resetTutorProfileTracking();
     } else if (currentView === 'tutor-dashboard') {
       trackPageView('/#tutor-dashboard', 'لوحة المعلم | شاطر كلاسيز');
+      resetTutorProfileTracking();
+    } else if (currentView === 'trial-booking') {
+      trackPageView('/#book', 'حجز تجربة مجانية | شاطر كلاسيز');
       resetTutorProfileTracking();
     } else if (currentView === 'my-trials') {
       trackPageView('/#my-trials', 'حجوزاتي | شاطر كلاسيز');
@@ -473,6 +493,8 @@ export default function App() {
       document.title = `${currentTutor.name} | شاطر كلاسيز`;
     } else if (currentView === 'my-trials') {
       document.title = 'حجوزاتي | شاطر كلاسيز';
+    } else if (currentView === 'trial-booking') {
+      document.title = 'احجز تجربة مجانية | شاطر كلاسيز';
     } else if (currentView === 'privacy') {
       document.title = 'سياسة الخصوصية | شاطر كلاسيز';
     } else if (currentView === 'terms') {
@@ -524,6 +546,15 @@ export default function App() {
     setCurrentView('tutor-profile');
     window.location.hash = `#tutor/${tutorId}`;
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // «احجز تجربة مجانية» opens the dedicated booking flow (day & time first)
+  const handleBookTrial = (tutorId: string) => {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
+    setSavedScrollPosition(window.scrollY);
+    window.location.hash = `#book/${tutorId}`;
   };
 
   // Back button in Tutor Profile View returns to preserved search state
@@ -585,6 +616,24 @@ export default function App() {
 
       {/* Main View Router */}
       <main className="flex-1 w-full">
+        {authReturnNotice && !isResolvingAuthReturn && (
+          <div className="px-4 mt-4">
+          <div
+            role="alert"
+            className="max-w-3xl mx-auto p-4 rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 flex items-start gap-3"
+          >
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+            <p className="flex-1 text-sm leading-relaxed">{authReturnNotice}</p>
+            <button
+              type="button"
+              onClick={() => setAuthReturnNotice(null)}
+              className="text-xs font-bold text-amber-900 underline shrink-0"
+            >
+              إغلاق
+            </button>
+          </div>
+          </div>
+        )}
         {isResolvingAuthReturn ? (
           <div className="max-w-md mx-auto my-20 p-10 bg-white rounded-3xl border border-[#E2E8F0] shadow-sm text-center flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
@@ -596,7 +645,9 @@ export default function App() {
           <>
             {currentView === 'home' && (
               <HomeView
-                onSelectTutor={handleSelectTutor}
+                onSelectTutor={(id, options) =>
+                  options?.focusBooking ? handleBookTrial(id) : handleSelectTutor(id)
+                }
                 onNavigateToJoin={() => handleNavigate('join-as-tutor')}
                 onOpenHelpModal={() => setIsHelpModalOpen(true)}
                 savedCriteria={savedCriteria}
@@ -690,6 +741,19 @@ export default function App() {
           </Suspense>
         )}
 
+        {currentView === 'trial-booking' && bookingTutorId && (
+          <TrialBookingView
+            key={bookingTutorId}
+            tutorId={bookingTutorId}
+            onBack={() => {
+              if (window.history.length > 1) window.history.back();
+              else handleBackToResults();
+            }}
+            onOpenTutorProfile={(id, options) => handleSelectTutor(id, options)}
+            onNavigateToMyTrials={() => handleNavigate('my-trials')}
+          />
+        )}
+
         {currentView === 'my-trials' && (
           <MyTrialsView
             onNavigateHome={() => handleNavigate('home')}
@@ -727,7 +791,11 @@ export default function App() {
 
       {/* Persistent Floating WhatsApp Action Button */}
       <WhatsAppFloatingButton
-        hideOnMobileSticky={currentView === 'tutor-profile' || currentView === 'tutor-dashboard'}
+        hideOnMobileSticky={
+          currentView === 'tutor-profile' ||
+          currentView === 'tutor-dashboard' ||
+          currentView === 'trial-booking'
+        }
       />
     </div>
   );

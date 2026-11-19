@@ -960,6 +960,7 @@ export type AppView =
   | 'admin'
   | 'tutor-dashboard'
   | 'my-trials'
+  | 'trial-booking'
   | 'privacy'
   | 'terms';
 

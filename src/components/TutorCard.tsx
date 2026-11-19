@@ -173,7 +173,7 @@ export const TutorCard: React.FC<TutorCardProps> = ({
           onClick={handleBookClick}
           className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#083D77] active:scale-[0.99] text-white font-['Cairo'] font-bold text-xs sm:text-sm transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0D4E8B]"
         >
-          اطلب تجربة مجانية
+          احجز تجربة مجانية
         </button>
 
         <button

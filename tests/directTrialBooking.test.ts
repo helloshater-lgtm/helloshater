@@ -14,6 +14,7 @@ import {
   loadDirectTrialReturnTarget,
   clearDirectTrialReturnTarget,
   detectDirectTrialAuthCallbackFromLocation,
+  getDirectTrialAuthErrorMessage,
   resolveInitialTrialSlotSelection,
   normalizeEmailOtpCode,
 } from '../src/utils/directTrialBooking';
@@ -439,10 +440,12 @@ function testReturnDestinationAndSlotRestoration() {
   assert.deepEqual(detectDirectTrialAuthCallbackFromLocation('', ''), {
     directReturnTarget: null,
     isEmailAuthCallback: false,
+    authErrorCode: null,
   });
   assert.deepEqual(detectDirectTrialAuthCallbackFromLocation('', '#tutor/tutor-1'), {
     directReturnTarget: null,
     isEmailAuthCallback: false,
+    authErrorCode: null,
   });
   assert.deepEqual(
     detectDirectTrialAuthCallbackFromLocation(
@@ -452,6 +455,7 @@ function testReturnDestinationAndSlotRestoration() {
     {
       directReturnTarget: 'tutor/tutor-1',
       isEmailAuthCallback: true,
+      authErrorCode: null,
     }
   );
   assert.deepEqual(
@@ -459,12 +463,25 @@ function testReturnDestinationAndSlotRestoration() {
     {
       directReturnTarget: null,
       isEmailAuthCallback: true,
+      authErrorCode: null,
     }
   );
   assert.deepEqual(detectDirectTrialAuthCallbackFromLocation('?code=pkce_123', ''), {
     directReturnTarget: null,
     isEmailAuthCallback: true,
+    authErrorCode: null,
   });
+
+  // Used/expired email link lands on Site URL with #error=... and must return to the saved page
+  assert.deepEqual(
+    detectDirectTrialAuthCallbackFromLocation(
+      '',
+      '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'
+    ),
+    { directReturnTarget: null, isEmailAuthCallback: true, authErrorCode: 'otp_expired' }
+  );
+  assert.ok(getDirectTrialAuthErrorMessage('otp_expired')?.includes('مرة واحدة'));
+  assert.equal(getDirectTrialAuthErrorMessage(null), null);
 
   // Deterministic slot resolution: default first slot runs first, draft restores 2nd slot AFTER it
   const multiSlots: TutorAvailableSlot[] = [
