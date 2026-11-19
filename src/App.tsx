@@ -72,6 +72,7 @@ export default function App() {
   const [currentView, setCurrentView] = useState<AppView>('home');
   const [selectedTutorId, setSelectedTutorId] = useState<string | null>(null);
   const [bookingTutorId, setBookingTutorId] = useState<string | null>(null);
+  const [bookingSlotId, setBookingSlotId] = useState<string | null>(null);
   const [focusTutorBooking, setFocusTutorBooking] = useState<boolean>(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState<boolean>(false);
   const [currentTutor, setCurrentTutor] = useState<Tutor | null>(null);
@@ -249,7 +250,9 @@ export default function App() {
       setSelectedTutorId(id);
       setCurrentView('tutor-profile');
     } else if (hash.startsWith('#book/')) {
-      setBookingTutorId(hash.replace('#book/', ''));
+      const [bookTutorId, bookSlotId] = hash.replace('#book/', '').split('/');
+      setBookingTutorId(bookTutorId || null);
+      setBookingSlotId(bookSlotId || null);
       setCurrentView('trial-booking');
       window.scrollTo({ top: 0 });
     } else if (hash === '#join-as-tutor') {
@@ -745,6 +748,7 @@ export default function App() {
           <TrialBookingView
             key={bookingTutorId}
             tutorId={bookingTutorId}
+            initialSlotId={bookingSlotId}
             onBack={() => {
               if (window.history.length > 1) window.history.back();
               else handleBackToResults();

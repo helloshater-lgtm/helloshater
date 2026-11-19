@@ -39,6 +39,8 @@ import { EmailCodeVerifier } from './EmailCodeVerifier';
 
 interface TrialBookingViewProps {
   tutorId: string;
+  /** Slot tapped on the tutor profile («أقرب مواعيد التجربة»), preselected if still available. */
+  initialSlotId?: string | null;
   onBack: () => void;
   onOpenTutorProfile: (tutorId: string, options?: { focusBooking?: boolean }) => void;
   onNavigateToMyTrials: () => void;
@@ -64,6 +66,7 @@ const SLOT_TAKEN_MESSAGE =
  */
 export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
   tutorId,
+  initialSlotId,
   onBack,
   onOpenTutorProfile,
   onNavigateToMyTrials,
@@ -170,7 +173,14 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
     if (draftApplied || isLoading || !policy) return;
     setDraftApplied(true);
     const draft = loadPendingDirectTrialDraft(tutorId);
-    if (!draft) return;
+    if (!draft) {
+      const preset = initialSlotId ? slots.find((x) => x.id === initialSlotId) : null;
+      if (preset) {
+        setSelectedDate(preset.slotDate);
+        setSelectedSlotId(preset.id);
+      }
+      return;
+    }
     if (draft.guardianName) setGuardianName(draft.guardianName);
     if (draft.countryCode) setCountryCode(draft.countryCode);
     if (draft.localPhone) setLocalPhone(draft.localPhone);
@@ -185,7 +195,7 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
       setPickNotice(SLOT_TAKEN_MESSAGE);
       setStep('pick');
     }
-  }, [draftApplied, isLoading, policy, slots, tutorId]);
+  }, [draftApplied, isLoading, policy, slots, tutorId, initialSlotId]);
 
   const saveDraft = (extra?: { email?: string }) => {
     if (!selectedSlot) return;
