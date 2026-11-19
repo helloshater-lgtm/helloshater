@@ -990,3 +990,40 @@ export interface AdminDirectTrialBooking extends DirectTrialBooking {
   guardianWhatsApp: string;
 }
 
+
+// ---- Parent dashboard (migration 023) ----
+export interface ParentChild {
+  id: string;
+  name: string;
+  gradeLabel: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface DirectTrialReport {
+  bookingId: string;
+  attended: boolean;
+  levelSummary: string | null;
+  covered: string | null;
+  recommendation: string | null;
+  homework: string | null;
+  updatedAt: string;
+}
+
+export interface ParentDashboardBooking extends DirectTrialBooking {
+  childId: string | null;
+  childName: string | null;
+  report: DirectTrialReport | null;
+}
+
+export interface ParentDashboardData {
+  children: ParentChild[];
+  bookings: ParentDashboardBooking[];
+}
+
+export interface TutorTrialExtras {
+  bookingId: string;
+  childName: string | null;
+  childGrade: string | null;
+  report: DirectTrialReport | null;
+}

@@ -36,6 +36,8 @@ import {
   savePendingDirectTrialDraft,
 } from '../utils/directTrialBooking';
 import { EmailCodeVerifier } from './EmailCodeVerifier';
+import { ParentDashboardService } from '../services/parentDashboardService';
+import { ParentChild } from '../types';
 
 interface TrialBookingViewProps {
   tutorId: string;
@@ -95,6 +97,40 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState<DirectTrialBooking | null>(null);
   const [draftApplied, setDraftApplied] = useState(false);
+  // «الحصة لمين؟» (optional, needs migration 023)
+  const [children, setChildren] = useState<ParentChild[] | null>(null);
+  const [childChoice, setChildChoice] = useState<string>(''); // child id | 'new' | ''
+  const [newChildName, setNewChildName] = useState('');
+
+  useEffect(() => {
+    if (!authUser) return;
+    let active = true;
+    ParentDashboardService.getDashboard()
+      .then((d) => {
+        if (!active) return;
+        setChildren(d ? d.children : null);
+        if (d && d.children.length === 1) setChildChoice(d.children[0].id);
+        else if (d && d.children.length === 0) setChildChoice('new');
+      })
+      .catch(() => active && setChildren(null));
+    return () => {
+      active = false;
+    };
+  }, [authUser]);
+
+  // Link the confirmed booking to the child; never blocks the booking itself
+  const attachChild = async (bookingId: string) => {
+    if (children === null) return;
+    try {
+      let childId = childChoice !== 'new' ? childChoice : '';
+      if (childChoice === 'new' && newChildName.trim().length >= 2) {
+        childId = (await ParentDashboardService.upsertChild({ name: newChildName })).id;
+      }
+      if (childId) await ParentDashboardService.setTrialChild(bookingId, childId);
+    } catch {
+      // optional step
+    }
+  };
 
   // ------------------------------------------------------------------ data
   const loadSlots = useCallback(async () => {
@@ -263,6 +299,7 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
       });
       clearPendingDirectTrialDraft();
       clearDirectTrialReturnTarget();
+      if (booked?.id) await attachChild(booked.id);
       setConfirmed(booked);
       setStep('done');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -564,6 +601,40 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
                   مسجّل بـ <span dir="ltr">{authUser.email}</span>
                 </p>
               </div>
+              {children !== null && (
+                <div className="space-y-1.5">
+                  <span className="text-sm font-bold text-[#1F2A44] block">
+                    الحصة لمين؟ <span className="font-normal text-[#94A3B8]">· اختياري</span>
+                  </span>
+                  {children.length > 0 && (
+                    <select
+                      aria-label="الحصة لمين؟"
+                      value={childChoice}
+                      onChange={(e) => setChildChoice(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">اختار الطفل</option>
+                      {children.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                      <option value="new">طفل تاني…</option>
+                    </select>
+                  )}
+                  {childChoice === 'new' && (
+                    <input
+                      type="text"
+                      aria-label="اسم الطفل"
+                      value={newChildName}
+                      onChange={(e) => setNewChildName(e.target.value)}
+                      maxLength={60}
+                      placeholder="اسم الطفل"
+                      className={inputCls}
+                    />
+                  )}
+                </div>
+              )}
               <label className="block space-y-1.5">
                 <span className="text-sm font-bold text-[#1F2A44]">اسم وليّ الأمر</span>
                 <input
