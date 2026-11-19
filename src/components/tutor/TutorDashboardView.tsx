@@ -16,6 +16,7 @@ import { TutorProfileView } from '../TutorProfileView';
 import { TutorDirectTrialsTab } from './TutorDirectTrialsTab';
 import { TutorCalendarTab, TutorCalendarAddRequest } from './TutorCalendarTab';
 import { TutorDashboardHome } from './TutorDashboardHome';
+import { TutorProfileSettings, TutorProfileFocus } from './TutorProfileSettings';
 import {
   TutorDashboardBottomNav,
   TutorDashboardSidebar,
@@ -41,6 +42,7 @@ import {
   buildArabicWeeklyScheduleSummary,
   calculateGroupFinancialSummary,
   getCalendarDayOfWeek,
+  toArabicDigits,
 } from '../../utils/formatters';
 import { evaluateTutorProfileReadiness } from '../../utils/tutorReadinessAndContact';
 import { hasBookingEnded } from '../../utils/directTrialBooking';
@@ -100,6 +102,16 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   // Active Tab: First page is 'overview' showing setup steps and quick actions
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [profileFocus, setProfileFocus] = useState<{ section: TutorProfileFocus; nonce: number }>({
+    section: null,
+    nonce: 0,
+  });
+
+  // «بياناتي» page: photo, about and pricing live together; optionally scroll to one part
+  const openProfileSection = (section: TutorProfileFocus = null) => {
+    setActiveTab('profile-draft');
+    setProfileFocus({ section, nonce: Date.now() });
+  };
   const [calendarAddRequest, setCalendarAddRequest] = useState<TutorCalendarAddRequest | null>(null);
 
   // Opens the calendar tab, optionally with the "add slot" dialog preset to trial/private
@@ -584,9 +596,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       setPrivateDurationMinutes(updatedPricing.sessionDurationMinutes);
 
       setPricingSaveSuccess(
-        context?.tutor.isPublished
-          ? `تم حفظ سعرك (${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة — ${updatedPricing.sessionDurationMinutes} دقيقة) وتحديث ملفك المنشور مباشرةً وأصبح هو السعر الافتراضي لمواعيدك الخاصة الجديدة.`
-          : `تم حفظ سعرك (${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة — ${updatedPricing.sessionDurationMinutes} دقيقة) في ملفك وظهوره فورًا في لوحتك وفي المعاينة الخاصة (ملفك قيد التجهيز وغير ظاهر لأولياء الأمور).`
+        toArabicDigits(
+          `تم حفظ السعر: ${updatedPricing.hourlyRateMin} ${updatedPricing.currency} للحصة · ${updatedPricing.sessionDurationMinutes} دقيقة.`
+        )
       );
     } catch (err: any) {
       const msg = err?.message || 'تعذر حفظ السعر ومدة الحصة.';
@@ -1355,11 +1367,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
       setSelectedAvatarFile(null);
       setSelectedAvatarPreviewUrl(null);
-      setAvatarSaveSuccess(
-        context?.tutor.isPublished
-          ? 'تم حفظ صورتك الشخصية وتحديث ملفك المنشور مباشرة بنجاح!'
-          : 'تم حفظ صورتك الشخصية في ملفك بنجاح وظهرت فورًا في لوحتك وفي المعاينة الخاصة (ملفك قيد التجهيز وغير ظاهر لأولياء الأمور حتى النشر).'
-      );
+      setAvatarSaveSuccess('تم حفظ صورتك.');
     } catch (err: any) {
       // Keep the current published avatar intact and display a clear Arabic error message
       setAvatarSaveError(
@@ -1387,15 +1395,17 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     const nextFieldErrors: { headline?: string; quote?: string; summary?: string } = {};
 
     if (!trimmedHeadline || trimmedHeadline.length < 10 || trimmedHeadline.length > 250) {
-      nextFieldErrors.headline = `العنوان القصير مطلوب ويجب أن يكون بين 10 و 250 حرفًا (عدد الحروف الحالي: ${trimmedHeadline.length} حرفًا). مثال مقبول: «مدرسة رياضيات».`;
+      nextFieldErrors.headline = toArabicDigits(
+        `الجملة القصيرة لازم تكون من 10 لـ 250 حرف (مكتوب دلوقتي ${trimmedHeadline.length}).`
+      );
     }
 
     if (trimmedQuote.length > 0 && (trimmedQuote.length < 5 || trimmedQuote.length > 350)) {
-      nextFieldErrors.quote = `جملة "إزاي بتساعد الطفل يفهم؟" اختيارية، وعند كتابتها يجب أن تكون بين 5 و 350 حرفًا (عدد الحروف الحالي: ${trimmedQuote.length} حرفًا).`;
+      nextFieldErrors.quote = toArabicDigits(`لو كتبتها، لازم تكون من 5 لـ 350 حرف (مكتوب دلوقتي ${trimmedQuote.length}).`);
     }
 
     if (trimmedSummary.length > 0 && (trimmedSummary.length < 20 || trimmedSummary.length > 2500)) {
-      nextFieldErrors.summary = `النبذة التفصيلية عنك لولي الأمر اختيارية، وعند كتابتها يجب أن تكون بين 20 و 2500 حرفًا (عدد الحروف الحالي: ${trimmedSummary.length} حرفًا).`;
+      nextFieldErrors.summary = toArabicDigits(`لو كتبتها، لازم تكون من 20 لـ 2500 حرف (مكتوب دلوقتي ${trimmedSummary.length}).`);
     }
 
     if (Object.keys(nextFieldErrors).length > 0) {
@@ -1433,11 +1443,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       if (res.changed === false) {
         setTextSaveSuccess('لا توجد تعديلات جديدة.');
       } else {
-        setTextSaveSuccess(
-          context?.tutor.isPublished
-            ? 'تم حفظ النبذة وتحديث ملفك المنشور مباشرةً.'
-            : 'تم حفظ النبذة في ملفك بنجاح وظهرت فورًا في لوحتك وفي المعاينة الخاصة.'
-        );
+        setTextSaveSuccess('تم حفظ بياناتك.');
       }
     } catch (err: any) {
       // Preserve typed text in state and display error clearly
@@ -1650,6 +1656,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
   const handleReadinessStepAction = (stepKey: string) => {
     if (stepKey === 'trialSlot') return openCalendar('trial');
     if (stepKey === 'paidPrivateSlot') return openCalendar('private');
+    if (stepKey === 'avatar') return openProfileSection('photo');
+    if (stepKey === 'bio') return openProfileSection('about');
+    if (stepKey === 'pricing') return openProfileSection('pricing');
     const step = readinessSteps.find((s) => s.key === stepKey);
     if (step) setActiveTab(step.targetTab);
   };
@@ -1873,590 +1882,82 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       {/* ========================================================================= */}
       {/* SECTION 1: DIRECT PRICING & DURATION EDITOR («سعري ومدة الحصة») */}
       {/* ========================================================================= */}
-      {activeTab === 'pricing' && (
-        <div className="space-y-6 animate-fade-in">
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-8 shadow-xs space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F1F5F9] pb-4">
-              <div className="space-y-1">
-                <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44] flex items-center gap-2">
-                  <DollarSign className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>سعري ومدة الحصة الفردية</span>
-                </h2>
-                <p className="text-xs text-[#64748B] leading-relaxed">
-                  عدّل سعر الحصة الواحدة وعملتك ومدة الحصة بالدقائق. يظهر السعر الجديد مباشرةً في ملفك المنشور، ويصبح هو السعر الافتراضي للمواعيد الخاصة الجديدة.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleOpenParentPreview}
-                disabled={isLoadingPreview}
-                className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer shrink-0"
-              >
-                <Eye className="w-4 h-4" />
-                <span>شوف ملفك زي ولي الأمر</span>
-              </button>
-            </div>
-
-            {/* Clarification Banner */}
-            <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs sm:text-sm flex items-start gap-3">
-              <Info className="w-5 h-5 text-[#0D4E8B] shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <span className="font-bold block">
-                  توضيح تسعير الحصة الفردية (1:1):
-                </span>
-                <p className="leading-relaxed text-blue-800">
-                  السعر المحدد هنا هو <strong>سعر الحصة الواحدة بالمدة المختارة ({pricingDurationMinutes} دقيقة)</strong> وليس سعر باقة. تعديل السعر هنا لا يغيّر أسعار أو مدد المواعيد المضافة مسبقاً أو الحجوزات المؤكدة، كما يمكنك تخصيص سعر أي موعد خاص عند إضافته.
-                </p>
-              </div>
-            </div>
-
-            {pricingSaveError && (
-              <div
-                role="alert"
-                className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5"
-              >
-                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                <span className="font-bold">{pricingSaveError}</span>
-              </div>
-            )}
-
-            {pricingSaveSuccess && (
-              <div
-                role="status"
-                className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5"
-              >
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                <span className="font-bold">{pricingSaveSuccess}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveProfilePricing} noValidate className="space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Single Session Price */}
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="tutor-pricing-session-price"
-                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
-                  >
-                    سعر الحصة الواحدة <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    id="tutor-pricing-session-price"
-                    type="number"
-                    min={1}
-                    max={100000}
-                    step={1}
-                    value={pricingSessionPriceInput}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setPricingSessionPriceInput(val);
-                      const num = Number(val);
-                      if (val.trim() !== '' && Number.isFinite(num)) {
-                        setPricingSessionPrice(num);
-                      }
-                      if (pricingFieldErrors.price) {
-                        setPricingFieldErrors((prev) => ({ ...prev, price: undefined }));
-                      }
-                    }}
-                    required
-                    className={`w-full h-11 px-3.5 rounded-xl border text-sm font-bold focus:border-[#0D4E8B] outline-none ${
-                      pricingFieldErrors.price
-                        ? 'border-rose-400 bg-rose-50/40'
-                        : 'border-[#CBD5E1]'
-                    }`}
-                  />
-                  <span className="text-[11px] text-[#64748B] block">
-                    رقم صحيح بدون كسور (من 1 إلى 100000 — مثل 127 أو 175)
-                  </span>
-                  {pricingFieldErrors.price && (
-                    <p
-                      role="alert"
-                      className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
-                    >
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      <span>{pricingFieldErrors.price}</span>
-                    </p>
-                  )}
-                </div>
-
-                {/* Currency */}
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="tutor-pricing-currency"
-                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
-                  >
-                    العملة <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    id="tutor-pricing-currency"
-                    value={pricingCurrency}
-                    onChange={(e) => setPricingCurrency(e.target.value)}
-                    className="w-full h-11 px-3.5 rounded-xl border border-[#CBD5E1] text-xs sm:text-sm font-bold focus:border-[#0D4E8B] outline-none bg-white"
-                  >
-                    {SUPPORTED_TUTOR_CURRENCIES.map((curr) => (
-                      <option key={curr.value} value={curr.value}>
-                        {curr.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[11px] text-[#64748B] block">
-                    تظهر بجانب السعر في ملفك العام
-                  </span>
-                </div>
-
-                {/* Session Duration Minutes */}
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="tutor-pricing-duration"
-                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
-                  >
-                    مدة الحصة بالدقائق <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    id="tutor-pricing-duration"
-                    value={pricingDurationMinutes}
-                    onChange={(e) => {
-                      setPricingDurationMinutes(Number(e.target.value));
-                      if (pricingFieldErrors.duration) {
-                        setPricingFieldErrors((prev) => ({ ...prev, duration: undefined }));
-                      }
-                    }}
-                    className={`w-full h-11 px-3.5 rounded-xl border text-xs sm:text-sm font-bold focus:border-[#0D4E8B] outline-none bg-white ${
-                      pricingFieldErrors.duration
-                        ? 'border-rose-400 bg-rose-50/40'
-                        : 'border-[#CBD5E1]'
-                    }`}
-                  >
-                    <option value={30}>30 دقيقة</option>
-                    <option value={45}>45 دقيقة</option>
-                    <option value={50}>50 دقيقة (المعتادة)</option>
-                    <option value={60}>60 دقيقة (ساعة كاملة)</option>
-                    <option value={75}>75 دقيقة</option>
-                    <option value={90}>90 دقيقة (ساعة ونصف)</option>
-                    <option value={120}>120 دقيقة (ساعتان)</option>
-                  </select>
-                  <span className="text-[11px] text-[#64748B] block">
-                    مدة الحصة الواحدة المقابلة للسعر أعلاه
-                  </span>
-                  {pricingFieldErrors.duration && (
-                    <p
-                      role="alert"
-                      className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
-                    >
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      <span>{pricingFieldErrors.duration}</span>
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Live Display Preview */}
-              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-xs font-bold text-[#64748B]">
-                  كيف سيظهر السعر لولي الأمر في ملفك:
-                </span>
-                <span className="font-['Cairo'] text-sm sm:text-base font-extrabold text-[#0D4E8B]">
-                  {
-                    formatSessionPriceSummary({
-                      minPrice: pricingSessionPrice,
-                      maxPrice: pricingSessionPrice,
-                      currency: pricingCurrency,
-                      durationMinutes: pricingDurationMinutes,
-                    }).combinedText
-                  }
-                </span>
-              </div>
-
-              <div className="pt-2 flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSavingPricing}
-                  className="px-6 py-3 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
-                >
-                  {isSavingPricing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>حفظ السعر ومدة الحصة ونشره</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* SECTION 2: SELF-SERVICE AVATAR & PROFILE TEXTS («صورتي ونبذتي») */}
-      {/* ========================================================================= */}
-      {activeTab === 'profile-draft' && (
-        <div className="space-y-6 animate-fade-in">
-          {/* PART A: SELF-SERVICE AVATAR — DIRECT UPLOAD & PUBLISH */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-8 shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F1F5F9] pb-4">
-              <div>
-                <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44] flex items-center gap-2">
-                  <Camera className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>الصورة الشخصية لملفك</span>
-                </h2>
-                <p className="text-xs text-[#64748B] mt-0.5">
-                  اختر صورة واضحة لوجهك بإضاءة جيدة، عاينها، ثم اضغط «حفظ الصورة ونشرها» لتظهر فوراً في ملفك العام.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleOpenParentPreview}
-                disabled={isLoadingPreview}
-                className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] border border-blue-200 text-xs font-bold text-[#0D4E8B] transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer shrink-0"
-              >
-                <Eye className="w-4 h-4" />
-                <span>شوف ملفك زي ولي الأمر</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* 1. Current Published Avatar */}
-              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3.5">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
-                  {tutor.avatarUrl ? (
-                    <img
-                      src={tutor.avatarUrl}
-                      alt={tutor.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <User className="w-8 h-8 text-slate-400" />
-                  )}
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[11px] font-bold text-slate-500 block">
-                    الصورة الحالية المنشورة:
-                  </span>
-                  <span className="text-xs font-bold text-[#1F2A44] block">
-                    {tutor.avatarUrl
-                      ? 'تظهر حالياً لأولياء الأمور في ملفك'
-                      : 'لم تقم بنشر صورة شخصية بعد'}
-                  </span>
-                </div>
-              </div>
-
-              {/* 2. Select & Preview New Avatar */}
-              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center gap-3.5 relative">
-                <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-slate-100 border border-slate-300 shrink-0 flex items-center justify-center">
-                  {selectedAvatarPreviewUrl ? (
-                    <img
-                      src={selectedAvatarPreviewUrl}
-                      alt="معاينة الصورة المختارة"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <Camera className="w-7 h-7 text-slate-400" />
-                  )}
-
-                  {isSavingAvatar && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center text-white">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2 flex-1 min-w-0">
-                  <label
-                    htmlFor="tutor-self-avatar-input"
-                    className="px-3.5 py-2 min-h-[40px] rounded-xl border border-[#0D4E8B] bg-blue-50/70 hover:bg-blue-100/70 text-xs font-bold text-[#0D4E8B] transition-all cursor-pointer inline-flex items-center gap-1.5"
-                  >
-                    <Camera className="w-4 h-4 shrink-0" />
-                    <span>{selectedAvatarFile ? 'تغيير الصورة المختارة' : 'اختيار صورة جديدة'}</span>
-                  </label>
-                  <input
-                    id="tutor-self-avatar-input"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={handleAvatarFileSelect}
-                    disabled={isSavingAvatar}
-                    className="sr-only"
-                  />
-                  <p className="text-[11px] text-[#64748B]">
-                    صيغ مدعومة: JPG أو PNG أو WebP بحد أقصى 2 ميجابايت.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {avatarSaveError && (
-              <div
-                role="alert"
-                className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2"
-              >
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span className="font-bold">{avatarSaveError}</span>
-              </div>
-            )}
-
-            {avatarSaveSuccess && (
-              <div
-                role="status"
-                className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2"
-              >
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span className="font-bold">{avatarSaveSuccess}</span>
-              </div>
-            )}
-
-            <div className="pt-1 flex items-center justify-end">
-              <button
-                type="button"
-                onClick={handleSaveAndPublishAvatar}
-                disabled={isSavingAvatar || !selectedAvatarFile}
-                className="px-6 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
-              >
-                {isSavingAvatar ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>جاري حفظ الصورة ونشرها...</span>
-                  </>
-                ) : (
-                  <>
-                    <Check className="w-4 h-4" />
-                    <span>حفظ الصورة ونشرها</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* PART B: TEXTS FORM — IMMEDIATE UPDATE */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-8 shadow-xs space-y-6">
-            <div className="space-y-1 border-b border-[#F1F5F9] pb-4">
-              <h3 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44] flex items-center gap-2">
-                <Edit3 className="w-5 h-5 text-[#0D4E8B]" />
-                <span>النبذة ونصوص ملفك التعريفي</span>
-              </h3>
-              <p className="text-xs text-[#64748B] leading-relaxed">
-                عدّل الجملة القصيرة ونبذتك وكيف تساعد الطفل، وستُحفظ وتظهر في ملفك المنشور مباشرةً.
-              </p>
-            </div>
-
-            {/* Clarification of Headline vs Bio */}
-            <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs space-y-1.5">
-              <div className="font-bold flex items-center gap-1.5 text-[#0D4E8B]">
-                <Info className="w-4 h-4 shrink-0" />
-                <span>الفرق بين العنوان القصير والنبذة التفصيلية:</span>
-              </div>
-              <ul className="list-disc list-inside space-y-1 text-blue-800 leading-relaxed">
-                <li>
-                  <strong>العنوان القصير (جملة قصيرة عنك):</strong> يظهر مباشرةً تحت اسمك في بطاقة البحث وأعلى ملفك التعريفي (مطلوب: من 10 إلى 250 حرفًا — عبارات مثل «مدرسة رياضيات» أو «معلم لغة عربية» تحقق الشرط).
-                </li>
-                <li>
-                  <strong>النبذة التفصيلية لولي الأمر:</strong> تظهر داخل صفحة ملفك لتوضيح خبرتك الأكاديمية وطريقتك في الشرح والمتابعة مع ولي الأمر (اختيارية: من 20 إلى 2500 حرفًا عند كتابتها).
-                </li>
-              </ul>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>ممنوع كتابة أرقام هاتف أو روابط أو حسابات تواصل داخل النصوص.</span>
-            </div>
-
-            {textSaveError && (
-              <div
-                role="alert"
-                className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5"
-              >
-                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                <span className="font-bold">{textSaveError}</span>
-              </div>
-            )}
-
-            {textSaveSuccess && (
-              <div
-                role="status"
-                className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm flex items-start gap-2.5"
-              >
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                <span className="font-bold">{textSaveSuccess}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveProfileText} noValidate className="space-y-5">
-              {/* 1. Short Headline ("جملة قصيرة عنك / العنوان القصير") */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <label
-                    htmlFor="tutor-profile-headline"
-                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
-                  >
-                    العنوان القصير (جملة قصيرة عنك) <span className="text-rose-500">*</span>
-                  </label>
-                  <span
-                    className={`text-[11px] font-mono font-bold ${
-                      draftHeadline.trim().length < 10 || draftHeadline.trim().length > 250
-                        ? 'text-amber-600'
-                        : 'text-emerald-700'
-                    }`}
-                  >
-                    عدد الحروف: {draftHeadline.trim().length} / 250 (الحد المطلوب: من 10 إلى 250 حرفًا)
-                  </span>
-                </div>
-                <input
-                  id="tutor-profile-headline"
-                  type="text"
-                  value={draftHeadline}
-                  onChange={(e) => {
-                    setDraftHeadline(e.target.value);
-                    if (textFieldErrors.headline) {
-                      setTextFieldErrors((prev) => ({ ...prev, headline: undefined }));
-                    }
-                  }}
-                  maxLength={250}
-                  placeholder="مثال: مدرسة رياضيات — أو: أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة"
-                  required
-                  className={`w-full h-11 px-3.5 rounded-xl border text-xs sm:text-sm focus:border-[#0D4E8B] outline-none ${
-                    textFieldErrors.headline
-                      ? 'border-rose-400 bg-rose-50/40'
-                      : 'border-[#CBD5E1]'
-                  }`}
-                />
-                <p className="text-[11px] text-[#64748B]">
-                  يظهر تحت اسمك مباشرة في البطاقات. مثال مقبول: «مدرسة رياضيات» (13 حرفًا) أو «أساعد طلاب الإعدادي يفهموا الرياضيات خطوة بخطوة».
-                </p>
-                {textFieldErrors.headline && (
-                  <p
-                    role="alert"
-                    className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
-                  >
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{textFieldErrors.headline}</span>
-                  </p>
-                )}
-              </div>
-
-              {/* 2. Help Child Quote ("إزاي بتساعد الطفل يفهم؟") */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <label
-                    htmlFor="tutor-profile-quote"
-                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
-                  >
-                    إزاي بتساعد الطفل يفهم؟{' '}
-                    <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
-                  </label>
-                  <span
-                    className={`text-[11px] font-mono font-bold ${
-                      draftQuote.trim().length > 0 &&
-                      (draftQuote.trim().length < 5 || draftQuote.trim().length > 350)
-                        ? 'text-amber-600'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    عدد الحروف: {draftQuote.trim().length} / 350 (الحد عند الكتابة: من 5 إلى 350 حرفًا)
-                  </span>
-                </div>
-                <textarea
-                  id="tutor-profile-quote"
-                  rows={2}
-                  value={draftQuote}
-                  onChange={(e) => {
-                    setDraftQuote(e.target.value);
-                    if (textFieldErrors.quote) {
-                      setTextFieldErrors((prev) => ({ ...prev, quote: undefined }));
-                    }
-                  }}
-                  maxLength={350}
-                  placeholder="مثال: أبسّط الدرس بأمثلة عملية قريبة من الطفل وأتأكد إنه حل بنفسه قبل نهاية الحصة."
-                  className={`w-full p-3 rounded-xl border text-xs sm:text-sm focus:border-[#0D4E8B] outline-none ${
-                    textFieldErrors.quote
-                      ? 'border-rose-400 bg-rose-50/40'
-                      : 'border-[#CBD5E1]'
-                  }`}
-                />
-                {textFieldErrors.quote && (
-                  <p
-                    role="alert"
-                    className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
-                  >
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{textFieldErrors.quote}</span>
-                  </p>
-                )}
-              </div>
-
-              {/* 3. Summary ("اكتب نبذة عنك لولي الأمر") */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <label
-                    htmlFor="tutor-profile-summary"
-                    className="text-xs sm:text-sm font-bold text-[#1F2A44] block"
-                  >
-                    النبذة التفصيلية عنك لولي الأمر{' '}
-                    <span className="text-[11px] font-normal text-[#64748B]">(اختياري)</span>
-                  </label>
-                  <span
-                    className={`text-[11px] font-mono font-bold ${
-                      draftSummary.trim().length > 0 &&
-                      (draftSummary.trim().length < 20 || draftSummary.trim().length > 2500)
-                        ? 'text-amber-600'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    عدد الحروف: {draftSummary.trim().length} / 2500 (الحد عند الكتابة: من 20 إلى 2500 حرفًا)
-                  </span>
-                </div>
-                <textarea
-                  id="tutor-profile-summary"
-                  rows={5}
-                  value={draftSummary}
-                  onChange={(e) => {
-                    setDraftSummary(e.target.value);
-                    if (textFieldErrors.summary) {
-                      setTextFieldErrors((prev) => ({ ...prev, summary: undefined }));
-                    }
-                  }}
-                  maxLength={2500}
-                  placeholder="اكتب نبذة واضحة لولي الأمر تذكر فيها خبرتك وطريقتك..."
-                  className={`w-full p-3 rounded-xl border text-xs sm:text-sm focus:border-[#0D4E8B] outline-none ${
-                    textFieldErrors.summary
-                      ? 'border-rose-400 bg-rose-50/40'
-                      : 'border-[#CBD5E1]'
-                  }`}
-                />
-                <p className="text-[11px] text-[#64748B]">
-                  تظهر في قسم النبذة التفصيلية داخل ملفك. اذكر خبرتك وطريقتك وإزاي بتتابع مع ولي الأمر.
-                </p>
-                {textFieldErrors.summary && (
-                  <p
-                    role="alert"
-                    className="text-[11px] text-rose-600 font-bold flex items-start gap-1 pt-0.5"
-                  >
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{textFieldErrors.summary}</span>
-                  </p>
-                )}
-              </div>
-
-              <div className="pt-2 flex items-center justify-end">
-                <button
-                  type="submit"
-                  disabled={isSavingProfileText}
-                  className="px-6 py-3 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] disabled:opacity-50 text-white text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
-                >
-                  {isSavingProfileText ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>حفظ النبذة ونشرها</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {(activeTab === 'profile-draft' || activeTab === 'pricing') && (
+        <TutorProfileSettings
+          isPublished={Boolean(tutor.isPublished)}
+          tutorName={tutor.name}
+          currentAvatarUrl={tutor.avatarUrl && !isAvatarBrokenAtRuntime ? tutor.avatarUrl : ''}
+          specializations={specializations}
+          focus={profileFocus.section}
+          focusNonce={profileFocus.nonce}
+          selectedAvatarFile={selectedAvatarFile}
+          selectedAvatarPreviewUrl={selectedAvatarPreviewUrl}
+          isSavingAvatar={isSavingAvatar}
+          avatarError={avatarSaveError}
+          avatarSuccess={avatarSaveSuccess}
+          onSelectAvatar={handleAvatarFileSelect}
+          onCancelAvatar={() => {
+            if (selectedAvatarPreviewUrl) {
+              try {
+                URL.revokeObjectURL(selectedAvatarPreviewUrl);
+              } catch {
+                // ignore
+              }
+            }
+            setSelectedAvatarFile(null);
+            setSelectedAvatarPreviewUrl(null);
+            setAvatarSaveError(null);
+          }}
+          onSaveAvatar={() => handleSaveAndPublishAvatar()}
+          headline={{
+            value: draftHeadline,
+            onChange: (v) => {
+              setDraftHeadline(v);
+              if (textFieldErrors.headline) setTextFieldErrors((prev) => ({ ...prev, headline: undefined }));
+            },
+            error: textFieldErrors.headline,
+          }}
+          quote={{
+            value: draftQuote,
+            onChange: (v) => {
+              setDraftQuote(v);
+              if (textFieldErrors.quote) setTextFieldErrors((prev) => ({ ...prev, quote: undefined }));
+            },
+            error: textFieldErrors.quote,
+          }}
+          summary={{
+            value: draftSummary,
+            onChange: (v) => {
+              setDraftSummary(v);
+              if (textFieldErrors.summary) setTextFieldErrors((prev) => ({ ...prev, summary: undefined }));
+            },
+            error: textFieldErrors.summary,
+          }}
+          isSavingText={isSavingProfileText}
+          textError={Object.keys(textFieldErrors).some((k) => (textFieldErrors as any)[k]) ? null : textSaveError}
+          textSuccess={textSaveSuccess}
+          onSaveText={handleSaveProfileText}
+          priceInput={pricingSessionPriceInput}
+          onPriceInputChange={(val) => {
+            setPricingSessionPriceInput(val);
+            const num = Number(String(val).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))));
+            if (val.trim() !== '' && Number.isFinite(num)) setPricingSessionPrice(num);
+            if (pricingFieldErrors.price) setPricingFieldErrors((prev) => ({ ...prev, price: undefined }));
+          }}
+          priceError={pricingFieldErrors.price}
+          currency={pricingCurrency}
+          onCurrencyChange={setPricingCurrency}
+          durationMinutes={pricingDurationMinutes}
+          onDurationChange={(v) => {
+            setPricingDurationMinutes(v);
+            if (pricingFieldErrors.duration) setPricingFieldErrors((prev) => ({ ...prev, duration: undefined }));
+          }}
+          durationError={pricingFieldErrors.duration}
+          isSavingPricing={isSavingPricing}
+          pricingError={pricingSaveError}
+          pricingSuccess={pricingSaveSuccess}
+          onSavePricing={handleSaveProfilePricing}
+        />
       )}
 
       {activeTab === 'calendar' && (
@@ -2864,7 +2365,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setActiveTab('pricing')}
+                onClick={() => openProfileSection('pricing')}
                 className="text-[11px] font-bold text-[#0D4E8B] hover:underline cursor-pointer"
               >
                 تعديل السعر الافتراضي للملف ←

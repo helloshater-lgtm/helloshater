@@ -20,7 +20,8 @@ interface SectionDef {
   key: TutorDashboardSection;
   label: string;
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-  tabs: Array<{ tab: TutorDashboardTab; label: string }>;
+  /** `hidden` tabs belong to the section but share another tab's page (no own sub tab). */
+  tabs: Array<{ tab: TutorDashboardTab; label: string; hidden?: boolean }>;
 }
 
 export const TUTOR_DASHBOARD_SECTIONS: SectionDef[] = [
@@ -46,8 +47,8 @@ export const TUTOR_DASHBOARD_SECTIONS: SectionDef[] = [
     label: 'ملفي',
     icon: UserRound,
     tabs: [
-      { tab: 'profile-draft', label: 'الصورة والنبذة' },
-      { tab: 'pricing', label: 'السعر والمدة' },
+      { tab: 'profile-draft', label: 'بياناتي' },
+      { tab: 'pricing', label: 'بياناتي', hidden: true },
       { tab: 'groups', label: 'المجموعات' },
     ],
   },
@@ -160,11 +161,16 @@ export const TutorDashboardBottomNav: React.FC<NavProps> = ({ activeTab, onSelec
 /** Segmented control for the screens inside one section (e.g. ملفي → الصورة / السعر / المجموعات). */
 export const TutorDashboardSubTabs: React.FC<NavProps> = ({ activeTab, onSelectTab }) => {
   const section = getSectionForTab(activeTab);
-  if (section.tabs.length < 2) return null;
+  const visibleTabs = section.tabs.filter((t) => !t.hidden);
+  if (visibleTabs.length < 2) return null;
+  const activeVisible =
+    section.tabs.find((t) => t.tab === activeTab)?.hidden
+      ? visibleTabs.find((t) => t.label === section.tabs.find((x) => x.tab === activeTab)?.label)?.tab
+      : activeTab;
   return (
     <div role="tablist" aria-label={section.label} className="flex gap-1 p-1 rounded-2xl bg-[#EEF2F7] overflow-x-auto">
-      {section.tabs.map(({ tab, label }) => {
-        const isActive = tab === activeTab;
+      {visibleTabs.map(({ tab, label }) => {
+        const isActive = tab === activeVisible;
         return (
           <button
             key={tab}
