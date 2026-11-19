@@ -784,3 +784,13 @@ export function resolveInitialTrialSlotSelection(params: {
   };
 }
 
+export function normalizeEmailOtpCode(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const latin = raw
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[\s\-_.]/g, '');
+  return /^\d{6,10}$/.test(latin) ? latin : null;
+}
+
+

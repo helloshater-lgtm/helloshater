@@ -27,6 +27,7 @@ import {
 } from '../utils/directTrialBooking';
 import { VideoModal } from './VideoModal';
 import { WhatsAppNoticeModal } from './WhatsAppNoticeModal';
+import { EmailCodeVerifier } from './EmailCodeVerifier';
 import {
   trackBookingSlotSelected,
   trackTrialSlotSelected,
@@ -759,27 +760,36 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
     setIsWhatsAppModalOpen(true);
   };
 
+  const sendDirectOtpEmail = async (email: string) => {
+    if (!selectedTrialSlot) return;
+    const returnTarget = `tutor/${tutor.id}`;
+    savePendingDirectTrialDraft({
+      tutorId: tutor.id,
+      slotId: selectedTrialSlot.id,
+      guardianName: guardianName.trim() || undefined,
+      countryCode: whatsappCountryCode,
+      localPhone: whatsappLocalPhone.trim() || undefined,
+    });
+    saveDirectTrialReturnTarget(returnTarget);
+    const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=${encodeURIComponent(returnTarget)}`;
+    await DirectTrialBookingService.signInParentWithOtp(email, redirectUrl);
+  };
+
+  const resendDirectOtp = async () => {
+    if (otpSentEmail) await sendDirectOtpEmail(otpSentEmail);
+  };
+
   const handleSendDirectOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTrialSlot) return;
     setDirectBookingError(null);
     setIsSendingOtp(true);
     try {
-      const returnTarget = `tutor/${tutor.id}`;
-      savePendingDirectTrialDraft({
-        tutorId: tutor.id,
-        slotId: selectedTrialSlot.id,
-        guardianName: guardianName.trim() || undefined,
-        countryCode: whatsappCountryCode,
-        localPhone: whatsappLocalPhone.trim() || undefined,
-      });
-      saveDirectTrialReturnTarget(returnTarget);
-      const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=${encodeURIComponent(returnTarget)}`;
-      await DirectTrialBookingService.signInParentWithOtp(otpEmail, redirectUrl);
+      await sendDirectOtpEmail(otpEmail);
       setOtpSentEmail(otpEmail.trim());
     } catch (err: any) {
       setDirectBookingError(
-        err?.message || 'تعذر إرسال رابط الدخول إلى بريدك. يرجى التأكد من صحة البريد الإلكتروني.'
+        err?.message || 'تعذر إرسال كود الدخول إلى بريدك. يرجى التأكد من صحة البريد الإلكتروني.'
       );
     } finally {
       setIsSendingOtp(false);
@@ -1947,26 +1957,11 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                                   </div>
 
                                   {otpSentEmail ? (
-                                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2 text-xs text-emerald-900">
-                                      <p className="font-bold">
-                                        تم إرسال رابط الدخول إلى{' '}
-                                        <span dir="ltr">{otpSentEmail}</span>
-                                      </p>
-                                      <p className="text-[11px] leading-relaxed">
-                                        افتح الرابط المرسل لبريدك للعودة إلى هذا الموعد وإدخال بياناتك ثم الضغط على «تأكيد الحجز المجاني».
-                                      </p>
-                                      <button
-                                        type="button"
-                                        onClick={() => setOtpSentEmail(null)}
-                                        className="text-[11px] font-bold text-[#0D4E8B] underline cursor-pointer"
-                                      >
-                                        استخدام بريد آخر
-                                      </button>
-                                    </div>
+                                    <EmailCodeVerifier compact email={otpSentEmail} onResend={resendDirectOtp} onChangeEmail={() => setOtpSentEmail(null)} />
                                   ) : (
                                     <form onSubmit={handleSendDirectOtp} className="space-y-2.5">
                                       <p className="text-[11px] text-[#535E7B] leading-relaxed">
-                                        سنرسل رابط دخول مباشر لبريدك الإلكتروني (بدون كلمة مرور) لحفظ حجزك وإظهار رابط الحصة في «حجوزاتي».
+                                        سنرسل كود دخول لبريدك الإلكتروني (بدون كلمة مرور) تكتبه هنا لتأكيد حجزك، ويظهر بعدها رابط الحصة في «حجوزاتي».
                                       </p>
                                       <input
                                         type="email"
@@ -1996,7 +1991,7 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
                                         ) : (
                                           <>
                                             <Mail className="w-3.5 h-3.5" />
-                                            <span>إرسال رابط الدخول لبريدك</span>
+                                            <span>إرسال كود الدخول لبريدك</span>
                                           </>
                                         )}
                                       </button>

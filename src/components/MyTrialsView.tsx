@@ -8,6 +8,7 @@ import {
   loadDirectTrialReturnTarget,
   clearDirectTrialReturnTarget,
 } from '../utils/directTrialBooking';
+import { EmailCodeVerifier } from './EmailCodeVerifier';
 import {
   CalendarCheck2,
   Clock,
@@ -104,14 +105,18 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
     };
   }, [loadBookings]);
 
+  const sendMyTrialsOtp = async (email: string) => {
+    const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=my-trials`;
+    saveDirectTrialReturnTarget('my-trials');
+    await DirectTrialBookingService.signInParentWithOtp(email, redirectUrl);
+  };
+
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setOtpError(null);
     setIsSendingOtp(true);
     try {
-      const redirectUrl = `${window.location.origin}${window.location.pathname}?direct_return=my-trials`;
-      saveDirectTrialReturnTarget('my-trials');
-      await DirectTrialBookingService.signInParentWithOtp(emailInput, redirectUrl);
+      await sendMyTrialsOtp(emailInput);
       setOtpSentEmail(emailInput.trim());
     } catch (err: any) {
       setOtpError(err?.message || 'تعذر إرسال رابط الدخول إلى بريدك.');
@@ -207,29 +212,12 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
               سجّل الدخول لعرض حجوزاتك
             </h2>
             <p className="text-xs text-[#64748B] leading-relaxed">
-              أدخل البريد الإلكتروني الذي استخدمته عند حجز الحصة التجريبية، وسنرسل لك رابط دخول مباشر دون كلمة مرور.
+              أدخل البريد الإلكتروني الذي استخدمته عند حجز الحصة التجريبية، وسنرسل لك كود دخول تكتبه هنا دون كلمة مرور.
             </p>
           </div>
 
           {otpSentEmail ? (
-            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-3 text-center">
-              <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-              <div className="space-y-1">
-                <p className="font-['Cairo'] text-sm font-bold text-emerald-900">
-                  تم إرسال رابط الدخول بنجاح
-                </p>
-                <p className="text-xs text-emerald-800 leading-relaxed">
-                  افتح بريدك الإلكتروني (<span dir="ltr" className="font-bold">{otpSentEmail}</span>) واضغط على رابط الدخول لتُفتح صفحة «حجوزاتي» تلقائياً.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setOtpSentEmail(null)}
-                className="text-xs font-bold text-[#0D4E8B] hover:underline cursor-pointer"
-              >
-                إرسال الرابط لبريد آخر
-              </button>
-            </div>
+            <EmailCodeVerifier email={otpSentEmail} onResend={() => sendMyTrialsOtp(otpSentEmail)} onChangeEmail={() => setOtpSentEmail(null)} />
           ) : (
             <form onSubmit={handleSendOtp} className="space-y-3">
               <div>
@@ -267,7 +255,7 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
                 ) : (
                   <>
                     <Mail className="w-4 h-4" />
-                    <span>إرسال رابط الدخول لبريدك</span>
+                    <span>إرسال كود الدخول لبريدك</span>
                   </>
                 )}
               </button>

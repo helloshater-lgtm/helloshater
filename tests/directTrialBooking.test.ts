@@ -15,6 +15,7 @@ import {
   clearDirectTrialReturnTarget,
   detectDirectTrialAuthCallbackFromLocation,
   resolveInitialTrialSlotSelection,
+  normalizeEmailOtpCode,
 } from '../src/utils/directTrialBooking';
 import {
   DirectTrialBookingService,
@@ -545,10 +546,37 @@ function testReturnDestinationAndSlotRestoration() {
   assert.equal(unavailableDraft.draftSlotUnavailable, true);
 }
 
+// 7. Inline email OTP code normalization & verifyParentEmailCode
+async function testEmailOtpCodeVerification() {
+  assert.equal(normalizeEmailOtpCode('١٢٣٤٥٦'), '123456');
+  assert.equal(normalizeEmailOtpCode('12345'), null);
+
+  const verifyCalls: Array<any> = [];
+  const mockSupabase: any = {
+    auth: {
+      verifyOtp: async (payload: any) => {
+        verifyCalls.push(payload);
+        return { data: {}, error: null };
+      },
+    },
+  };
+
+  __setDirectTrialSupabaseForTests(mockSupabase);
+  try {
+    await DirectTrialBookingService.verifyParentEmailCode('parent@example.com', '123456');
+    assert.deepEqual(verifyCalls, [
+      { email: 'parent@example.com', token: '123456', type: 'email' },
+    ]);
+  } finally {
+    __setDirectTrialSupabaseForTests(null);
+  }
+}
+
 async function main() {
   await testServiceRpcs();
   testAdminDraftsAndMetaExclusion();
   testReturnDestinationAndSlotRestoration();
+  await testEmailOtpCodeVerification();
   console.log('ALL DIRECT TRIAL BOOKING TESTS PASSED ✅');
 }
 

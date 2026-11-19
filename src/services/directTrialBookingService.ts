@@ -193,6 +193,26 @@ export const DirectTrialBookingService = {
     }
   },
 
+  async verifyParentEmailCode(email: string, code: string): Promise<void> {
+    const cleanEmail = String(email || '').trim();
+    const cleanCode = String(code || '').trim();
+    if (!cleanEmail || !cleanCode) {
+      throw new DirectTrialBookingError('يرجى إدخال الكود المرسل إلى بريدك.');
+    }
+    const client = getDbClient();
+    const { error } = await client.auth.verifyOtp({ email: cleanEmail, token: cleanCode, type: 'email' });
+    if (error) {
+      const lower = String(error.message || '').toLowerCase();
+      if (lower.includes('expired') || lower.includes('invalid')) {
+        throw new DirectTrialBookingError('الكود غير صحيح أو انتهت صلاحيته. تأكد من آخر رسالة وصلتك أو اطلب كودًا جديدًا.');
+      }
+      if (lower.includes('rate') || error.status === 429) {
+        throw new DirectTrialBookingError('محاولات كثيرة خلال وقت قصير. انتظر قليلًا ثم حاول مرة أخرى.');
+      }
+      throw new DirectTrialBookingError('تعذر التحقق من الكود حاليًا. حاول مرة أخرى.');
+    }
+  },
+
   /**
    * Returns current authenticated Supabase user (if any).
    */
