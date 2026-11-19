@@ -44,6 +44,15 @@ interface TutorDashboardHomeProps {
   onOpenPreview: () => void;
 }
 
+/** Short verb for the next-step button. */
+const STEP_ACTION_LABELS: Record<string, string> = {
+  avatar: 'إضافة صورتك',
+  bio: 'كتابة نبذتك',
+  pricing: 'تحديد السعر',
+  trialSlot: 'إضافة موعد تجريبي',
+  paidPrivateSlot: 'إضافة موعد خاص',
+};
+
 /** Steps the tutor cannot complete alone (handled by Shatir admin). */
 const ADMIN_MANAGED_STEPS = new Set(['specializations']);
 
@@ -115,7 +124,7 @@ export const TutorDashboardHome: React.FC<TutorDashboardHomeProps> = ({
     icon = <Sparkles {...ICON} />;
     title = nextStep.title;
     text = toArabicDigits(nextStep.statusText);
-    action = { label: nextStep.actionLabel, onClick: () => onStepAction(nextStep.key) };
+    action = { label: STEP_ACTION_LABELS[nextStep.key] || nextStep.actionLabel, onClick: () => onStepAction(nextStep.key) };
   } else if (missing.length > 0) {
     tone = 'blue';
     icon = <ShieldCheck {...ICON} />;
@@ -372,27 +381,6 @@ export const TutorDashboardHome: React.FC<TutorDashboardHomeProps> = ({
         </section>
       )}
 
-      {/* 5. Approved specializations (read-only) */}
-      {specializations.length > 0 && (
-        <section aria-label="تخصصاتك المعتمدة" className="bg-white rounded-3xl border border-[#E2E8F0] shadow-xs p-4 sm:p-5 space-y-3">
-          <div className="flex items-center gap-3.5">
-            <IconTile tone="blue">
-              <BookOpen {...ICON} />
-            </IconTile>
-            <div>
-              <h3 className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">تخصصاتك المعتمدة</h3>
-              <p className="text-xs text-[#64748B]">بتقدر تفتح مواعيد ومجموعات ليها</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {specializations.map((s) => (
-              <span key={s.id} className="px-3 py-1.5 rounded-full bg-[#F8FAFC] border border-[#E2E8F0] text-xs font-bold text-[#1F2A44]">
-                {s.label}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 };
