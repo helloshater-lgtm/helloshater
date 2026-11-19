@@ -21,6 +21,16 @@ import { AdminParentLeadsView } from './AdminParentLeadsView';
 import { AdminDirectTrialsView } from './AdminDirectTrialsView';
 import { DirectTrialBookingService } from '../../services/directTrialBookingService';
 import { TutorProfileView } from '../TutorProfileView';
+import { AdminConsoleService } from '../../services/adminConsoleService';
+import { AdminConsoleTab, AdminOverview } from '../../types/adminConsole';
+import { buildAdminHash, canAccessAdminTab, canEditPlatform, parseAdminHash } from '../../utils/adminConsole';
+import { AdminBottomNav, AdminMenuSheet, AdminSidebar, ADMIN_TAB_LABELS } from './console/AdminConsoleNav';
+import { AdminGlobalSearch, AdminSearchHit } from './console/AdminGlobalSearch';
+import { AdminTodayView } from './console/AdminTodayView';
+import { AdminParentsView } from './console/AdminParentsView';
+import { AdminQualityView } from './console/AdminQualityView';
+import { AdminActivityLogView } from './console/AdminActivityLogView';
+import { AdminTeamView } from './console/AdminTeamView';
 import {
   ShieldCheck,
   LogOut,
@@ -38,6 +48,7 @@ import {
   RotateCcw,
   RefreshCw,
   MessageCircle,
+  Menu,
 } from 'lucide-react';
 
 interface AdminDashboardViewProps {
@@ -48,16 +59,27 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   const [currentAdmin, setCurrentAdmin] = useState<AdminUser | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Top Nav Tab: 'tutors' | 'parent-leads' | 'direct-trials' | 'recent-edits' | 'applications' | 'classes' | 'statistics'
-  const [activeTab, setActiveTab] = useState<
-    | 'tutors'
-    | 'parent-leads'
-    | 'direct-trials'
-    | 'recent-edits'
-    | 'applications'
-    | 'classes'
-    | 'statistics'
-  >('tutors');
+  // Current page of the console (deep-linked as #admin/<tab>[/<id>]).
+  const initialRoute = parseAdminHash(typeof window !== 'undefined' ? window.location.hash : '');
+  const [activeTab, setActiveTabState] = useState<AdminConsoleTab>(initialRoute.tab || 'home');
+  const [selectedParentId, setSelectedParentId] = useState<string | null>(
+    initialRoute.tab === 'parents' ? initialRoute.id : null
+  );
+  const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<unknown>(null);
+
+  const setActiveTab = (tab: AdminConsoleTab, id: string | null = null) => {
+    setActiveTabState(tab);
+    if (tab !== 'parents') setSelectedParentId(null);
+    if (tab !== 'parent-leads') setFocusLeadId(null);
+    const hash = buildAdminHash(tab, id);
+    if (typeof window !== 'undefined' && window.location.hash !== hash) {
+      window.history.pushState(null, '', hash);
+    }
+  };
   const [pendingApplicationsCount, setPendingApplicationsCount] = useState<number>(0);
   const [newParentLeadsCount, setNewParentLeadsCount] = useState<number>(0);
   const [missingLinkTrialsCount, setMissingLinkTrialsCount] = useState<number>(0);
@@ -137,8 +159,62 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
     }
   };
 
+  const loadOverview = async () => {
+    setOverviewLoading(true);
+    try {
+      setOverview(await AdminConsoleService.getOverview());
+      setOverviewError(null);
+    } catch (err) {
+      setOverviewError(err);
+    } finally {
+      setOverviewLoading(false);
+    }
+  };
+
+  // Overview drives «النهارده», the nav badges and the tab title; refreshed every 2 minutes.
   useEffect(() => {
-    if (currentAdmin && currentMode === 'list') {
+    if (!currentAdmin) return;
+    loadOverview();
+    const timer = window.setInterval(loadOverview, 120000);
+    return () => window.clearInterval(timer);
+  }, [currentAdmin?.userId]);
+
+  // Tab title shows how many things are waiting, e.g. «(3) لوحة الإدارة».
+  useEffect(() => {
+    if (!currentAdmin || !overview) return;
+    const t = overview.todo;
+    const waiting = canEditPlatform(currentAdmin.role)
+      ? t.missingLinks + t.newLeads + t.pendingApplications + t.pendingDrafts
+      : 0;
+    const previous = document.title;
+    document.title = `${waiting > 0 ? `(${waiting}) ` : ''}لوحة الإدارة | شاطر كلاسيز`;
+    return () => {
+      document.title = previous;
+    };
+  }, [overview, currentAdmin?.role]);
+
+  // Browser back / forward between console pages.
+  useEffect(() => {
+    const onPop = () => {
+      const r = parseAdminHash(window.location.hash);
+      if (!window.location.hash.startsWith('#admin')) return;
+      setActiveTabState(r.tab || 'home');
+      setSelectedParentId(r.tab === 'parents' ? r.id : null);
+      setCurrentMode('list');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Support (read-only) users only see the pages their role allows.
+  useEffect(() => {
+    if (currentAdmin && !canAccessAdminTab(currentAdmin.role, activeTab)) {
+      setActiveTabState('home');
+    }
+  }, [currentAdmin?.role, activeTab]);
+
+  useEffect(() => {
+    if (currentAdmin && canEditPlatform(currentAdmin.role) && currentMode === 'list') {
       loadTutors();
       loadRecentEditsAndDrafts();
       AdminService.getParentLeads('new', 200)
@@ -156,7 +232,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
   }, [currentAdmin, currentMode]);
 
   useEffect(() => {
-    if (currentAdmin && activeTab === 'recent-edits') {
+    if (currentAdmin && canEditPlatform(currentAdmin.role) && activeTab === 'recent-edits') {
       loadRecentEditsAndDrafts();
     }
   }, [currentAdmin, activeTab]);
@@ -266,6 +342,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
     await AdminAuthService.signOut();
     setCurrentAdmin(null);
     setCurrentMode('list');
+    setOverview(null);
+    setMenuOpen(false);
+    setActiveTabState('home');
   };
 
   const renderRecentTutorProfileEditsSection = () => (
@@ -639,245 +718,151 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
     );
   }
 
-  return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
-      {/* Admin Dashboard Header */}
-      <header className="bg-white rounded-2xl border border-[#E2E8F0] p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#0D4E8B] text-white flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-['Cairo'] text-lg font-bold text-[#1F2A44]">
-                لوحة إدارة شاطر كلاسيز
-              </h1>
-              <span className="text-[11px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded font-mono font-bold">
-                {currentAdmin.role}
-              </span>
-            </div>
-            <p className="text-xs text-[#64748B]">
-              المسؤول: <span dir="ltr">{currentAdmin.email}</span>
-            </p>
-          </div>
-        </div>
+  const role = currentAdmin.role;
+  const canEdit = canEditPlatform(role);
+  const todo = overview?.todo;
+  const badges: Partial<Record<AdminConsoleTab, number>> = {
+    'direct-trials': todo ? todo.missingLinks : missingLinkTrialsCount,
+    'parent-leads': todo ? todo.newLeads : newParentLeadsCount,
+    applications: todo ? todo.pendingApplications : pendingApplicationsCount,
+    'recent-edits': todo ? todo.pendingDrafts : pendingDrafts.length,
+  };
+  if (!canEdit) {
+    for (const k of Object.keys(badges) as AdminConsoleTab[]) if (!canAccessAdminTab(role, k)) delete badges[k];
+  }
 
-        {/* Top Header Actions */}
-        <div className="flex items-center gap-2 self-end sm:self-auto">
-          <button
-            type="button"
-            onClick={onNavigateHome}
-            className="px-3 py-2 rounded-xl text-xs font-bold text-[#64748B] hover:text-[#0D4E8B] hover:bg-[#F0F6FD] transition-colors flex items-center gap-1.5 cursor-pointer"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span>عرض الموقع العام</span>
-          </button>
+  const selectTab = (tab: AdminConsoleTab) => {
+    setActiveTab(tab);
+    setCurrentMode('list');
+    setGlobalError(null);
+  };
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-            title="تسجيل الخروج"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>خروج</span>
-          </button>
-        </div>
-      </header>
+  const openSearchHit = (hit: AdminSearchHit) => {
+    setGlobalError(null);
+    if (hit.type === 'parent') {
+      setActiveTab('parents', hit.id);
+      setSelectedParentId(hit.id);
+      setCurrentMode('list');
+    } else if (hit.type === 'tutor' && canEdit) {
+      handleEditTutor(hit.id);
+    } else if (hit.type === 'lead' && canEdit) {
+      setActiveTab('parent-leads');
+      setFocusLeadId(hit.id);
+      setCurrentMode('list');
+    } else if (hit.type === 'application' && canEdit) {
+      setActiveTab('applications');
+      setSelectedApplicationId(hit.id);
+      setCurrentMode('app-detail');
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-      {/* Main Section Navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-[#E2E8F0] pb-2">
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('tutors');
-            setCurrentMode('list');
-          }}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'tutors'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>إدارة المعلمين ({tutorsList.length})</span>
-        </button>
+  const logExport = (page: string, rows: number) =>
+    AdminConsoleService.logEvent('export_csv', `صدّر ${ADMIN_TAB_LABELS[page as AdminConsoleTab] || page} (${rows})`, { page, rows });
 
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('recent-edits');
-            setCurrentMode('list');
-          }}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'recent-edits'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
-          }`}
-        >
-          <History className="w-4 h-4" />
-          <span>آخر تعديلات المعلمين</span>
-          {pendingDrafts.length > 0 && (
-            <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
-              {pendingDrafts.length}
-            </span>
-          )}
-        </button>
+  const navProps = {
+    role,
+    activeTab,
+    onSelect: selectTab,
+    badges,
+  };
 
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('applications');
-            setCurrentMode('list');
-          }}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'applications'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
-          }`}
-        >
-          <FileCheck2 className="w-4 h-4" />
-          <span>طلبات الانضمام</span>
-          {pendingApplicationsCount > 0 && (
-            <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
-              {pendingApplicationsCount}
-            </span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('parent-leads');
-            setCurrentMode('list');
-          }}
-          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'parent-leads'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
-          }`}
-        >
-          <MessageCircle className="w-4 h-4" />
-          <span>طلبات جديدة</span>
-          {newParentLeadsCount > 0 && (
-            <span className="w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
-              {newParentLeadsCount}
-            </span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('direct-trials');
-            setCurrentMode('list');
-          }}
-          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'direct-trials'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>الحجوزات التجريبية</span>
-          {missingLinkTrialsCount > 0 && (
-            <span
-              className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center"
-              title="حجوزات ينقصها رابط الحصة"
-            >
-              {missingLinkTrialsCount}
-            </span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('classes');
-            setCurrentMode('list');
-          }}
-          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'classes'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>الحصص والمجموعات</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('statistics');
-            setCurrentMode('list');
-          }}
-          className={`min-h-[44px] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold font-['Cairo'] transition-all flex items-center gap-2 cursor-pointer ${
-            activeTab === 'statistics'
-              ? 'bg-[#0D4E8B] text-white shadow-xs'
-              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-slate-100'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span>الإحصائيات</span>
-        </button>
-      </div>
-
-      {/* Global Error Banner */}
-      {globalError && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2.5">
-          <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-          <div className="space-y-0.5">
-            <span className="font-bold block">تنبيه:</span>
-            <span className="whitespace-pre-line leading-relaxed">{globalError}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Mode Switcher */}
-      {isEditorLoading ? (
-        <div className="bg-white p-12 rounded-2xl border border-[#E2E8F0] text-center flex flex-col items-center justify-center gap-3">
+  const renderPage = () => {
+    if (isEditorLoading) {
+      return (
+        <div className="bg-white p-12 rounded-3xl border border-[#E2E8F0] text-center flex flex-col items-center justify-center gap-3">
           <Loader2 className="w-8 h-8 text-[#0D4E8B] animate-spin" />
-          <p className="text-xs sm:text-sm text-[#64748B] font-medium">جاري تحميل بيانات المعلم بالكامل...</p>
+          <p className="text-sm text-[#64748B] font-medium">جاري تحميل بيانات المعلم…</p>
         </div>
-      ) : activeTab === 'recent-edits' ? (
-        renderRecentTutorProfileEditsSection()
-      ) : activeTab === 'statistics' ? (
-        <AdminStatisticsView
-          onEditTutor={(tutorId) => {
-            setActiveTab('tutors');
-            handleEditTutor(tutorId);
-          }}
-          onNavigateTab={(tab) => {
-            setActiveTab(tab);
-            setCurrentMode('list');
-          }}
-        />
-      ) : activeTab === 'parent-leads' ? (
-        <AdminParentLeadsView
-          tutorsList={tutorsList}
-          onUpdateNewLeadsCount={(count) => setNewParentLeadsCount(count)}
-          onOpenBookingFromLead={(draft) => {
-            setLeadBookingDraft(draft);
-            setActiveTab('classes');
-            setCurrentMode('list');
-          }}
-        />
-      ) : activeTab === 'direct-trials' ? (
-        <AdminDirectTrialsView
-          tutorsList={tutorsList}
-          onCountChange={(counts) => setMissingLinkTrialsCount(counts.missingLink)}
-        />
-      ) : activeTab === 'classes' ? (
-        <AdminClassesManagementView
-          initialBookingDraft={leadBookingDraft}
-          onClearInitialBookingDraft={() => setLeadBookingDraft(null)}
-          onNotify={(msg, type) => {
-            if (type === 'error') setGlobalError(msg);
-          }}
-        />
-      ) : activeTab === 'applications' ? (
-        currentMode === 'app-detail' && selectedApplicationId ? (
+      );
+    }
+    switch (activeTab) {
+      case 'home':
+        return (
+          <AdminTodayView
+            role={role}
+            overview={overview}
+            loading={overviewLoading}
+            error={overviewError}
+            onRefresh={loadOverview}
+            onNavigate={selectTab}
+            onOpenParent={(id) => {
+              setActiveTab('parents', id);
+              setSelectedParentId(id);
+            }}
+          />
+        );
+      case 'parents':
+        return (
+          <AdminParentsView
+            selectedUserId={selectedParentId}
+            onSelect={(id) => {
+              setSelectedParentId(id);
+              setActiveTab('parents', id);
+              if (id) window.scrollTo({ top: 0 });
+            }}
+            canOpenLeads={canEdit}
+            onOpenLead={(id) => {
+              setActiveTab('parent-leads');
+              setFocusLeadId(id);
+            }}
+          />
+        );
+      case 'quality':
+        return <AdminQualityView onOpenTutor={canEdit ? (id) => handleEditTutor(id) : undefined} />;
+      case 'activity':
+        return <AdminActivityLogView />;
+      case 'team':
+        return <AdminTeamView />;
+      case 'recent-edits':
+        return renderRecentTutorProfileEditsSection();
+      case 'statistics':
+        return (
+          <AdminStatisticsView
+            onEditTutor={(tutorId) => {
+              setActiveTab('tutors');
+              handleEditTutor(tutorId);
+            }}
+            onNavigateTab={(tab) => {
+              setActiveTab(tab);
+              setCurrentMode('list');
+            }}
+          />
+        );
+      case 'parent-leads':
+        return (
+          <AdminParentLeadsView
+            tutorsList={tutorsList}
+            focusLeadId={focusLeadId}
+            onExportCsv={(leads) => logExport('parent-leads', leads.length)}
+            onUpdateNewLeadsCount={(count) => setNewParentLeadsCount(count)}
+            onOpenBookingFromLead={(draft) => {
+              setLeadBookingDraft(draft);
+              setActiveTab('classes');
+              setCurrentMode('list');
+            }}
+          />
+        );
+      case 'direct-trials':
+        return (
+          <AdminDirectTrialsView
+            tutorsList={tutorsList}
+            onExportCsv={(rows) => logExport('direct-trials', rows)}
+            onCountChange={(counts) => setMissingLinkTrialsCount(counts.missingLink)}
+          />
+        );
+      case 'classes':
+        return (
+          <AdminClassesManagementView
+            initialBookingDraft={leadBookingDraft}
+            onClearInitialBookingDraft={() => setLeadBookingDraft(null)}
+            onNotify={(msg, type) => {
+              if (type === 'error') setGlobalError(msg);
+            }}
+          />
+        );
+      case 'applications':
+        return currentMode === 'app-detail' && selectedApplicationId ? (
           <AdminApplicationDetailView
             applicationId={selectedApplicationId}
             onBack={() => {
@@ -890,14 +875,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
             }}
             onDecisionCompleted={() => {
               loadTutors();
-              AdminService.getApplications(undefined)
-                .then((apps) => {
-                  const count = apps.filter(
-                    (a) => a.status !== 'draft' && (a.status === 'submitted' || a.status === 'pending_review' || a.status === 'interview_scheduled' || a.status === 'needs_info')
-                  ).length;
-                  setPendingApplicationsCount(count);
-                })
-                .catch(() => {});
+              loadOverview();
             }}
           />
         ) : (
@@ -908,9 +886,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
             }}
             onUpdatePendingCount={(count) => setPendingApplicationsCount(count)}
           />
-        )
-      ) : currentMode === 'list' ? (
-        <div className="space-y-8">
+        );
+      case 'tutors':
+      default:
+        return currentMode === 'list' ? (
           <AdminTutorsListView
             tutors={tutorsList}
             isLoading={isTutorsLoading}
@@ -920,24 +899,68 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
             onPreviewTutor={handlePreviewTutor}
             onTogglePublish={handleTogglePublish}
           />
-          {renderRecentTutorProfileEditsSection()}
+        ) : (
+          <AdminTutorEditorView
+            initialDetail={editorDetail}
+            isNew={currentMode === 'new'}
+            initialTab={editorInitialTab}
+            onBack={() => {
+              setCurrentMode('list');
+              loadTutors();
+            }}
+            onSaved={() => {
+              loadTutors();
+            }}
+            onPreview={(id) => handlePreviewTutor(id)}
+          />
+        );
+    }
+  };
+
+  const searchTypes: AdminSearchHit['type'][] = canEdit ? ['parent', 'tutor', 'lead', 'application'] : ['parent'];
+
+  return (
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-8 pb-28 lg:pb-10">
+      <div className="flex gap-6 items-start">
+        <AdminSidebar {...navProps} email={currentAdmin.email} onNavigateHome={onNavigateHome} onLogout={handleLogout} />
+
+        <div className="flex-1 min-w-0 space-y-5">
+          {/* Top bar: menu (mobile) + one search for everything */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMenuOpen(true)}
+              aria-label="فتح قائمة الإدارة"
+              className="lg:hidden w-12 h-12 shrink-0 rounded-2xl border border-[#E2E8F0] bg-white shadow-xs flex items-center justify-center text-[#1F2A44] cursor-pointer"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <AdminGlobalSearch onOpen={openSearchHit} allowedTypes={searchTypes} />
+          </div>
+
+          {globalError && (
+            <div role="alert" className="p-4 rounded-2xl bg-rose-50 ring-1 ring-rose-200 text-rose-800 text-sm flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <span className="whitespace-pre-line leading-relaxed flex-1">{globalError}</span>
+              <button type="button" onClick={() => setGlobalError(null)} aria-label="إخفاء" className="text-xs font-bold underline cursor-pointer">
+                إخفاء
+              </button>
+            </div>
+          )}
+
+          {renderPage()}
         </div>
-      ) : (
-        <AdminTutorEditorView
-          initialDetail={editorDetail}
-          isNew={currentMode === 'new'}
-          initialTab={editorInitialTab}
-          onBack={() => {
-            setCurrentMode('list');
-            loadTutors();
-          }}
-          onSaved={(savedId) => {
-            loadTutors();
-          }}
-          onPreview={(id) => handlePreviewTutor(id)}
-        />
-      )}
+      </div>
+
+      <AdminBottomNav {...navProps} onOpenMenu={() => setMenuOpen(true)} />
+      <AdminMenuSheet
+        {...navProps}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        email={currentAdmin.email}
+        onNavigateHome={onNavigateHome}
+        onLogout={handleLogout}
+      />
     </div>
   );
 };
-

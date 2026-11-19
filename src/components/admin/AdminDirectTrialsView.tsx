@@ -9,6 +9,7 @@ import {
   getDirectTrialStatusMeta,
 } from '../../utils/directTrialBooking';
 import { toArabicDigits } from '../../utils/formatters';
+import { buildCsv, csvFileName, downloadCsv } from '../../utils/csvExport';
 import {
   CalendarCheck2,
   RefreshCw,
@@ -29,6 +30,8 @@ import {
 interface AdminDirectTrialsViewProps {
   tutorsList: AdminTutorListItem[];
   onCountChange?: (counts: { total: number; missingLink: number; confirmed: number }) => void;
+  /** Called after the CSV export so it can be written to the activity log. */
+  onExportCsv?: (rows: number) => void;
 }
 
 type AdminTrialFilter = 'all' | 'missing_link' | 'confirmed' | 'completed' | 'cancelled';
@@ -36,6 +39,7 @@ type AdminTrialFilter = 'all' | 'missing_link' | 'confirmed' | 'completed' | 'ca
 export const AdminDirectTrialsView: React.FC<AdminDirectTrialsViewProps> = ({
   tutorsList,
   onCountChange,
+  onExportCsv,
 }) => {
   const [bookings, setBookings] = useState<AdminDirectTrialBooking[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -161,15 +165,37 @@ export const AdminDirectTrialsView: React.FC<AdminDirectTrialsViewProps> = ({
             </div>
           </div>
 
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+          <button
+            type="button"
+            onClick={() => {
+              const csv = buildCsv(filteredBookings, [
+                { header: 'الميعاد', value: (b) => { const f = formatBookingInOwnTimezone(b.startsAt, b.endsAt, b.timezone); return `${f.fullDateLabel} ${f.timeRangeLabel}`.trim(); } },
+                { header: 'المعلم', value: (b) => b.tutorName || b.tutorId },
+                { header: 'وليّ الأمر', value: (b) => b.guardianName },
+                { header: 'واتساب', value: (b) => b.guardianWhatsApp },
+                { header: 'الحالة', value: (b) => getDirectTrialStatusMeta(b.status).label },
+                { header: 'رابط الحصة', value: (b) => b.meetingUrl },
+                { header: 'تاريخ الحجز', value: (b) => b.createdAt },
+              ]);
+              downloadCsv(csvFileName('trial-bookings'), csv);
+              onExportCsv?.(filteredBookings.length);
+            }}
+            disabled={isLoading || filteredBookings.length === 0}
+            className="px-3.5 py-2 rounded-xl border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-[#1F2A44] text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+          >
+            تصدير Excel
+          </button>
           <button
             type="button"
             onClick={loadBookings}
             disabled={isLoading}
-            className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 self-end sm:self-auto"
+            className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1F2A44] text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>تحديث القائمة</span>
           </button>
+          </div>
         </div>
 
         {/* Summary KPI Strip */}

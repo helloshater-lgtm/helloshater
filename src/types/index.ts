@@ -247,7 +247,7 @@ export interface TutorAvailableSlot {
 export interface AdminUser {
   userId: string;
   email: string;
-  role: 'super_admin' | 'admin';
+  role: 'super_admin' | 'admin' | 'support';
   isActive: boolean;
   createdAt?: string;
 }
