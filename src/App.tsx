@@ -793,14 +793,14 @@ export default function App() {
         whatsappAnalyticsSource="help_me_choose_cta"
       />
 
-      {/* Persistent Floating WhatsApp Action Button */}
-      <WhatsAppFloatingButton
+      {/* Persistent Floating WhatsApp Action Button (not inside the admin console) */}
+      {currentView !== 'admin' && <WhatsAppFloatingButton
         hideOnMobileSticky={
           currentView === 'tutor-profile' ||
           currentView === 'tutor-dashboard' ||
           currentView === 'trial-booking'
         }
-      />
+      />}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { AdminUser } from '../types';
+import { AdminConsoleService } from './adminConsoleService';
 
 export interface AdminAuthResult {
   success: boolean;
@@ -82,6 +83,43 @@ export const AdminAuthService = {
   },
 
   /**
+   * Team members can sign in with a one-time code sent to their email
+   * (no password needed). Same email-code flow parents use.
+   */
+  async sendLoginCode(email: string): Promise<void> {
+    const clean = String(email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
+      throw new Error('اكتب إيميل صحيح.');
+    }
+    const { error } = await supabase.auth.signInWithOtp({
+      email: clean,
+      options: { emailRedirectTo: `${window.location.origin}/#admin` },
+    });
+    if (error) {
+      const lower = String(error.message || '').toLowerCase();
+      if (lower.includes('rate') || (error as any).status === 429) {
+        throw new Error('طلبات كتير ورا بعض. استنى دقيقة وجرّب تاني.');
+      }
+      throw new Error('تعذر إرسال الكود حاليًا. حاول تاني.');
+    }
+  },
+
+  /** After the email code is verified: accept a pending invite (if any), then check access. */
+  async completeCodeSignIn(): Promise<AdminAuthResult> {
+    await AdminConsoleService.claimInvite();
+    const admin = await AdminAuthService.getCurrentAdmin();
+    if (!admin) {
+      await supabase.auth.signOut();
+      return {
+        success: false,
+        error: 'الإيميل ده مش ضمن فريق الإدارة. اطلب من المدير العام يضيفك من «الفريق والصلاحيات».',
+      };
+    }
+    AdminConsoleService.logEvent('sign_in', 'دخل لوحة الإدارة بكود الإيميل');
+    return { success: true, admin };
+  },
+
+  /**
    * Sign out current admin
    */
   async signOut(): Promise<void> {
@@ -138,8 +176,10 @@ export const AdminAuthService = {
         return;
       }
 
+      // A signed-in user without staff access yet (e.g. an invite being claimed
+      // right after the email code) must not log the console out mid-flow.
       const admin = await AdminAuthService.getCurrentAdmin();
-      callback(admin);
+      if (admin) callback(admin);
     });
 
     return () => {

@@ -6,6 +6,7 @@ import {
   AdminLeadBookingDraft,
 } from '../../types';
 import { AdminService, AdminTutorListItem } from '../../services/adminService';
+import { buildCsv, csvFileName, downloadCsv } from '../../utils/csvExport';
 import {
   MessageCircle,
   RefreshCw,
@@ -25,6 +26,10 @@ interface AdminParentLeadsViewProps {
   tutorsList: AdminTutorListItem[];
   onOpenBookingFromLead: (draft: AdminLeadBookingDraft) => void;
   onUpdateNewLeadsCount?: (count: number) => void;
+  /** Opened from the global search: scroll to this lead and highlight it. */
+  focusLeadId?: string | null;
+  /** Called after the CSV export so it can be written to the activity log. */
+  onExportCsv?: (leads: AdminParentLeadRecord[]) => void;
 }
 
 const STATUS_LABELS: Record<ParentLeadStatus, string> = {
@@ -83,6 +88,8 @@ export const AdminParentLeadsView: React.FC<AdminParentLeadsViewProps> = ({
   tutorsList,
   onOpenBookingFromLead,
   onUpdateNewLeadsCount,
+  focusLeadId,
+  onExportCsv,
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | ParentLeadStatus>('all');
   const [allLeadsForCounts, setAllLeadsForCounts] = useState<AdminParentLeadRecord[]>([]);
@@ -148,6 +155,37 @@ export const AdminParentLeadsView: React.FC<AdminParentLeadsViewProps> = ({
   useEffect(() => {
     loadLeadsAndStats(statusFilter);
   }, [statusFilter]);
+
+  // Opened from the global search: show all statuses, then scroll to the lead.
+  useEffect(() => {
+    if (focusLeadId && statusFilter !== 'all') setStatusFilter('all');
+  }, [focusLeadId]);
+  useEffect(() => {
+    if (!focusLeadId || !displayedLeads.some((l) => l.id === focusLeadId)) return;
+    const t = window.setTimeout(() => {
+      document.getElementById(`lead-${focusLeadId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+    return () => window.clearTimeout(t);
+  }, [focusLeadId, displayedLeads]);
+
+  const handleExportCsv = () => {
+    const csv = buildCsv(displayedLeads, [
+      { header: 'الكود', value: (l) => l.referenceCode },
+      { header: 'التاريخ', value: (l) => l.createdAt },
+      { header: 'وليّ الأمر', value: (l) => l.guardianName },
+      { header: 'الموبايل', value: (l) => `${l.countryCode || ''}${l.phone || ''}` },
+      { header: 'سن الطفل', value: (l) => l.childAge },
+      { header: 'نوع الطلب', value: (l) => l.requestType },
+      { header: 'المسار', value: (l) => l.track },
+      { header: 'المعلم', value: (l) => l.tutorName || l.tutorId },
+      { header: 'الحالة', value: (l) => STATUS_LABELS[l.status] || l.status },
+      { header: 'المصدر', value: (l) => l.utmSource },
+      { header: 'الحملة', value: (l) => l.utmCampaign },
+      { header: 'ملاحظات', value: (l) => l.adminNotes },
+    ]);
+    downloadCsv(csvFileName('parent-leads'), csv);
+    onExportCsv?.(displayedLeads);
+  };
 
   const countsByStatus = useMemo(() => {
     const counts: Record<'all' | ParentLeadStatus, number> = {
@@ -350,6 +388,14 @@ export const AdminParentLeadsView: React.FC<AdminParentLeadsViewProps> = ({
 
           {/* Status Filter Pills with Counts */}
           <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={displayedLeads.length === 0}
+              className="min-h-[36px] px-3 rounded-xl border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-xs font-bold text-[#1F2A44] cursor-pointer disabled:opacity-50"
+            >
+              تصدير Excel
+            </button>
             {filterButtons.map((btn) => {
               const isSelected = statusFilter === btn.key;
               const count = countsByStatus[btn.key] ?? 0;
@@ -407,7 +453,10 @@ export const AdminParentLeadsView: React.FC<AdminParentLeadsViewProps> = ({
               return (
                 <div
                   key={lead.id}
-                  className="rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC]/60 p-4 sm:p-5 space-y-4"
+                  id={`lead-${lead.id}`}
+                  className={`rounded-2xl border bg-[#F8FAFC]/60 p-4 sm:p-5 space-y-4 scroll-mt-28 ${
+                    focusLeadId === lead.id ? 'border-[#0D4E8B] ring-4 ring-[#0D4E8B]/10' : 'border-[#E2E8F0]'
+                  }`}
                 >
                   {/* Top Row: Reference Code, Date, Status Badge, WhatsApp Opened Badge */}
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E2E8F0]">
