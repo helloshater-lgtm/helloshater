@@ -1496,580 +1496,257 @@ export const TutorProfileView: React.FC<TutorProfileViewProps> = ({
           <div id="booking-widget-section" className="space-y-4 scroll-mt-24">
             <section
               aria-label="الحصص الخاصة والمجموعات"
-              className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-[#E2E8F0] shadow-sm space-y-4"
+              className="bg-white rounded-3xl p-5 sm:p-6 border border-[#E2E8F0] shadow-xs space-y-4"
             >
-              {/* Section Header + Timezone Indicator */}
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <h2 className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#1F2A44] flex items-center gap-2">
-                  <CalendarDays className="w-5 h-5 text-[#0D4E8B]" />
-                  <span>الحصص الخاصة والمجموعات</span>
-                </h2>
-                <span className="text-[11px] font-bold text-[#0D4E8B] bg-[#F0F5FA] px-2.5 py-1 rounded-lg border border-[#D1DCFE]">
-                  {activeTimezoneLabel}
-                </span>
+              <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                <h2 className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">الحصص الخاصة والمجموعات</h2>
+                <span className="text-xs text-[#64748B]">{activeTimezoneLabel}</span>
               </div>
-
-              {isPreviewMode && (
-                <div className="p-3 rounded-xl bg-[#F0F5FA] border border-[#D1DCFE] space-y-1.5 text-xs">
-                  <div className="font-bold text-[#0D4E8B] flex items-center justify-between flex-wrap gap-1">
-                    <span>ملخص مواعيدك المحفوظة في المعاينة الخاصة:</span>
-                    <span>
-                      {toArabicDigits(validTrialSlots.length)} تجريبي •{' '}
-                      {toArabicDigits(validPrivateSlots.length)} خاص •{' '}
-                      {toArabicDigits(publicGroups.length)} مجموعة
-                    </span>
-                  </div>
-                  {validPrivateSlots.length > 0 && (
-                    <div className="text-[11px] text-[#1F2A44] flex flex-wrap items-center gap-1.5">
-                      <span>أقرب حصة خاصة محفوظة:</span>
-                      <button
-                        type="button"
-                        onClick={() => setActiveBookingTab('private')}
-                        className="font-bold text-[#0D4E8B] underline cursor-pointer"
-                      >
-                        {formatSlotDateArabic(validPrivateSlots[0].slotDate).dayName}{' '}
-                        {formatSlotDateArabic(validPrivateSlots[0].slotDate).shortDate} —{' '}
-                        {formatTimeArabic12h(validPrivateSlots[0].startTime)} بسعر{' '}
-                        {validPrivateSlots[0].priceAmount} {validPrivateSlots[0].currency}
-                      </button>
-                    </div>
-                  )}
-                  {isUnpublishedProfile && (
-                    <p className="text-[11px] text-amber-800 font-bold">
-                      ملفك قيد التجهيز وغير ظاهر لأولياء الأمور (الحجز متوقف للجمهور قبل النشر).
-                    </p>
-                  )}
-                </div>
-              )}
 
               {previewBookingNotice && (
-                <div
-                  role="status"
-                  className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold leading-relaxed"
-                >
+                <p role="status" className="p-3 rounded-2xl bg-amber-50 text-amber-900 text-xs font-bold leading-relaxed">
                   {previewBookingNotice}
-                </div>
+                </p>
               )}
 
-              {/* 3 Clear Tabs: تجربة مجانية | حصة خاصة | مجموعات */}
-              <div
-                role="tablist"
-                aria-label="خيارات الحجز"
-                className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#F8F9FC] border border-[#E2E8F0]"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeBookingTab === 'private'}
-                  onClick={() => setActiveBookingTab('private')}
-                  className={`py-2 px-2 rounded-lg font-['Cairo'] text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
-                    activeBookingTab === 'private'
-                      ? 'bg-[#0D4E8B] text-white shadow-xs'
-                      : 'text-[#535E7B] hover:text-[#1F2A44]'
-                  }`}
-                >
-                  <span>حصة خاصة</span>
-                  <span
-                    className={`text-[10px] ${
-                      activeBookingTab === 'private' ? 'text-blue-100' : 'text-[#64748B]'
-                    }`}
-                  >
-                    {validPrivateSlots.length > 0
-                      ? `${toArabicDigits(validPrivateSlots.length)} موعد`
-                      : 'فردي ١:١'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeBookingTab === 'groups'}
-                  onClick={() => setActiveBookingTab('groups')}
-                  className={`py-2 px-2 rounded-lg font-['Cairo'] text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
-                    activeBookingTab === 'groups'
-                      ? 'bg-[#0D4E8B] text-white shadow-xs'
-                      : 'text-[#535E7B] hover:text-[#1F2A44]'
-                  }`}
-                >
-                  <span>مجموعات</span>
-                  <span
-                    className={`text-[10px] ${
-                      activeBookingTab === 'groups' ? 'text-blue-100' : 'text-[#64748B]'
-                    }`}
-                  >
-                    {publicGroups.length > 0
-                      ? `${toArabicDigits(publicGroups.length)} متاحة`
-                      : 'صغيرة'}
-                  </span>
-                </button>
+              <div role="tablist" aria-label="خيارات الحجز" className="grid grid-cols-2 gap-1 p-1 rounded-2xl bg-[#EEF2F7]">
+                {(
+                  [
+                    { key: 'private', label: 'حصة خاصة', count: validPrivateSlots.length },
+                    { key: 'groups', label: 'مجموعة', count: publicGroups.length },
+                  ] as const
+                ).map((t) => {
+                  const active = activeBookingTab === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setActiveBookingTab(t.key)}
+                      className={`h-11 rounded-xl font-['Cairo'] text-sm transition-colors cursor-pointer ${
+                        active ? 'bg-white text-[#0D4E8B] font-extrabold shadow-xs' : 'text-[#475569] font-bold'
+                      }`}
+                    >
+                      {t.label}
+                      {t.count > 0 && <span className="text-xs font-bold text-[#64748B]"> ({toArabicDigits(t.count)})</span>}
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* =============================================================== */}
-              {/* TAB 2: حصة خاصة (Paid Private 1:1 Sessions with Alternatives) */}
-              {/* =============================================================== */}
+              {/* ---------------- Private 1:1 ---------------- */}
               {activeBookingTab === 'private' && (
                 <div className="space-y-4">
                   {isLoadingOffers ? (
-                    <div className="py-8 flex flex-col items-center justify-center gap-2 text-xs text-[#64748B]">
-                      <Loader2 className="w-6 h-6 text-[#0D4E8B] animate-spin" />
-                      <span>جاري تحميل مواعيد الحصص الخاصة...</span>
+                    <div className="py-6 flex justify-center">
+                      <Loader2 className="w-5 h-5 text-[#0D4E8B] animate-spin" />
                     </div>
                   ) : availablePrivateDates.length > 0 ? (
                     <>
-                      {/* Step 1: Available Days Strip */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-[#1F2A44]">
-                            ١. اختر اليوم المتاح ({toArabicDigits(availablePrivateDates.length)} أيام):
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {availablePrivateDates.length > DAYS_WINDOW_SIZE && (
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={privateDayWindowStart === 0}
-                                  onClick={() =>
-                                    setPrivateDayWindowStart((prev) => Math.max(0, prev - 1))
-                                  }
-                                  aria-label="الأيام السابقة"
-                                  className="p-1 rounded-lg border border-[#E2E8F0] text-[#1F2A44] disabled:opacity-35 hover:bg-[#F8F9FC] cursor-pointer"
-                                >
-                                  <ChevronRight className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    privateDayWindowStart + DAYS_WINDOW_SIZE >=
-                                    availablePrivateDates.length
-                                  }
-                                  onClick={() =>
-                                    setPrivateDayWindowStart((prev) =>
-                                      Math.min(
-                                        availablePrivateDates.length - DAYS_WINDOW_SIZE,
-                                        prev + 1
-                                      )
-                                    )
-                                  }
-                                  aria-label="الأيام التالية"
-                                  className="p-1 rounded-lg border border-[#E2E8F0] text-[#1F2A44] disabled:opacity-35 hover:bg-[#F8F9FC] cursor-pointer"
-                                >
-                                  <ChevronLeft className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
+                      <p className="text-sm text-[#475569]">
+                        حصة فردية لطفلك بس، {toArabicDigits(tutor.sessionDurationMinutes || 50)} دقيقة. اختار المعاد اللي يناسبك وفريق شاطر هيأكده معاك.
+                      </p>
+                      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1" aria-label="أيام الحصص الخاصة">
+                        {availablePrivateDates.map((dateStr) => {
+                          const info = formatSlotDateArabic(dateStr);
+                          const count = (privateSlotsByDate.get(dateStr) || []).length;
+                          const active = dateStr === selectedPrivateDate;
+                          return (
                             <button
+                              key={dateStr}
                               type="button"
-                              onClick={() => setShowPrivateMiniCalendar((prev) => !prev)}
-                              className="px-2 py-1 rounded-lg border border-[#E2E8F0] bg-[#F8F9FC] hover:bg-[#F0F5FA] text-[11px] font-bold text-[#0D4E8B] flex items-center gap-1 cursor-pointer"
+                              aria-pressed={active}
+                              onClick={() => handleSelectPrivateDay(dateStr)}
+                              className={`shrink-0 w-[84px] py-2.5 rounded-2xl border-2 flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
+                                active ? 'border-[#0D4E8B] bg-[#EBF3FC] text-[#0D4E8B]' : 'border-[#E2E8F0] text-[#1F2A44] hover:border-[#94A3B8]'
+                              }`}
                             >
-                              <Calendar className="w-3 h-3" />
-                              <span>{showPrivateMiniCalendar ? 'إخفاء التقويم' : 'كل الأيام'}</span>
+                              <span className="text-xs font-bold">{info.relativeBadge || info.dayName}</span>
+                              <span className="font-['Cairo'] text-sm font-extrabold">{info.shortDate}</span>
+                              <span className="text-[11px] text-[#64748B]">{toArabicDigits(count)} موعد</span>
                             </button>
-                          </div>
-                        </div>
+                          );
+                        })}
+                      </div>
 
-                        {showPrivateMiniCalendar && (
-                          <div className="p-3 rounded-xl bg-[#F8F9FC] border border-[#D1DCFE] space-y-2">
-                            <span className="text-[11px] font-bold text-[#0D4E8B] block">
-                              أيام الحصص الخاصة المتاحة:
-                            </span>
-                            <div className="grid grid-cols-3 gap-1.5 max-h-40 overflow-y-auto">
-                              {availablePrivateDates.map((dStr) => {
-                                const info = formatSlotDateArabic(dStr);
-                                const isSel = dStr === selectedPrivateDate;
-                                return (
-                                  <button
-                                    key={dStr}
-                                    type="button"
-                                    onClick={() => handleSelectPrivateDay(dStr)}
-                                    className={`p-2 rounded-lg border text-right text-[11px] font-bold transition-all cursor-pointer ${
-                                      isSel
-                                        ? 'bg-[#0D4E8B] text-white border-[#0D4E8B]'
-                                        : 'bg-white text-[#1F2A44] border-[#E2E8F0] hover:border-[#0D4E8B]'
-                                    }`}
-                                  >
-                                    <div className="truncate">{info.dayName}</div>
-                                    <div
-                                      className={`text-[10px] ${
-                                        isSel ? 'text-blue-100' : 'text-[#64748B]'
-                                      }`}
-                                    >
-                                      {info.shortDate}
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                          {visiblePrivateDates.map((dateStr) => {
-                            const info = formatSlotDateArabic(dateStr);
-                            const count = (privateSlotsByDate.get(dateStr) || []).length;
-                            const isSelected = dateStr === selectedPrivateDate;
+                      {selectedPrivateDate && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" aria-label="أوقات الحصص الخاصة">
+                          {(privateSlotsByDate.get(selectedPrivateDate) || []).map((slot) => {
+                            const active = slot.id === selectedPrivateSlotId;
                             return (
                               <button
-                                key={dateStr}
+                                key={slot.id}
                                 type="button"
-                                onClick={() => handleSelectPrivateDay(dateStr)}
-                                className={`py-2 px-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
-                                    : 'bg-[#F8F9FC] text-[#1F2A44] border-[#E2E8F0] hover:border-[#0D4E8B]/50'
+                                aria-pressed={active}
+                                data-private-slot={slot.id}
+                                onClick={() => handleSelectPrivateTime(slot)}
+                                className={`h-12 rounded-2xl border-2 font-['Cairo'] text-base font-extrabold cursor-pointer transition-colors ${
+                                  active ? 'border-[#0D4E8B] bg-[#0D4E8B] text-white' : 'border-[#E2E8F0] text-[#1F2A44] hover:border-[#0D4E8B]/50'
                                 }`}
                               >
-                                <div className="font-['Cairo'] text-xs font-bold truncate">
-                                  {info.dayName}
-                                </div>
-                                <div
-                                  className={`text-[11px] font-medium ${
-                                    isSelected ? 'text-blue-100' : 'text-[#535E7B]'
-                                  }`}
-                                >
-                                  {info.shortDate}
-                                </div>
-                                <div
-                                  className={`text-[10px] mt-0.5 font-bold ${
-                                    isSelected ? 'text-[#FFC629]' : 'text-[#0D4E8B]'
-                                  }`}
-                                >
-                                  {count === 1 ? 'موعد واحد' : `${toArabicDigits(count)} أوقات`}
-                                </div>
+                                {formatTimeArabic12h(slot.startTime)}
                               </button>
                             );
                           })}
                         </div>
-                      </div>
-
-                      {/* Step 2: Compact Time Buttons for Selected Day */}
-                      {selectedPrivateDate && (
-                        <div className="space-y-2">
-                          <span className="text-xs font-bold text-[#1F2A44] block">
-                            ٢. اختر الوقت ({activeTimezoneLabel}):
-                          </span>
-                          <div className="flex flex-wrap gap-2">
-                            {(privateSlotsByDate.get(selectedPrivateDate) || []).map((slot) => {
-                              const isSelected = slot.id === selectedPrivateSlotId;
-                              return (
-                                <button
-                                  key={slot.id}
-                                  type="button"
-                                  onClick={() => handleSelectPrivateTime(slot)}
-                                  className={`px-3 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                                    isSelected
-                                      ? 'bg-[#F0F5FA] border-[#0D4E8B] text-[#0D4E8B] ring-1 ring-[#0D4E8B]'
-                                      : 'bg-white border-[#E2E8F0] text-[#1F2A44] hover:border-[#0D4E8B]/50'
-                                  }`}
-                                >
-                                  <Clock className="w-3.5 h-3.5 text-[#0D4E8B]" />
-                                  <span>
-                                    {formatTimeArabic12h(slot.startTime)} –{' '}
-                                    {formatTimeArabic12h(slot.endTime)}
-                                  </span>
-                                  {isSelected && <Check className="w-3.5 h-3.5 text-[#0D4E8B]" />}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
                       )}
 
-                      {/* Step 3: Multi-Specialization Selector (if slot has >1 allowed specialization) + ONE Unified Summary */}
                       {selectedPrivateSlot &&
                         (() => {
-                          const specs = Array.isArray(
-                            selectedPrivateSlot.allowedSpecializations
-                          )
+                          const specs = Array.isArray(selectedPrivateSlot.allowedSpecializations)
                             ? selectedPrivateSlot.allowedSpecializations
                             : [];
-                          const isMultiSpec = specs.length > 1;
-                          const activeSpecId =
-                            selectedSpecBySlotId[selectedPrivateSlot.id] ||
-                            specs[0]?.id ||
-                            '';
-                          const activeSpec =
-                            specs.find((s) => s.id === activeSpecId) || specs[0];
-                          const chosenLabel = normalizeLegacyAgeGroupText(
-                            activeSpec?.label || selectedPrivateSlot.specializationLabel
-                          );
+                          const activeSpecId = selectedSpecBySlotId[selectedPrivateSlot.id] || specs[0]?.id || '';
+                          const activeSpec = specs.find((sp) => sp.id === activeSpecId) || specs[0];
                           const dateInfo = formatSlotDateArabic(selectedPrivateSlot.slotDate);
-
                           return (
-                            <div className="space-y-3">
-                              {isMultiSpec && (
-                                <div className="p-3 rounded-xl bg-[#F0F5FA]/70 border border-[#D1DCFE] space-y-2">
-                                  <span className="text-xs font-bold text-[#0D4E8B] block">
-                                    ٣. اختر التخصص المطلوب لهذا الموعد ({toArabicDigits(specs.length)} بدائل معتمدة):
-                                  </span>
-                                  <div className="space-y-1.5">
-                                    {specs.map((sp) => {
-                                      const isSelected = sp.id === activeSpecId;
-                                      const normalizedLabel = normalizeLegacyAgeGroupText(
-                                        sp.label
-                                      );
-                                      return (
-                                        <button
-                                          key={sp.id}
-                                          type="button"
-                                          onClick={() => {
-                                            setSelectedSpecBySlotId((prev) => ({
-                                              ...prev,
-                                              [selectedPrivateSlot.id]: sp.id,
-                                            }));
-                                            trackBookingSlotSelected({
-                                              tutorId: tutor.id,
-                                              slotId: selectedPrivateSlot.id,
-                                              bookingType: 'private_1on1',
-                                              specializationId: sp.id,
-                                            });
-                                          }}
-                                          className={`w-full text-right px-3 py-2 rounded-xl border text-xs font-bold transition-all flex items-center justify-between gap-2 cursor-pointer ${
-                                            isSelected
-                                              ? 'bg-white border-[#0D4E8B] text-[#0D4E8B] shadow-2xs'
-                                              : 'bg-white/70 border-[#E2E8F0] text-[#1F2A44] hover:border-[#0D4E8B]/40'
-                                          }`}
-                                        >
-                                          <span className="leading-snug">{normalizedLabel}</span>
-                                          <span
-                                            className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                                              isSelected
-                                                ? 'border-[#0D4E8B] bg-[#0D4E8B] text-white'
-                                                : 'border-slate-300 bg-white'
-                                            }`}
-                                          >
-                                            {isSelected && <Check className="w-2.5 h-2.5" />}
-                                          </span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                  <p className="text-[10px] text-[#535E7B] leading-relaxed">
-                                    السعر والمدة المحددان ينطبقان على جميع بدائل هذا الموعد، وعند تأكيد الحجز يُخصّص الموعد بالكامل (١:١) للتخصص المختار.
+                            <div className="p-4 rounded-2xl bg-[#F8FAFC] space-y-3" aria-label="ملخص الحصة الخاصة">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">
+                                    {dateInfo.dayName} {dateInfo.shortDate}
+                                  </p>
+                                  <p className="text-sm text-[#475569]">
+                                    {formatTimeArabic12h(selectedPrivateSlot.startTime)} – {formatTimeArabic12h(selectedPrivateSlot.endTime)} ·{' '}
+                                    {toArabicDigits(selectedPrivateSlot.durationMinutes)} دقيقة
                                   </p>
                                 </div>
-                              )}
-
-                              {/* ONE Unified Summary Box */}
-                              <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#D1DCFE] space-y-3">
-                                <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-2">
-                                  <span className="font-['Cairo'] text-xs font-extrabold text-[#0D4E8B]">
-                                    ملخص طلب الحصة الخاصة (١:١)
-                                  </span>
-                                  <span className="text-xs font-extrabold text-[#1F2A44]">
-                                    {toArabicDigits(selectedPrivateSlot.priceAmount)}{' '}
-                                    {selectedPrivateSlot.currency} للحصة
-                                  </span>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <div>
-                                    <span className="text-[11px] text-[#64748B] block">التاريخ:</span>
-                                    <span className="font-bold text-[#1F2A44]">
-                                      {dateInfo.dayName} {dateInfo.shortDate}
-                                    </span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[11px] text-[#64748B] block">الوقت:</span>
-                                    <span className="font-bold text-[#0D4E8B]">
-                                      {formatTimeArabic12h(selectedPrivateSlot.startTime)} –{' '}
-                                      {formatTimeArabic12h(selectedPrivateSlot.endTime)}
-                                    </span>
-                                  </div>
-                                  <div className="col-span-2">
-                                    <span className="text-[11px] text-[#64748B] block">
-                                      التخصص المختار:
-                                    </span>
-                                    <span className="font-bold text-[#1F2A44]">
-                                      {chosenLabel}
-                                    </span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[11px] text-[#64748B] block">المدة:</span>
-                                    <span className="font-bold text-[#1F2A44]">
-                                      {toArabicDigits(selectedPrivateSlot.durationMinutes)} دقيقة (فردي ١:١)
-                                    </span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[11px] text-[#64748B] block">السعر:</span>
-                                    <span className="font-bold text-[#0D4E8B]">
-                                      {toArabicDigits(selectedPrivateSlot.priceAmount)}{' '}
-                                      {selectedPrivateSlot.currency} للحصة
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleBookPrivateSlot(selectedPrivateSlot)}
-                                  className="w-full py-3 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-extrabold text-xs sm:text-sm shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-                                >
-                                  <MessageCircle className="w-4 h-4" />
-                                  <span>إرسال طلب حجز الحصة الخاصة</span>
-                                </button>
-
-                                <p className="text-[11px] text-[#535E7B] leading-relaxed text-center">
-                                  التواصل عبر واتساب هو طلب تنسيق، ولا يُعتبر الموعد مؤكدًا إلا بعد تأكيد الإدارة.
+                                <p className="font-['Cairo'] text-lg font-extrabold text-[#0D4E8B] shrink-0">
+                                  {toArabicDigits(selectedPrivateSlot.priceAmount)} {selectedPrivateSlot.currency}
                                 </p>
                               </div>
+
+                              {specs.length > 1 ? (
+                                <label className="block space-y-1.5">
+                                  <span className="text-sm font-bold text-[#1F2A44]">الحصة في إيه؟</span>
+                                  <select
+                                    value={activeSpecId}
+                                    onChange={(e) => {
+                                      setSelectedSpecBySlotId((prev) => ({ ...prev, [selectedPrivateSlot.id]: e.target.value }));
+                                      trackBookingSlotSelected({
+                                        tutorId: tutor.id,
+                                        slotId: selectedPrivateSlot.id,
+                                        bookingType: 'private_1on1',
+                                        specializationId: e.target.value,
+                                      });
+                                    }}
+                                    className="w-full h-12 px-3 rounded-2xl border border-[#CBD5E1] bg-white text-sm text-[#1F2A44] outline-none focus:border-[#0D4E8B]"
+                                  >
+                                    {specs.map((sp) => (
+                                      <option key={sp.id} value={sp.id}>
+                                        {normalizeLegacyAgeGroupText(sp.label)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ) : (
+                                <p className="text-sm text-[#475569] flex items-start gap-2">
+                                  <BookOpen className="w-4 h-4 text-[#0D4E8B] shrink-0 mt-0.5" strokeWidth={1.75} />
+                                  <span>{normalizeLegacyAgeGroupText(activeSpec?.label || selectedPrivateSlot.specializationLabel)}</span>
+                                </p>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleBookPrivateSlot(selectedPrivateSlot)}
+                                className="w-full min-h-[48px] rounded-2xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>اطلب الحصة الخاصة</span>
+                              </button>
+                              <p className="text-xs text-[#64748B] text-center">ده طلب، وفريق شاطر هيأكد معاك الموعد على واتساب.</p>
                             </div>
                           );
                         })()}
                     </>
                   ) : (
-                    /* Honest Empty State for Private 1:1 Slots */
-                    <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] text-center space-y-3">
-                      <div className="w-10 h-10 rounded-full bg-blue-50 text-[#0D4E8B] flex items-center justify-center mx-auto">
-                        <Clock className="w-5 h-5" />
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                          لا توجد مواعيد حصص خاصة مضافة حاليًا
-                        </h3>
-                        <p className="text-xs text-[#535E7B] leading-relaxed">
-                          السعر المعتمد للمعلم: {sessionPriceText}. يمكنك طلب تنسيق جدول حصص خاصة فردية مباشرة عبر إدارة شاطر.
-                        </p>
-                      </div>
+                    <div className="py-2 text-center space-y-3">
+                      <p className="text-sm text-[#475569]">
+                        مفيش مواعيد حصص خاصة متاحة دلوقتي. سعر الحصة {profilePrice.priceText} / {profilePrice.durationText}، وفريق شاطر يقدر ينسّق معاك معاد.
+                      </p>
                       <button
                         type="button"
                         onClick={() =>
-                          handleRequestAdminCoordination(
-                            `طلب تنسيق مواعيد حصص خاصة فردية (1:1) مع ${tutor.honorific} ${tutor.name}`
-                          )
+                          handleRequestAdminCoordination(`طلب تنسيق مواعيد حصص خاصة فردية (1:1) مع ${tutor.honorific} ${tutor.name}`)
                         }
-                        className="w-full py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                        className="w-full min-h-[48px] rounded-2xl border border-[#CBD5E1] text-[#0D4E8B] hover:bg-[#F8FAFC] font-['Cairo'] font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <MessageCircle className="w-4 h-4" />
-                        <span>طلب تنسيق حصة خاصة عبر الإدارة</span>
+                        <span>اطلب تنسيق حصة خاصة</span>
                       </button>
-                      <p className="text-[11px] text-[#64748B]">
-                        التواصل عبر واتساب هو طلب تنسيق، ولا يُعتبر الموعد مؤكدًا إلا بعد تأكيد الإدارة.
-                      </p>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* =============================================================== */}
-              {/* TAB 3: مجموعات (Small Educational Groups) */}
-              {/* =============================================================== */}
+              {/* ---------------- Groups ---------------- */}
               {activeBookingTab === 'groups' && (
                 <div className="space-y-3">
                   {isLoadingOffers ? (
-                    <div className="py-8 flex flex-col items-center justify-center gap-2 text-xs text-[#64748B]">
-                      <Loader2 className="w-6 h-6 text-[#0D4E8B] animate-spin" />
-                      <span>جاري تحميل المجموعات المتاحة...</span>
+                    <div className="py-6 flex justify-center">
+                      <Loader2 className="w-5 h-5 text-[#0D4E8B] animate-spin" />
                     </div>
                   ) : publicGroups.length > 0 ? (
-                    <div className="space-y-3 max-h-[480px] overflow-y-auto pr-0.5">
-                      {publicGroups.map((group) => {
-                        const remainingSeats =
-                          group.remainingSeats !== undefined
-                            ? group.remainingSeats
-                            : Math.max(0, group.maxStudents - group.enrolledStudents);
-                        const groupPriceLabel = formatGroupPriceSummary(group).combinedText;
-
-                        return (
-                          <div
-                            key={group.id}
-                            className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] space-y-3"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <h3 className="font-['Cairo'] text-xs sm:text-sm font-extrabold text-[#1F2A44]">
-                                  {group.title}
-                                </h3>
-                                <p className="text-xs font-bold text-[#0D4E8B] mt-0.5">
-                                  {normalizeLegacyAgeGroupText(group.specializationLabel)}
-                                </p>
+                    <>
+                      <ul className="space-y-3">
+                        {publicGroups.map((group) => {
+                          const remainingSeats =
+                            group.remainingSeats !== undefined
+                              ? group.remainingSeats
+                              : Math.max(0, group.maxStudents - group.enrolledStudents);
+                          const start = formatSlotDateArabic(group.startDate);
+                          return (
+                            <li key={group.id} className="p-4 rounded-2xl border border-[#E2E8F0] space-y-2.5">
+                              <div className="space-y-0.5">
+                                <p className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">{group.title}</p>
+                                <p className="text-sm text-[#0D4E8B] font-bold">{normalizeLegacyAgeGroupText(group.specializationLabel)}</p>
                               </div>
-                              <span className="font-['Cairo'] text-xs font-extrabold text-[#0D4E8B] bg-white px-2.5 py-1 rounded-lg border border-[#D1DCFE] shrink-0">
-                                {groupPriceLabel}
-                              </span>
-                            </div>
-
-                            {group.description && (
-                              <p className="text-[11px] text-[#535E7B] leading-relaxed">
-                                {group.description}
+                              <p className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">
+                                {formatGroupPriceSummary(group).combinedText}
                               </p>
-                            )}
-
-                            <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-white border border-[#E2E8F0] text-[11px]">
-                              <div>
-                                <span className="text-[#64748B] block">تاريخ البداية وعدد الحصص:</span>
-                                <span className="font-bold text-[#1F2A44]">
-                                  {toArabicDigits(group.startDate)} ({toArabicDigits(group.sessionsCount)} حصص)
+                              <p className="text-sm text-[#475569] leading-relaxed">
+                                يبدأ {start.fullLabel} · {toArabicDigits(group.sessionsCount)} حصص
+                                {group.weeklyScheduleSummary ? ` · ${toArabicDigits(group.weeklyScheduleSummary)}` : ''}
+                              </p>
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-xs font-bold text-emerald-700">
+                                  باقي {toArabicDigits(remainingSeats)} من {toArabicDigits(group.maxStudents)} مقاعد
                                 </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleBookGroup(group)}
+                                  className="min-h-[44px] px-4 rounded-2xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-extrabold text-sm flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <MessageCircle className="w-4 h-4" />
+                                  <span>اطلب مقعد</span>
+                                </button>
                               </div>
-                              <div>
-                                <span className="text-[#64748B] block">الجدول المختصر:</span>
-                                <span className="font-bold text-[#1F2A44]">
-                                  {toArabicDigits(group.weeklyScheduleSummary)}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-[#64748B] block">نوع السعر:</span>
-                                <span className="font-bold text-[#0D4E8B]">
-                                  {group.priceType === 'per_session'
-                                    ? 'سعر للحصة الواحدة'
-                                    : 'سعر للباقة الكاملة'}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-[#64748B] block">المقاعد المتبقية:</span>
-                                <span className="font-bold text-emerald-700">
-                                  متبقي {toArabicDigits(remainingSeats)} من {toArabicDigits(group.maxStudents)} مقاعد
-                                </span>
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => handleBookGroup(group)}
-                              className="w-full py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                            >
-                              <MessageCircle className="w-3.5 h-3.5" />
-                              <span>طلب حجز مقعد عبر واتساب</span>
-                            </button>
-                          </div>
-                        );
-                      })}
-                      <p className="text-[11px] text-[#64748B] text-center">
-                        التواصل عبر واتساب هو طلب تنسيق، ولا يُعتبر المقعد مؤكدًا إلا بعد تأكيد الإدارة.
-                      </p>
-                    </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <p className="text-xs text-[#64748B] text-center">ده طلب، وفريق شاطر هيأكد معاك المقعد على واتساب.</p>
+                    </>
                   ) : (
-                    /* Honest Empty State for Groups */
-                    <div className="p-4 rounded-2xl bg-[#F8F9FC] border border-[#E2E8F0] text-center space-y-3">
-                      <div className="w-10 h-10 rounded-full bg-slate-100 text-[#535E7B] flex items-center justify-center mx-auto">
-                        <Users className="w-5 h-5" />
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="font-['Cairo'] text-xs sm:text-sm font-bold text-[#1F2A44]">
-                          لا توجد مجموعات مفتوحة حاليًا لهذا المعلم
-                        </h3>
-                        <p className="text-xs text-[#535E7B] leading-relaxed">
-                          يمكنك بدء تجربة مجانية فردية ({toArabicDigits(tutor.trialDurationMinutes || 20)} دقيقة) أو طلب إبلاغك عند فتح مجموعة جديدة عبر الإدارة.
-                        </p>
-                      </div>
+                    <div className="py-2 text-center space-y-3">
+                      <p className="text-sm text-[#475569]">
+                        مفيش مجموعات مفتوحة دلوقتي مع المعلم ده. تقدر تبدأ بتجربة مجانية، أو تطلب نبلّغك أول ما تتفتح مجموعة.
+                      </p>
                       <button
                         type="button"
                         onClick={() =>
-                          handleRequestAdminCoordination(
-                            `طلب التسجيل في مجموعة تعليمية مع ${tutor.honorific} ${tutor.name}`,
-                            'group'
-                          )
+                          handleRequestAdminCoordination(`طلب التسجيل في مجموعة تعليمية مع ${tutor.honorific} ${tutor.name}`, 'group')
                         }
-                        className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white font-['Cairo'] font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                        className="w-full min-h-[48px] rounded-2xl border border-[#CBD5E1] text-[#0D4E8B] hover:bg-[#F8FAFC] font-['Cairo'] font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <MessageCircle className="w-4 h-4" />
-                        <span>طلب تنسيق مجموعة عبر الإدارة</span>
+                        <span>بلّغني لما تتفتح مجموعة</span>
                       </button>
                     </div>
                   )}
                 </div>
               )}
-
             </section>
           </div>
           </div>
