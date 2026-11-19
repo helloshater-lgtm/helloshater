@@ -14,6 +14,8 @@ import { TutorApplicationService } from '../../services/tutorApplicationService'
 import { TutorAuthModal } from './TutorAuthModal';
 import { TutorProfileView } from '../TutorProfileView';
 import { TutorDirectTrialsTab } from './TutorDirectTrialsTab';
+import { TutorCalendarTab, TutorCalendarAddRequest } from './TutorCalendarTab';
+import { TutorHomeStatusCard } from './TutorHomeStatusCard';
 import {
   formatTutorExperience,
   formatSessionPriceSummary,
@@ -74,6 +76,7 @@ interface TutorDashboardViewProps {
 
 type DashboardTab =
   | 'overview'
+  | 'calendar'
   | 'pricing'
   | 'profile-draft'
   | 'trials'
@@ -95,6 +98,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
 
   // Active Tab: First page is 'overview' showing setup steps and quick actions
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
+  const [calendarAddRequest, setCalendarAddRequest] = useState<TutorCalendarAddRequest | null>(null);
+
+  // Opens the calendar tab, optionally with the "add slot" dialog preset to trial/private
+  const openCalendar = (addType?: 'trial' | 'private') => {
+    setActiveTab('calendar');
+    if (addType) setCalendarAddRequest({ type: addType, nonce: Date.now() });
+  };
 
   // Approved specializations
   const [specializations, setSpecializations] = useState<ApprovedSpecializationItem[]>([]);
@@ -1635,6 +1645,13 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
     targetTab: req.tutorTargetTab as DashboardTab,
   }));
 
+  const handleReadinessStepAction = (stepKey: string) => {
+    if (stepKey === 'trialSlot') return openCalendar('trial');
+    if (stepKey === 'paidPrivateSlot') return openCalendar('private');
+    const step = readinessSteps.find((s) => s.key === stepKey);
+    if (step) setActiveTab(step.targetTab);
+  };
+
   const completedStepsCount = unifiedReadiness.completedRequirementsCount ?? 0;
   const missingProfileItems = readinessSteps.filter((s) => !s.completed);
   const profileStrengthPercent = unifiedReadiness.completionPercentage ?? 0;
@@ -1754,7 +1771,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
         </div>
 
         {/* Preview & Account Actions */}
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end shrink-0">
+        <div className="grid grid-cols-[1fr_auto_auto] md:flex items-center gap-2 w-full md:w-auto md:justify-end shrink-0">
           <button
             type="button"
             onClick={handleOpenParentPreview}
@@ -1784,175 +1801,6 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>خروج</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 1.05 Preparation Status & Missing Profile Items Banner when unpublished */}
-      {!tutor.isPublished && (
-        <div
-          role="region"
-          aria-label="حالة تجهيز الملف والبيانات الناقصة"
-          className="bg-amber-50/90 rounded-3xl p-4 sm:p-5 border border-amber-200 shadow-xs space-y-3"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex items-start gap-2.5">
-              <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <h2 className="font-['Cairo'] text-sm sm:text-base font-extrabold text-amber-950">
-                  ملفك قيد التجهيز وغير ظاهر لأولياء الأمور
-                </h2>
-                <p className="text-xs text-amber-900 leading-relaxed">
-                  يمكنك الآن حفظ صورتك ونبذتك وأسعارك ومواعيدك ومجموعاتك بحرية، وتظهر تعديلاتك ومواعيدك المحفوظة فورًا داخل لوحتك وفي «شوف ملفك زي ولي الأمر»، بينما يظل ملفك ومواعيدك غير متاحين للجمهور والحجز حتى استكمال البيانات والنشر.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {unifiedReadiness.evaluationError ? (
-            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
-                <span className="font-bold">
-                  تعذر تقييم الجاهزية: {unifiedReadiness.evaluationErrorMessage}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => loadPortalData(true)}
-                className="px-3 py-1.5 min-h-[36px] rounded-lg bg-rose-700 hover:bg-rose-800 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>إعادة المحاولة</span>
-              </button>
-            </div>
-          ) : missingProfileItems.length > 0 ? (
-            <div className="p-3.5 rounded-2xl bg-white border border-amber-200 space-y-2.5">
-              <span className="text-xs font-bold text-[#1F2A44] block">
-                البيانات الناقصة لاستكمال تجهيز ملفك قبل النشر ({missingProfileItems.length} من 6):
-              </span>
-              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {missingProfileItems.map((item) => (
-                  <li
-                    key={item.key}
-                    className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-amber-50/60 border border-amber-200/80 text-xs"
-                  >
-                    <div className="min-w-0">
-                      <span className="font-bold text-[#1F2A44] block">{item.title}</span>
-                      <span className="text-[11px] text-[#64748B] block">{item.statusText}</span>
-                    </div>
-                    {item.key !== 'specializations' && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab(item.targetTab)}
-                        className="px-3 py-1.5 min-h-[36px] rounded-lg bg-[#0D4E8B] hover:bg-[#003767] text-white text-[11px] font-bold shrink-0 cursor-pointer"
-                      >
-                        {item.actionLabel}
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-              <span>
-                اكتملت جميع متطلبات بيانات ملفك الستة (6/6: الصورة، النبذة، السعر، التخصصات، موعد الحصة الخاصة المدفوعة، وموعد الحصة التجريبية) — ملفك بانتظار مراجعة الجودة الأولية والنشر من قِبل الإدارة.
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 1.1 Quick Action Buttons Bar («صورتي ونبذتي» — «سعري ومدة الحصة» — «إضافة موعد» — «إنشاء مجموعة») */}
-      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-[#E2E8F0] shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Sparkles className="w-4 h-4 text-[#0D4E8B]" />
-            <span className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44]">
-              {unifiedReadiness.evaluationError
-                ? 'إدارة ملفك بالخدمة الذاتية (تعذر تقييم الجاهزية)'
-                : `إدارة ملفك بالخدمة الذاتية (${profileStrengthPercent}٪ مكتمل)`}
-            </span>
-            {!unifiedReadiness.evaluationError && (
-              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#F0F6FD] text-[#0D4E8B] tabular-nums">
-                {completedStepsCount} من 6 متطلبات جاهزة
-              </span>
-            )}
-          </div>
-          <span className="text-[11px] text-[#64748B]">
-            {tutor.isPublished
-              ? 'تعديلاتك تظهر مباشرة في ملفك المنشور فور الحفظ دون انتظار مراجعة إدارية'
-              : 'تعديلاتك ومواعيدك تُحفظ وتظهر فورًا في لوحتك وفي المعاينة الخاصة دون نشر تلقائي'}
-          </span>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-300 ${
-              profileStrengthPercent === 100 ? 'bg-emerald-600' : 'bg-[#0D4E8B]'
-            }`}
-            style={{ width: `${profileStrengthPercent}%` }}
-          />
-        </div>
-
-        {/* 4 Primary Action Buttons required by spec */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-          <button
-            type="button"
-            onClick={() => setActiveTab('profile-draft')}
-            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              activeTab === 'profile-draft'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
-                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
-            }`}
-          >
-            <Camera className="w-4 h-4 shrink-0" />
-            <span>صورتي ونبذتي</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('pricing')}
-            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              activeTab === 'pricing'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
-                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
-            }`}
-          >
-            <DollarSign className="w-4 h-4 shrink-0" />
-            <span>سعري ومدة الحصة</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('private')}
-            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              activeTab === 'private'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
-                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
-            }`}
-          >
-            <CalendarCheck2 className="w-4 h-4 shrink-0" />
-            <span>إضافة موعد</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('groups');
-              handleOpenNewGroupWizard();
-            }}
-            className={`min-h-[48px] px-3 py-2.5 rounded-2xl border text-xs font-bold font-['Cairo'] transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              activeTab === 'groups'
-                ? 'bg-[#0D4E8B] text-white border-[#0D4E8B] shadow-xs'
-                : 'bg-[#F8FAFC] hover:bg-[#F0F6FD] text-[#1F2A44] border-[#CBD5E1]'
-            }`}
-          >
-            <Users className="w-4 h-4 shrink-0" />
-            <span>إنشاء مجموعة</span>
           </button>
         </div>
       </div>
@@ -1990,7 +1838,20 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
           }`}
         >
           <GraduationCap className="w-4 h-4 shrink-0" />
-          <span>خطوات تجهيز الملف</span>
+          <span>الرئيسية</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('calendar')}
+          className={`px-3.5 py-2.5 min-h-[44px] rounded-xl font-['Cairo'] text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === 'calendar'
+              ? 'bg-[#0D4E8B] text-white shadow-xs'
+              : 'text-[#64748B] hover:text-[#1F2A44] hover:bg-white'
+          }`}
+        >
+          <Calendar className="w-4 h-4 shrink-0" />
+          <span>التقويم</span>
         </button>
 
         <button
@@ -2119,88 +1980,23 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       {/* ========================================================================= */}
       {activeTab === 'overview' && (
         <div className="space-y-6 animate-fade-in">
-          {/* 5 Setup Steps Checklist */}
-          <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#F1F5F9] pb-3">
-              <div>
-                <h2 className="font-['Cairo'] text-base sm:text-lg font-bold text-[#1F2A44]">
-                  خطوات تجهيز ملفك التدريسي (6 متطلبات أساسية)
-                </h2>
-                <p className="text-xs text-[#64748B] mt-0.5">
-                  تأكد من اكتمال العناصر الستة التالية (بما فيها موعد خاص مدفوع وموعد تجريبي 20 دقيقة) ليظهر ملفك بأفضل صورة لأولياء الأمور
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleOpenParentPreview}
-                disabled={isLoadingPreview}
-                className="px-3.5 py-2 min-h-[44px] rounded-xl bg-[#F0F6FD] hover:bg-[#E2EFFD] text-[#0D4E8B] text-xs font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
-              >
-                <Eye className="w-4 h-4" />
-                <span>شوف ملفك زي ولي الأمر</span>
-              </button>
-            </div>
-
-            {unifiedReadiness.evaluationError ? (
-              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center justify-between gap-3">
-                <span>تعذر تقييم الجاهزية حالياً: {unifiedReadiness.evaluationErrorMessage}</span>
-                <button
-                  type="button"
-                  onClick={() => loadPortalData(true)}
-                  className="px-3 py-1.5 rounded-lg bg-rose-700 text-white font-bold cursor-pointer"
-                >
-                  إعادة المحاولة
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {readinessSteps.map((step, index) => (
-                  <div
-                    key={step.key}
-                    className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 ${
-                      step.completed
-                        ? 'bg-emerald-50/40 border-emerald-200'
-                        : 'bg-amber-50/40 border-amber-200'
-                    }`}
-                  >
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-bold text-[#64748B]">
-                          المتطلب {index + 1} من 6
-                        </span>
-                        {step.completed ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>مكتمل</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
-                            <AlertCircle className="w-3.5 h-3.5" />
-                            <span>يحتاج استكمال</span>
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="font-['Cairo'] text-sm font-bold text-[#1F2A44]">
-                        {step.title}
-                      </h3>
-                      <p className="text-xs text-[#64748B] leading-relaxed">{step.statusText}</p>
-                    </div>
-
-                    {step.key !== 'specializations' && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab(step.targetTab)}
-                        className="w-full py-2 min-h-[40px] rounded-xl bg-white hover:bg-slate-50 border border-[#CBD5E1] text-xs font-bold text-[#0D4E8B] transition-colors cursor-pointer"
-                      >
-                        {step.actionLabel}
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
+          <TutorHomeStatusCard
+            isPublished={Boolean(tutor.isPublished)}
+            steps={readinessSteps}
+            completedCount={completedStepsCount}
+            percent={profileStrengthPercent}
+            evaluationError={Boolean(unifiedReadiness.evaluationError)}
+            evaluationErrorMessage={unifiedReadiness.evaluationErrorMessage}
+            confirmedTrialsCount={directTrialBookings.filter((b) => b.status === 'confirmed').length}
+            missingMeetingLinkCount={
+              directTrialBookings.filter((b) => b.status === 'confirmed' && !b.meetingUrl).length
+            }
+            isLoadingPreview={isLoadingPreview}
+            onRetry={() => loadPortalData(true)}
+            onStepAction={handleReadinessStepAction}
+            onOpenCalendar={() => openCalendar()}
+            onOpenPreview={handleOpenParentPreview}
+          />
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs flex flex-col justify-between gap-3">
@@ -2910,6 +2706,27 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {activeTab === 'calendar' && (
+        <TutorCalendarTab
+          isPublished={Boolean(tutor.isPublished)}
+          defaultPrice={Number(tutor.hourlyRateMin) || 0}
+          defaultCurrency={tutor.currency || 'ج.م'}
+          defaultDurationMinutes={Number(tutor.sessionDurationMinutes) || 50}
+          trialSlots={trialSlots}
+          privateSlots={privateSlots}
+          directTrialBookings={directTrialBookings}
+          specializations={specializations}
+          isLoading={isLoadingTrials || isLoadingPrivate || isLoadingDirectTrials}
+          loadError={
+            [trialSlotsLoadError, privateSlotsLoadError, directTrialsLoadError].filter(Boolean).join(' — ') || null
+          }
+          reloadTrialSlots={loadTrialSlots}
+          reloadPrivateSlots={loadPrivateSlots}
+          reloadDirectTrials={loadDirectTrials}
+          addRequest={calendarAddRequest}
+        />
       )}
 
       {activeTab === 'direct-trials' && (
