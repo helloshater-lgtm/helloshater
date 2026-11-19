@@ -4,6 +4,7 @@ import { DirectTrialBookingService } from '../services/directTrialBookingService
 import {
   formatBookingInOwnTimezone,
   getDirectTrialStatusMeta,
+  orderParentTrialBookings,
   saveDirectTrialReturnTarget,
   loadDirectTrialReturnTarget,
   clearDirectTrialReturnTarget,
@@ -311,7 +312,8 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
-              {bookings.map((booking) => {
+              {orderParentTrialBookings(bookings).ordered.map((booking) => {
+                const isNext = booking.id === orderParentTrialBookings(bookings).nextBookingId;
                 const timeInfo = formatBookingInOwnTimezone(
                   booking.startsAt,
                   booking.endsAt,
@@ -323,8 +325,16 @@ export const MyTrialsView: React.FC<MyTrialsViewProps> = ({
                 return (
                   <div
                     key={booking.id}
-                    className="bg-white rounded-2xl sm:rounded-3xl border border-[#E2E8F0] p-5 shadow-xs space-y-4"
+                    data-next-booking={isNext ? 'true' : undefined}
+                    className={`bg-white rounded-2xl sm:rounded-3xl border p-5 shadow-xs space-y-4 ${
+                      isNext ? 'border-[#0D4E8B] ring-4 ring-[#0D4E8B]/10' : 'border-[#E2E8F0]'
+                    }`}
                   >
+                    {isNext && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#EBF3FC] text-[#0D4E8B] text-xs font-extrabold">
+                        الحصة القادمة
+                      </span>
+                    )}
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">

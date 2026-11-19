@@ -515,6 +515,8 @@ export interface PendingDirectTrialDraft {
   guardianName?: string;
   countryCode?: string;
   localPhone?: string;
+  /** Email the sign-in code was sent to (same browser only), so it can be resent. */
+  email?: string;
   savedAt: number;
 }
 
@@ -590,7 +592,7 @@ export function sanitizeDirectTrialReturnTarget(raw: unknown): string | null {
   if (clean.startsWith('/')) clean = clean.slice(1);
 
   if (clean === 'my-trials') return 'my-trials';
-  if (/^tutor\/[a-zA-Z0-9_-]{1,120}$/.test(clean)) {
+  if (/^(tutor|book)\/[a-zA-Z0-9_-]{1,120}$/.test(clean)) {
     return clean;
   }
   return null;
@@ -661,6 +663,11 @@ export function clearDirectTrialReturnTarget(): void {
 export interface DirectTrialCallbackUrlInfo {
   directReturnTarget: string | null;
   isEmailAuthCallback: boolean;
+  /**
+   * Supabase error code when the email link failed (e.g. 'otp_expired' for an
+   * already-used or expired link). null when the link did not fail.
+   */
+  authErrorCode: string | null;
 }
 
 /**
@@ -699,10 +706,34 @@ export function detectDirectTrialAuthCallbackFromLocation(
     hashLower.includes('access_token=') ||
     hashLower.includes('refresh_token=');
 
+  // Supabase redirects failed email links back with #error=...&error_code=...
+  // (or ?error=... in PKCE flow). Treat them as a callback so the parent is
+  // returned to the saved tutor/my-trials page with a clear message instead of Home.
+  const rawErrorCode =
+    hashParams.get('error_code') ||
+    searchParams.get('error_code') ||
+    hashParams.get('error') ||
+    searchParams.get('error');
+  const authErrorCode = rawErrorCode
+    ? rawErrorCode.trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 64) || 'unknown'
+    : null;
+
   return {
     directReturnTarget,
-    isEmailAuthCallback: hasSearchAuthCallback || hasHashAuthCallback,
+    isEmailAuthCallback: hasSearchAuthCallback || hasHashAuthCallback || Boolean(authErrorCode),
+    authErrorCode,
   };
+}
+
+/**
+ * Arabic message shown to the parent when the email sign-in link failed.
+ */
+export function getDirectTrialAuthErrorMessage(authErrorCode: string | null): string | null {
+  if (!authErrorCode) return null;
+  if (authErrorCode === 'otp_expired' || authErrorCode === 'access_denied') {
+    return 'رابط الدخول الذي فتحته انتهت صلاحيته أو استُخدم من قبل. كل رابط يعمل مرة واحدة فقط. اطلب كودًا جديدًا من نفس الصفحة، وموعدك اللي اخترته محفوظ.';
+  }
+  return 'تعذر إكمال تسجيل الدخول من رابط البريد. يرجى طلب رابط دخول جديد والمحاولة مرة أخرى.';
 }
 
 export interface ResolvedTrialSelectionResult {
@@ -794,3 +825,33 @@ export function normalizeEmailOtpCode(raw: unknown): string | null {
 }
 
 
+
+export type BookingDraftSlotStatus = 'none' | 'available' | 'unavailable';
+
+/**
+ * Booking page: find the slot the parent picked before verifying their email.
+ * Never substitutes another slot — if it was taken meanwhile, the parent chooses again.
+ */
+export function resolveBookingDraftSlot(
+  draft: PendingDirectTrialDraft | null,
+  validSlots: TutorAvailableSlot[]
+): { status: BookingDraftSlotStatus; slot: TutorAvailableSlot | null } {
+  if (!draft || !draft.slotId) return { status: 'none', slot: null };
+  const slot = (validSlots || []).find((s) => s.id === draft.slotId) || null;
+  return slot ? { status: 'available', slot } : { status: 'unavailable', slot: null };
+}
+
+/**
+ * «حجوزاتي»: upcoming confirmed bookings first (soonest first), then past /
+ * completed / cancelled (newest first). Returns the id of the next session.
+ */
+export function orderParentTrialBookings<T extends { id: string; status: string; startsAt: string; endsAt: string }>(
+  bookings: T[],
+  referenceNowMs: number = Date.now()
+): { ordered: T[]; nextBookingId: string | null } {
+  const list = Array.isArray(bookings) ? bookings : [];
+  const isUpcoming = (b: T) => b.status === 'confirmed' && !hasBookingEnded(b.endsAt, referenceNowMs);
+  const upcoming = list.filter(isUpcoming).sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
+  const rest = list.filter((b) => !isUpcoming(b)).sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt));
+  return { ordered: [...upcoming, ...rest], nextBookingId: upcoming[0]?.id ?? null };
+}
