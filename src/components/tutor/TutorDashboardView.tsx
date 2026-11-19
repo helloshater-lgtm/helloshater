@@ -1994,23 +1994,14 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       {/* SECTION 3: TRIAL SLOTS (مدة 20 دقيقة بالضبط + إضافة وتعديل وحذف) */}
       {/* ========================================================================= */}
       {activeTab === 'trials' && (
-        <div className="space-y-6 animate-fade-in">
-          <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs sm:text-sm flex items-start gap-3">
-            <Info className="w-5 h-5 text-[#0D4E8B] shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <span className="font-bold block">نظام الحصص التجريبية المجانية (20 دقيقة):</span>
-              <p className="leading-relaxed text-blue-800">
-                مدتها محددة بالنظام بـ 20 دقيقة بالضبط، ويُحسب وقت النهاية تلقائياً. يمكنك اختيار التوقيت (القاهرة أو الرياض أو دبي) وتعديل أو حذف أي موعد غير محجوز.
-              </p>
-            </div>
-          </div>
-
+        <div className="space-y-4 animate-fade-in">
           {/* Add Trial Slot Form */}
           <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs space-y-4">
             <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex items-center gap-2">
               <Plus className="w-5 h-5 text-[#0D4E8B]" />
-              <span>إضافة موعد تجريبي متاح (مجاني - 20 دقيقة بالضبط)</span>
+              <span>إضافة موعد تجريبي</span>
             </h3>
+            <p className="text-xs text-[#64748B] -mt-2">مجاني ٢٠ دقيقة، ووقت النهاية بيتحسب لوحده.</p>
 
             <form
               onSubmit={handleCreateTrialSlot}
@@ -2126,11 +2117,11 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex flex-wrap items-center justify-between gap-2">
               <span className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-[#0D4E8B]" />
-                <span>قائمة المواعيد التجريبية ({trialSlots.length})</span>
+                <span>مواعيدك التجريبية ({toArabicDigits(trialSlots.length)})</span>
               </span>
               <span className="text-xs text-[#64748B] font-normal">
-                {validFutureTrialSlots.length} متاح مستقبلي •{' '}
-                {trialSlots.filter((s) => s.isBooked).length} محجوز
+                {toArabicDigits(validFutureTrialSlots.length)} متاح ·{' '}
+                {toArabicDigits(trialSlots.filter((s) => s.isBooked).length)} محجوز
               </span>
             </h3>
 
@@ -2332,45 +2323,21 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       {/* SECTION 4: PAID PRIVATE SESSIONS (الحصص الخاصة المدفوعة 1:1) */}
       {/* ========================================================================= */}
       {activeTab === 'private' && (
-        <div className="space-y-6 animate-fade-in">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">
-                المواعيد الخاصة المستقبلية المتاحة
-              </span>
-              <div className="font-['Cairo'] text-2xl font-extrabold text-[#0D4E8B]">
-                {validFuturePrivateSlots.length}
-              </div>
-              <span className="text-[11px] text-[#64748B] block">
-                متاح للحجز الفوري من أولياء الأمور
-              </span>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">
-                المواعيد المحجوزة المؤكدة
-              </span>
-              <div className="font-['Cairo'] text-2xl font-extrabold text-emerald-600">
-                {futurePrivateBookedCount}
-              </div>
-              <span className="text-[11px] text-[#64748B] block">محمية ولا يمكن تعديلها أو حذفها</span>
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-[#E2E8F0] shadow-xs space-y-1">
-              <span className="text-xs text-[#64748B] font-bold block">
-                السعر الافتراضي للحصة الخاصة
-              </span>
-              <div className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44]">
-                {tutor.hourlyRateMin} {tutor.currency} / {tutor.sessionDurationMinutes} دقيقة
-              </div>
-              <button
-                type="button"
-                onClick={() => openProfileSection('pricing')}
-                className="text-[11px] font-bold text-[#0D4E8B] hover:underline cursor-pointer"
-              >
-                تعديل السعر الافتراضي للملف ←
-              </button>
-            </div>
+        <div className="space-y-4 animate-fade-in">
+          <div className="px-4 py-3 rounded-2xl bg-white border border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="text-[#475569]">
+              السعر الافتراضي:{' '}
+              <strong className="text-[#1F2A44]">
+                {toArabicDigits(`${tutor.hourlyRateMin} ${tutor.currency} · ${tutor.sessionDurationMinutes} دقيقة`)}
+              </strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => openProfileSection('pricing')}
+              className="text-sm font-bold text-[#0D4E8B] hover:underline cursor-pointer"
+            >
+              تعديل السعر
+            </button>
           </div>
 
           {/* Add Private Slots Form */}
@@ -2378,10 +2345,10 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <div className="border-b border-[#F1F5F9] pb-3">
               <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
                 <CalendarCheck2 className="w-5 h-5 text-[#0D4E8B]" />
-                <span>إضافة مواعيد الحصص الخاصة (فردية 1:1)</span>
+                <span>إضافة حصص خاصة</span>
               </h3>
               <p className="text-xs text-[#64748B] mt-0.5">
-                يُستخدم سعرك ومدة حصتك المحفوظان في ملفك كقيمة افتراضية، مع إمكانية تخصيص سعر أو مدة هذا الموعد، ويُحسب وقت النهاية تلقائياً.
+                مرة واحدة أو تتكرر كل أسبوع. السعر والمدة بيتملوا من ملفك وتقدر تغيّرهم.
               </p>
             </div>
 
@@ -2855,7 +2822,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
             <h3 className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] flex flex-wrap items-center justify-between gap-2">
               <span className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-[#0D4E8B]" />
-                <span>قائمة المواعيد الخاصة (1:1) المسجلة ({privateSlots.length})</span>
+                <span>حصصك الخاصة ({toArabicDigits(privateSlots.length)})</span>
               </span>
               <span className="text-xs text-[#64748B] font-normal">
                 المواعيد المحجوزة أو الموقوفة إدارياً محمية ولا يمكن تعديلها أو حذفها
@@ -3126,16 +3093,16 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       {/* SECTION 5: EDUCATIONAL GROUPS (3-STEP WIZARD + FINANCIAL SUMMARY) */}
       {/* ========================================================================= */}
       {activeTab === 'groups' && (
-        <div className="space-y-6 animate-fade-in">
+        <div className="space-y-4 animate-fade-in">
           {/* Header Action */}
           <div className="bg-white rounded-3xl border border-[#E2E8F0] p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
               <h3 className="font-['Cairo'] text-base font-bold text-[#1F2A44] flex items-center gap-2">
                 <Users className="w-5 h-5 text-[#0D4E8B]" />
-                <span>إدارة المجموعات التعليمية (Small Groups)</span>
+                <span>مجموعاتك</span>
               </h3>
               <p className="text-xs text-[#64748B] mt-0.5">
-                أنشئ أو عدّل مجموعتك في ٣ خطوات واضحة مع حساب تلقائي للجدول والملخص المالي، وتُنشر مباشرة في ملفك.
+                مجموعة صغيرة من الطلاب بجدول ثابت. بتتعمل في ٣ خطوات.
               </p>
             </div>
 
@@ -3152,7 +3119,7 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
               className="px-4 py-2.5 min-h-[44px] rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
             >
               <Plus className="w-4 h-4" />
-              <span>{showAddGroupForm ? 'إخفاء نموذج المجموعة' : 'إنشاء مجموعة جديدة'}</span>
+              <span>{showAddGroupForm ? 'إغلاق' : 'مجموعة جديدة'}</span>
             </button>
           </div>
 

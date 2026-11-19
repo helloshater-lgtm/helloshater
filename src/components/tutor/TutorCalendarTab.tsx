@@ -486,33 +486,89 @@ export const TutorCalendarTab: React.FC<TutorCalendarTabProps> = ({
 
   // ------------------------------------------------------------------ Render
   return (
-    <div className="space-y-4 animate-fade-in">
-      {/* Header: title, visibility, add button */}
-      <div className="bg-white rounded-3xl border border-[#E2E8F0] p-4 sm:p-5 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-[#EBF3FC] text-[#0D4E8B] flex items-center justify-center shrink-0">
-              <CalendarDays className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#1F2A44]">التقويم</h2>
-              <p className="text-[11px] sm:text-xs text-[#64748B]">مواعيدك المتاحة وحجوزاتك في مكان واحد</p>
-            </div>
+    <div className="space-y-3 animate-fade-in">
+      {/* Messages (only when there is something to say) */}
+      {notice && (
+        <div
+          role={notice.type === 'error' ? 'alert' : 'status'}
+          className={`px-4 py-3 rounded-2xl text-sm font-bold flex items-start justify-between gap-2 ${
+            notice.type === 'success' ? 'bg-emerald-50 text-emerald-900' : 'bg-rose-50 text-rose-900'
+          }`}
+        >
+          <span className="flex items-start gap-2">
+            {notice.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            )}
+            <span>{notice.text}</span>
+          </span>
+          <button type="button" onClick={() => setNotice(null)} aria-label="إغلاق" className="cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+      {loadError && (
+        <div role="alert" className="px-4 py-3 rounded-2xl bg-rose-50 text-rose-900 text-sm font-bold">
+          {loadError}
+        </div>
+      )}
+      {needsLinkCount > 0 && (
+        <div className="px-4 py-3 rounded-2xl bg-amber-50 text-amber-950 text-sm font-bold flex items-center gap-2">
+          <Video className="w-4 h-4 shrink-0" strokeWidth={1.75} />
+          <span>
+            {needsLinkCount === 1
+              ? 'فيه حجز من غير رابط حصة. اضغط عليه وأضف الرابط.'
+              : `فيه ${toArabicDigits(needsLinkCount)} حجوزات من غير رابط حصة. اضغط على الحجز وأضف الرابط.`}
+          </span>
+        </div>
+      )}
+
+      {/* One card: toolbar + legend + calendar */}
+      <div className="bg-white rounded-3xl border border-[#E2E8F0] shadow-xs overflow-hidden">
+        <div className="p-3 sm:p-4 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => goToWeek(-7)}
+              aria-label="الأسبوع السابق"
+              className="w-10 h-10 rounded-xl hover:bg-[#F1F5F9] text-[#475569] flex items-center justify-center cursor-pointer"
+            >
+              <ChevronRight className="w-5 h-5" strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              onClick={() => goToWeek(7)}
+              aria-label="الأسبوع التالي"
+              className="w-10 h-10 rounded-xl hover:bg-[#F1F5F9] text-[#475569] flex items-center justify-center cursor-pointer"
+            >
+              <ChevronLeft className="w-5 h-5" strokeWidth={1.75} />
+            </button>
           </div>
-          <div className="flex items-center gap-2">
+          <span className="font-['Cairo'] text-base sm:text-lg font-extrabold text-[#1F2A44] flex-1 min-w-0 truncate">
+            {formatWeekRange(weekDates)}
+          </span>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={goToToday}
+              className="h-11 px-4 rounded-2xl border border-[#E2E8F0] text-[#1F2A44] text-sm font-bold hover:bg-[#F8FAFC] cursor-pointer"
+            >
+              اليوم
+            </button>
             <button
               type="button"
               onClick={refreshAll}
               disabled={isRefreshing || isLoading}
-              className="h-11 px-3 rounded-xl border border-[#CBD5E1] text-xs font-bold text-[#1F2A44] hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              aria-label="تحديث"
+              className="w-11 h-11 rounded-2xl border border-[#E2E8F0] text-[#475569] hover:bg-[#F8FAFC] flex items-center justify-center cursor-pointer disabled:opacity-60"
             >
-              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">تحديث</span>
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} strokeWidth={1.75} />
             </button>
             <button
               type="button"
               onClick={() => openAddDialog('trial', selectedDate)}
-              className="h-11 px-4 rounded-xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-xs sm:text-sm font-bold font-['Cairo'] flex items-center gap-1.5 shadow-xs cursor-pointer"
+              className="flex-1 sm:flex-none h-11 px-5 rounded-2xl bg-[#0D4E8B] hover:bg-[#003767] text-white text-sm font-extrabold font-['Cairo'] flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>إضافة موعد</span>
@@ -520,121 +576,35 @@ export const TutorCalendarTab: React.FC<TutorCalendarTabProps> = ({
           </div>
         </div>
 
-        <div
-          className={`p-3 rounded-2xl border text-xs leading-relaxed flex items-start gap-2 ${
-            isPublished
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-              : 'bg-amber-50 border-amber-200 text-amber-950'
-          }`}
-        >
-          {isPublished ? (
-            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-700" />
-          ) : (
-            <EyeOff className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
-          )}
-          <span className="font-bold">{visibilityText}</span>
-        </div>
-
-        {/* Legend */}
-        <ul className="grid grid-cols-1 sm:grid-cols-3 gap-2" aria-label="دليل الألوان">
-          {(['trial_available', 'private_available', 'trial_booking'] as TutorCalendarEventKind[]).map((kind) => {
-            const meta = TUTOR_CALENDAR_KIND_META[kind];
-            const count =
-              kind === 'trial_booking'
-                ? (countsByKind.trial_booking || 0) + (countsByKind.private_booking || 0)
-                : countsByKind[kind] || 0;
-            return (
-              <li key={kind} className={`px-2.5 py-2 sm:p-2.5 rounded-xl border flex items-start gap-2 ${meta.chipClass}`}>
-                <span className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${meta.dotClass} ring-2 ring-white`} />
-                <span className="min-w-0">
-                  <span className="block text-xs font-bold">
-                    {kind === 'trial_booking' ? 'حجز مؤكد' : meta.label}{' '}
-                    <span className="tabular-nums">({toArabicDigits(count)} هذا الأسبوع)</span>
-                  </span>
-                  <span className="block text-[10px] sm:text-[11px] opacity-90">
-                    {kind === 'trial_booking' ? 'وليّ أمر حجز الموعد — اضغط لعرض التفاصيل ورابط الحصة' : meta.description}
-                  </span>
-                </span>
+        {/* Legend: color + meaning, one line */}
+        <div className="px-3 sm:px-4 py-2.5 border-y border-[#F1F5F9] bg-[#FAFBFD] flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[#475569]">
+          <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5" aria-label="دليل الألوان">
+            {(
+              [
+                ['trial_available', 'تجريبي مجاني متاح'],
+                ['private_available', 'حصة خاصة متاحة'],
+                ['trial_booking', 'حجز مؤكد'],
+              ] as Array<[TutorCalendarEventKind, string]>
+            ).map(([kind, label]) => (
+              <li key={kind} className="flex items-center gap-1.5 font-bold">
+                <span className={`w-2.5 h-2.5 rounded-full ${TUTOR_CALENDAR_KIND_META[kind].dotClass}`} />
+                <span>{label}</span>
               </li>
-            );
-          })}
-        </ul>
-
-        {needsLinkCount > 0 && (
-          <div className="p-3 rounded-2xl bg-amber-100 border border-amber-300 text-amber-950 text-xs font-bold flex items-center gap-2">
-            <Video className="w-4 h-4 shrink-0" />
-            <span>
-              عندك {toArabicDigits(needsLinkCount)} حجز تجريبي بدون رابط حصة. اضغط على الحجز في التقويم وأضف رابط Google Meet أو Zoom.
-            </span>
-          </div>
-        )}
-
-        {notice && (
-          <div
-            role={notice.type === 'error' ? 'alert' : 'status'}
-            className={`p-3 rounded-2xl border text-xs font-bold flex items-start justify-between gap-2 ${
-              notice.type === 'success'
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                : 'bg-rose-50 border-rose-200 text-rose-900'
-            }`}
-          >
-            <span className="flex items-start gap-2">
-              {notice.type === 'success' ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-              ) : (
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              )}
-              <span>{notice.text}</span>
-            </span>
-            <button type="button" onClick={() => setNotice(null)} aria-label="إغلاق" className="cursor-pointer">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {loadError && (
-          <div role="alert" className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold">
-            {loadError}
-          </div>
-        )}
-      </div>
-
-      {/* Week navigation */}
-      <div className="bg-white rounded-3xl border border-[#E2E8F0] shadow-xs overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2 p-3 sm:p-4 border-b border-[#F1F5F9]">
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => goToWeek(-7)}
-              aria-label="الأسبوع السابق"
-              className="w-10 h-10 rounded-xl border border-[#CBD5E1] hover:bg-slate-50 flex items-center justify-center cursor-pointer"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => goToWeek(7)}
-              aria-label="الأسبوع التالي"
-              className="w-10 h-10 rounded-xl border border-[#CBD5E1] hover:bg-slate-50 flex items-center justify-center cursor-pointer"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="font-['Cairo'] text-sm sm:text-base font-bold text-[#1F2A44] mx-1">
-              {formatWeekRange(weekDates)}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-[#64748B] hidden sm:inline">
-              الأوقات {getTimezoneArabicLabel(DEFAULT_TZ)} ما لم يُذكر غير ذلك
-            </span>
-            <button
-              type="button"
-              onClick={goToToday}
-              className="h-10 px-3 rounded-xl bg-[#F0F6FD] text-[#0D4E8B] text-xs font-bold hover:bg-[#E2EFFD] cursor-pointer"
-            >
-              اليوم
-            </button>
-          </div>
+            ))}
+          </ul>
+          <span className="flex items-center gap-1.5 text-[#64748B] sm:ms-auto">
+            {isPublished ? (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" strokeWidth={2} />
+                <span>المواعيد المتاحة ظاهرة لأولياء الأمور</span>
+              </>
+            ) : (
+              <>
+                <EyeOff className="w-3.5 h-3.5 text-amber-600" strokeWidth={2} />
+                <span>مواعيدك خاصة بيك لحد نشر ملفك</span>
+              </>
+            )}
+          </span>
         </div>
 
         {isLoading ? (

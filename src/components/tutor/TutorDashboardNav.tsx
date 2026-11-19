@@ -32,8 +32,8 @@ export const TUTOR_DASHBOARD_SECTIONS: SectionDef[] = [
     icon: CalendarDays,
     tabs: [
       { tab: 'calendar', label: 'الأسبوع' },
-      { tab: 'trials', label: 'المواعيد التجريبية' },
-      { tab: 'private', label: 'الحصص الخاصة' },
+      { tab: 'trials', label: 'التجريبية' },
+      { tab: 'private', label: 'الخاصة' },
     ],
   },
   {
