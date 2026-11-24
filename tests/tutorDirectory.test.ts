@@ -40,4 +40,26 @@ assert.equal(url, 'https://www.shatirclasses.com/?stage=elementary&subject=math&
 assert.equal(buildAdLandingUrl({ stage: 'quran', subject: 'math' }), 'https://www.shatirclasses.com/?stage=quran&utm_source=facebook&utm_medium=paid&utm_campaign=quran');
 assert.ok(parseDirectoryFilters(new URL(url).search).subject === 'math');
 void csvCell;
+
+// Advanced filters (026)
+import('../src/utils/tutorDirectory').then(({ advancedFilterCount, priceBounds }) => {
+  const d2 = normalizeDirectory({
+    subjects: [],
+    stats: { tutors: 2, completedSessions: 12, avgRating: '4.9', reviews: 3 },
+    tutors: [
+      { id: 'x', name: 'X', verified: true, priceMin: 100, slotBuckets: ['6-e', '1-m'], bookable: true, earliestTrialAt: '2030-01-01T10:00:00Z' },
+      { id: 'y', name: 'Y', verified: false, priceMin: 250, slotBuckets: ['6-m'], bookable: true, earliestTrialAt: '2030-01-02T10:00:00Z' },
+    ],
+  });
+  assert.equal(d2.stats?.avgRating, 4.9);
+  const f = parseDirectoryFilters('?days=6,9,6&time=e,x&max=150&verified=1');
+  assert.deepEqual(f, { stage: null, subject: null, days: [6], parts: ['e'], maxPrice: 150, verifiedOnly: true });
+  assert.equal(advancedFilterCount(f), 4);
+  assert.deepEqual(filterDirectory(d2, f).map((t) => t.id), ['x']);
+  assert.deepEqual(filterDirectory(d2, { stage: null, subject: null, days: [6], parts: ['m'] }).map((t) => t.id), ['y']);
+  assert.deepEqual(filterDirectory(d2, { stage: null, subject: null, maxPrice: 300 }).map((t) => t.id), ['x', 'y']);
+  assert.equal(buildDirectorySearch('?utm_source=fb', f), '?utm_source=fb&days=6&time=e&max=150&verified=1');
+  assert.deepEqual(priceBounds(d2), { min: 100, max: 250 });
+  console.log('Advanced filter tests passed.');
+});
 console.log('Tutor directory tests passed.');

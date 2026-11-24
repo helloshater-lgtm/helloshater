@@ -19,3 +19,27 @@ export const TutorDirectoryService = {
     return normalizeDirectory(data);
   },
 };
+
+export interface TutorWithoutSlots {
+  tutorId: string;
+  name: string;
+  honorific: string;
+  whatsapp: string | null;
+  lastSlotAt: string | null;
+}
+
+/** Admin: published tutors with no open trial slot (migration 026). null before it is applied. */
+export async function getTutorsWithoutTrialSlots(): Promise<TutorWithoutSlots[] | null> {
+  const { data, error } = await (testClient || supabase).rpc('admin_tutors_without_trial_slots');
+  if (error) {
+    if (isMissingRpcError(error)) return null;
+    throw new Error('تعذر تحميل المعلمين اللي مالهمش مواعيد.');
+  }
+  return (Array.isArray(data) ? data : []).map((x: any) => ({
+    tutorId: String(x.tutorId),
+    name: String(x.name ?? ''),
+    honorific: String(x.honorific ?? ''),
+    whatsapp: x.whatsapp ? String(x.whatsapp) : null,
+    lastSlotAt: x.lastSlotAt ? String(x.lastSlotAt) : null,
+  }));
+}

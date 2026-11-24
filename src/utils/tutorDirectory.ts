@@ -25,17 +25,60 @@ export interface DirectoryTutor {
   bookable: boolean;
   earliestTrialAt: string | null;
   trialSlotsCount: number;
+  summary: string | null;
+  country: string | null;
+  completedSessions: number;
+  studentsTaught: number | null;
+  /** «dow-part» of open trial slots (Cairo), e.g. "6-e" = Saturday evening. */
+  slotBuckets: string[];
+}
+
+export interface DirectoryStats {
+  tutors: number;
+  completedSessions: number;
+  ratedTutors: number;
+  avgRating: number | null;
+  reviews: number;
 }
 
 export interface DirectoryData {
   stages: Array<{ id: string; name: string }>;
   subjects: Array<{ id: string; name: string }>;
   tutors: DirectoryTutor[];
+  stats?: DirectoryStats | null;
 }
+
+export type DayPart = 'm' | 'a' | 'e';
 
 export interface DirectoryFilters {
   stage: DirectoryStageId | null;
   subject: string | null;
+  /** 0=Sunday … 6=Saturday */
+  days?: number[];
+  parts?: DayPart[];
+  maxPrice?: number | null;
+  verifiedOnly?: boolean;
+}
+
+export const DAY_LABELS: Array<{ id: number; label: string }> = [
+  { id: 6, label: 'السبت' },
+  { id: 0, label: 'الأحد' },
+  { id: 1, label: 'الاثنين' },
+  { id: 2, label: 'الثلاثاء' },
+  { id: 3, label: 'الأربعاء' },
+  { id: 4, label: 'الخميس' },
+  { id: 5, label: 'الجمعة' },
+];
+
+export const PART_LABELS: Array<{ id: DayPart; label: string; hint: string }> = [
+  { id: 'm', label: 'الصبح', hint: 'قبل ١٢ الظهر' },
+  { id: 'a', label: 'بعد الضهر', hint: '١٢ – ٥' },
+  { id: 'e', label: 'بالليل', hint: 'بعد ٥' },
+];
+
+/** Number of active "advanced" filters (shown on the filter button). */
+export function advancedFilterCount(f: DirectoryFilters): number {
+  return (f.days?.length ? 1 : 0) + (f.parts?.length ? 1 : 0) + (f.maxPrice ? 1 : 0) + (f.verifiedOnly ? 1 : 0);
 }
 
 const STAGE_ALIASES: Record<string, DirectoryStageId> = {
@@ -67,7 +110,21 @@ export function parseDirectoryFilters(search: string): DirectoryFilters {
   const rawSubject = String(p.get('subject') || '').trim().toLowerCase();
   const stage = STAGE_ALIASES[rawStage] || null;
   const subject = stage !== 'quran' && SAFE_ID.test(rawSubject) ? rawSubject : null;
-  return { stage, subject };
+  const days = String(p.get('days') || '')
+    .split(',')
+    .filter((x) => x.trim() !== '')
+    .map((x) => Number(x))
+    .filter((x, i, a) => Number.isInteger(x) && x >= 0 && x <= 6 && a.indexOf(x) === i);
+  const parts = String(p.get('time') || '')
+    .split(',')
+    .filter((x, i, a): x is DayPart => (x === 'm' || x === 'a' || x === 'e') && a.indexOf(x) === i);
+  const max = Number(p.get('max'));
+  const out: DirectoryFilters = { stage, subject };
+  if (days.length) out.days = days;
+  if (parts.length) out.parts = parts;
+  if (Number.isFinite(max) && max > 0 && max < 100000) out.maxPrice = Math.round(max);
+  if (p.get('verified') === '1') out.verifiedOnly = true;
+  return out;
 }
 
 /** New query string with the filters, keeping every other param (utm_*, gclid…). */
@@ -77,6 +134,14 @@ export function buildDirectorySearch(currentSearch: string, filters: DirectoryFi
   else p.delete('stage');
   if (filters.subject && filters.stage !== 'quran') p.set('subject', filters.subject);
   else p.delete('subject');
+  if (filters.days?.length) p.set('days', filters.days.join(','));
+  else p.delete('days');
+  if (filters.parts?.length) p.set('time', filters.parts.join(','));
+  else p.delete('time');
+  if (filters.maxPrice) p.set('max', String(filters.maxPrice));
+  else p.delete('max');
+  if (filters.verifiedOnly) p.set('verified', '1');
+  else p.delete('verified');
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -85,6 +150,15 @@ export function tutorMatches(t: DirectoryTutor, f: DirectoryFilters): boolean {
   if (f.stage === 'quran') return t.quran;
   if (f.stage && !t.stageIds.includes(f.stage)) return false;
   if (f.subject && !t.subjectIds.includes(f.subject) && !t.subjectIds.includes(`${f.subject}_en`)) return false;
+  if (f.verifiedOnly && !t.verified) return false;
+  if (f.maxPrice && (t.priceMin === null || t.priceMin > f.maxPrice)) return false;
+  if (f.days?.length || f.parts?.length) {
+    const ok = t.slotBuckets.some((b) => {
+      const [d, part] = b.split('-');
+      return (!f.days?.length || f.days.includes(Number(d))) && (!f.parts?.length || f.parts.includes(part as DayPart));
+    });
+    if (!ok) return false;
+  }
   return true;
 }
 
@@ -180,7 +254,21 @@ export function normalizeDirectory(raw: any): DirectoryData {
       bookable: Boolean(t.bookable),
       earliestTrialAt: t.earliestTrialAt ? String(t.earliestTrialAt) : null,
       trialSlotsCount: num(t.trialSlotsCount) || 0,
+      summary: t.summary ? String(t.summary) : null,
+      country: t.country ? String(t.country) : null,
+      completedSessions: num(t.completedSessions) || 0,
+      studentsTaught: num(t.studentsTaught),
+      slotBuckets: arr(t.slotBuckets).map(String),
     })),
+    stats: raw?.stats
+      ? {
+          tutors: num(raw.stats.tutors) || 0,
+          completedSessions: num(raw.stats.completedSessions) || 0,
+          ratedTutors: num(raw.stats.ratedTutors) || 0,
+          avgRating: num(raw.stats.avgRating),
+          reviews: num(raw.stats.reviews) || 0,
+        }
+      : null,
   };
 }
 
@@ -208,4 +296,31 @@ export function buildAdLandingUrl(opts: {
   p.set('utm_campaign', campaign);
   if (clean(opts.content)) p.set('utm_content', clean(opts.content));
   return `${base}/?${p.toString()}`;
+}
+
+/** Price slider bounds from the tutors' real prices. */
+export function priceBounds(data: DirectoryData): { min: number; max: number } | null {
+  const prices = data.tutors.map((t) => t.priceMin).filter((x): x is number => typeof x === 'number' && x > 0);
+  if (!prices.length) return null;
+  return { min: Math.min(...prices), max: Math.max(...prices) };
+}
+
+export const COUNTRY_FLAGS: Record<string, { flag: string; name: string }> = {
+  EG: { flag: '🇪🇬', name: 'مصر' },
+  SA: { flag: '🇸🇦', name: 'السعودية' },
+  AE: { flag: '🇦🇪', name: 'الإمارات' },
+  KW: { flag: '🇰🇼', name: 'الكويت' },
+  QA: { flag: '🇶🇦', name: 'قطر' },
+  OM: { flag: '🇴🇲', name: 'عُمان' },
+  BH: { flag: '🇧🇭', name: 'البحرين' },
+  JO: { flag: '🇯🇴', name: 'الأردن' },
+};
+
+/** Show social-proof counters only once they are big enough to build trust. */
+export const MIN_PUBLIC_SESSIONS = 10;
+
+/** «Available soon» = an open trial slot in the next 48 hours. */
+export function isAvailableSoon(t: DirectoryTutor, now: Date = new Date()): boolean {
+  if (!t.bookable || !t.earliestTrialAt) return false;
+  return new Date(t.earliestTrialAt).getTime() - now.getTime() < 48 * 3600e3;
 }
