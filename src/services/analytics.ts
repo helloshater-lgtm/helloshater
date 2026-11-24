@@ -90,11 +90,52 @@ function sanitizeEventParams(params?: Record<string, any>): Record<string, any> 
   return sanitized;
 }
 
+// ---------------------------------------------------------------------------
+// Campaign attribution + internal traffic
+// ---------------------------------------------------------------------------
+const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+const UTM_STORAGE_KEY = 'shatir_landing_utm_v1';
+const INTERNAL_STORAGE_KEY = 'shatir_internal_traffic_v1';
+const INTERNAL_PATH = /^\/#(admin|tutor-dashboard)/;
+
+/** UTM tags of the landing URL, kept for the whole visit (hash routes drop them). */
+export function getLandingUtmQuery(): string {
+  if (typeof window === 'undefined') return '';
+  const params = new URLSearchParams(window.location.search);
+  const found = UTM_KEYS.filter((k) => params.get(k)).map(
+    (k) => `${k}=${encodeURIComponent(String(params.get(k)).slice(0, 80))}`
+  );
+  try {
+    if (found.length) {
+      sessionStorage.setItem(UTM_STORAGE_KEY, found.join('&'));
+      return found.join('&');
+    }
+    return sessionStorage.getItem(UTM_STORAGE_KEY) || '';
+  } catch {
+    return found.join('&');
+  }
+}
+
+/** Team members (admin / tutor dashboards) are excluded from analytics on this device. */
+export function isInternalTraffic(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (INTERNAL_PATH.test(`/${window.location.hash}`)) {
+      localStorage.setItem(INTERNAL_STORAGE_KEY, '1');
+      return true;
+    }
+    return localStorage.getItem(INTERNAL_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Low-level safe dispatcher to window.gtag
  */
 export function sendGAEvent(eventName: string, params?: Record<string, any>): void {
   if (typeof window === 'undefined') return;
+  if (isInternalTraffic()) return;
 
   const safeParams = sanitizeEventParams(params);
 
@@ -123,7 +164,9 @@ export function trackPageView(customPath?: string, customTitle?: string): void {
   lastTrackedPagePath = path;
 
   // Clean URL without sensitive query parameters
-  const sanitizedLocation = `${window.location.origin}${path}`;
+  // Keep only campaign tags (utm_*) so ad visits are attributed to their source.
+  const utm = getLandingUtmQuery();
+  const sanitizedLocation = `${window.location.origin}/${utm ? `?${utm}` : ''}${path.startsWith('/') ? path.slice(1) : path}`;
 
   sendGAEvent('page_view', {
     page_path: path,
@@ -441,3 +484,17 @@ export function trackParentLeadSubmitFailed(params: {
 }
 
 
+
+/**
+ * Key conversion: a parent confirmed a free trial booking.
+ * Mark «trial_booked» as a Key event in GA4 (Admin → Events).
+ * Meta Pixel stays off unless SHATIR_CONFIG.metaPixelEnabled is turned on.
+ */
+export function trackTrialBooked(tutorId: string, source: 'guest' | 'account' = 'guest'): void {
+  sendGAEvent('trial_booked', { tutor_id: tutorId, booking_type: 'trial', source });
+}
+
+/** Directory filters used (stage / subject chips). */
+export function trackDirectoryFilter(stageId: string | null, subjectId: string | null): void {
+  sendGAEvent('directory_filter', { stage_id: stageId || 'all', subject_id: subjectId || 'all' });
+}

@@ -122,6 +122,20 @@ function mapDirectTrialRpcError(
   const lower = rawMessage.toLowerCase();
   const code = error?.code ? String(error.code) : undefined;
 
+  const KNOWN: Record<string, string> = {
+    TRIAL_GUEST_LIMIT: 'عندك حجز تجربة جاي بالفعل. لو محتاج حجز تاني كلّمنا على واتساب.',
+    TRIAL_REPEAT_TUTOR: 'حجزت تجربة مع المعلم ده قبل كده. جرّب معلم تاني أو كلّمنا على واتساب.',
+    TRIAL_TIME_CONFLICT: 'عندك حجز تاني في نفس الميعاد. اختار ميعاد مختلف.',
+    TRIAL_INVALID_CONTACT: 'اكتب اسمك ورقم واتساب صحيح.',
+    TRIAL_TOO_SOON: 'الميعاد ده قريب أوي. اختار ميعاد بعده.',
+    TRIAL_SELF_BOOKING: 'مينفعش تحجز مع نفسك.',
+    TRIAL_EMAIL_UNVERIFIED: 'أكّد بإيميلك الأول أو احجز من غير إيميل.',
+  };
+  const known = Object.keys(KNOWN).find((k) => rawMessage.includes(k));
+  if (known) {
+    return new DirectTrialBookingError(KNOWN[known], { isSlotUnavailable: false, code });
+  }
+
   if (
     lower.includes('not authenticated') ||
     lower.includes('jwt') ||
@@ -247,6 +261,22 @@ export const DirectTrialBookingService = {
     return () => {
       data?.subscription?.unsubscribe();
     };
+  },
+
+  /**
+   * Guest booking (no email): creates a silent anonymous Supabase session so the
+   * existing secure RPCs keep working. Throws GUEST_UNAVAILABLE when anonymous
+   * sign-ins are disabled in Supabase, so the UI can fall back to the email code.
+   */
+  async signInGuest(): Promise<{ id: string }> {
+    const client = getDbClient();
+    const { data, error } = await (client.auth as any).signInAnonymously();
+    if (error || !data?.user) {
+      const e = new DirectTrialBookingError('GUEST_UNAVAILABLE');
+      (e as any).isGuestUnavailable = true;
+      throw e;
+    }
+    return { id: data.user.id };
   },
 
   async signOutSession(): Promise<void> {

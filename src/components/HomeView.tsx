@@ -13,6 +13,9 @@ import { DataService } from '../services/dataService';
 import { TutorSelector } from './TutorSelector';
 import { SearchResults } from './SearchResults';
 import { TutorCard } from './TutorCard';
+import { TutorDirectory } from './TutorDirectory';
+import { TutorDirectoryService } from '../services/tutorDirectoryService';
+import { DirectoryData, parseDirectoryFilters } from '../utils/tutorDirectory';
 import {
   formatEarliestTrialSlotBadge,
   formatSessionPriceSummary,
@@ -81,6 +84,23 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [isFeaturedLoading, setIsFeaturedLoading] = useState(true);
   const [featuredError, setFeaturedError] = useState<string | null>(null);
   const [heroImageError, setHeroImageError] = useState(false);
+  // Tutors-first directory (migration 025). null = not available → classic hero.
+  const [directory, setDirectory] = useState<DirectoryData | null>(null);
+  const [directoryChecked, setDirectoryChecked] = useState(false);
+  const [directoryFilters] = useState(() =>
+    parseDirectoryFilters(typeof window !== 'undefined' ? window.location.search : '')
+  );
+
+  useEffect(() => {
+    let active = true;
+    TutorDirectoryService.getDirectory()
+      .then((d) => active && setDirectory(d && d.tutors.length > 0 ? d : null))
+      .catch(() => active && setDirectory(null))
+      .finally(() => active && setDirectoryChecked(true));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Search state
   const [hasSearched, setHasSearched] = useState(Boolean(savedCriteria));
@@ -229,10 +249,26 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   return (
     <div className="w-full animate-fade-in">
+      {directory && (
+        <TutorDirectory
+          data={directory}
+          initialFilters={directoryFilters}
+          onBook={(id) => onSelectTutor(id, { focusBooking: true })}
+          onOpenProfile={(id) => onSelectTutor(id)}
+          onHelp={onOpenHelpModal}
+        />
+      )}
+      {!directory && !directoryChecked && (
+        <div className="max-w-7xl mx-auto px-4 pt-8 pb-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-56 rounded-3xl bg-[#F0F6FD] animate-pulse" />
+          ))}
+        </div>
+      )}
       {/* ===================================================================== */}
       {/* 1. HERO SECTION (Desktop 2-col with real tutor preview | Mobile clean) */}
       {/* ===================================================================== */}
-      <section className="relative w-full overflow-hidden border-b border-[#E2E8F0] bg-gradient-to-b from-[#F0F6FD] via-[#F7FAFF] to-white">
+      {!directory && directoryChecked && <section className="relative w-full overflow-hidden border-b border-[#E2E8F0] bg-gradient-to-b from-[#F0F6FD] via-[#F7FAFF] to-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-8 sm:pt-12 sm:pb-12 lg:py-14">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
             {/* Right Side (Copy + Trial Promise + CTAs) */}
@@ -410,7 +446,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <span>فريق يساعدك في الاختيار</span>
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ===================================================================== */}
       {/* 2. SIMPLIFIED SEARCH SECTION + SEARCH RESULTS                         */}
@@ -455,7 +491,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         {/* =================================================================== */}
         {/* 3. CURATED READY TUTORS SECTION («تعرّف على معلم طفلك القادم»)     */}
         {/* =================================================================== */}
-        <section
+        {!directory && <section
           id="featured-tutors"
           className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 scroll-mt-20"
         >
@@ -572,7 +608,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </p>
             </>
           )}
-        </section>
+        </section>}
 
         {/* =================================================================== */}
         {/* 4. HOW IT WORKS («من أول اختيار... لأول حصة»)                     */}
