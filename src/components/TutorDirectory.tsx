@@ -89,10 +89,10 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
   const wa = `https://wa.me/${waNumber()}?text=${encodeURIComponent(`أهلًا، عايز أسأل عن ${t.honorific} ${t.name} على شاطر كلاسيز`)}`;
 
   return (
-    <article className="bg-white rounded-3xl border border-[#E2E8F0] shadow-xs p-4 flex flex-col gap-3 hover:shadow-md transition-shadow">
+    <article className="bg-white rounded-2xl border border-[#E2E8F0] shadow-xs p-4 flex flex-col gap-2.5 hover:shadow-md transition-shadow">
       {/* Photo + name + rating + price */}
       <div className="flex items-start gap-3.5">
-        <button type="button" onClick={onOpen} aria-label={`ملف ${t.name}`} className="relative w-[92px] h-[92px] rounded-2xl overflow-hidden bg-[#F0F6FD] shrink-0 cursor-pointer">
+        <button type="button" onClick={onOpen} aria-label={`ملف ${t.name}`} className="relative w-[76px] h-[76px] rounded-2xl overflow-hidden bg-[#F0F6FD] shrink-0 cursor-pointer">
           {t.avatarUrl && !imgError ? (
             <img src={t.avatarUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setImgError(true)} className="w-full h-full object-cover object-top" />
           ) : (
@@ -106,7 +106,7 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
         </button>
         <div className="flex-1 min-w-0">
           <button type="button" onClick={onOpen} className="flex items-center gap-1.5 max-w-full text-right cursor-pointer">
-            <span className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44] truncate">
+            <span className="font-['Cairo'] text-base font-extrabold text-[#1F2A44] truncate">
               {t.honorific} {t.name}
             </span>
             {t.verified && <BadgeCheck className="w-4.5 h-4.5 w-[18px] h-[18px] text-[#0D4E8B] shrink-0" aria-label="معلم معتمد" />}
@@ -116,11 +116,11 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
               </span>
             )}
           </button>
-          <div className="mt-2 grid grid-cols-2 gap-2">
+          <div className="mt-1.5 grid grid-cols-2 gap-2">
             <div>
               {rated ? (
                 <>
-                  <p className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44] flex items-center gap-1">
+                  <p className="font-['Cairo'] text-base font-extrabold text-[#1F2A44] flex items-center gap-1 leading-tight">
                     <Star className="w-4 h-4 fill-[#FFC629] text-[#FFC629]" />
                     {toArabicDigits(Number(t.rating).toFixed(1))}
                   </p>
@@ -128,7 +128,7 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
                 </>
               ) : (
                 <>
-                  <p className="font-['Cairo'] text-sm font-extrabold text-[#8A6100] flex items-center gap-1 pt-1">
+                  <p className="font-['Cairo'] text-sm font-extrabold text-[#8A6100] flex items-center gap-1 leading-tight">
                     <Sparkles className="w-4 h-4" />
                     جديد
                   </p>
@@ -138,7 +138,7 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
             </div>
             {price && (
               <div>
-                <p className="font-['Cairo'] text-lg font-extrabold text-[#1F2A44] whitespace-nowrap">
+                <p className="font-['Cairo'] text-base font-extrabold text-[#1F2A44] whitespace-nowrap leading-tight">
                   {price} <span className="text-sm">{t.currency || 'ج.م'}</span>
                 </p>
                 <p className="text-xs text-[#64748B]">حصة {toArabicDigits(t.sessionMinutes || 50)} دقيقة</p>
@@ -149,7 +149,7 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
       </div>
 
       {/* Badges */}
-      <ul className="space-y-1.5 text-sm text-[#1F2A44]">
+      <ul className="space-y-1 text-[13px] text-[#1F2A44] empty:hidden">
         {star && (
           <li className="flex items-center gap-2 font-bold">
             <Award className="w-4 h-4 text-[#C2410C]" strokeWidth={2} />
@@ -165,10 +165,10 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
       </ul>
 
       {/* Headline + summary */}
-      <div className="text-sm leading-relaxed">
+      <div className="text-[13px] leading-relaxed">
         {t.headline && <p className="font-bold text-[#1F2A44] line-clamp-2">{t.headline}</p>}
-        {t.summary && <p className="text-[#475569] line-clamp-2">{t.summary}</p>}
-        <button type="button" onClick={onOpen} className="mt-0.5 text-sm font-bold text-[#0D4E8B] underline underline-offset-4 cursor-pointer">
+        {t.summary && <p className="text-[#475569] line-clamp-1">{t.summary}</p>}
+        <button type="button" onClick={onOpen} className="mt-0.5 text-[13px] font-bold text-[#0D4E8B] underline underline-offset-4 cursor-pointer">
           اعرف أكتر
         </button>
       </div>
@@ -194,7 +194,7 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`اسأل عن ${t.name} على واتساب`}
-            className="w-12 h-12 shrink-0 rounded-2xl border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-emerald-700 flex items-center justify-center"
+            className="w-11 h-11 shrink-0 rounded-xl border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-emerald-700 flex items-center justify-center"
           >
             <MessageCircle className="w-5 h-5" strokeWidth={1.75} />
           </a>
@@ -202,7 +202,7 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
             <button
               type="button"
               onClick={onBook}
-              className="flex-1 h-12 rounded-2xl bg-[#FFC629] hover:bg-[#F5BC18] text-[#1F2A44] font-['Cairo'] font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer"
+              className="flex-1 h-11 rounded-xl bg-[#FFC629] hover:bg-[#F5BC18] text-[#1F2A44] font-['Cairo'] font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer"
             >
               <Gift className="w-4 h-4" strokeWidth={2} />
               احجز تجربة مجانية
@@ -211,7 +211,7 @@ const TutorTile: React.FC<{ t: DirectoryTutor; onBook: () => void; onOpen: () =>
             <button
               type="button"
               onClick={onOpen}
-              className="flex-1 h-12 rounded-2xl border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-[#0D4E8B] font-['Cairo'] font-extrabold text-sm cursor-pointer"
+              className="flex-1 h-11 rounded-xl border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-[#0D4E8B] font-['Cairo'] font-extrabold text-sm cursor-pointer"
             >
               شوف الملف والمواعيد
             </button>
@@ -519,6 +519,29 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
   const [filters, setFilters] = useState<DirectoryFilters>(initialFilters);
   const [limit, setLimit] = useState(PAGE);
   const [sheet, setSheet] = useState<'filters' | 'help' | null>(null);
+  // Big search panel scrolls away; a slim bar takes its place under the site header.
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  const [showCompact, setShowCompact] = useState(false);
+  const [headerH, setHeaderH] = useState(64);
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const measure = () => setHeaderH(document.querySelector('header')?.getBoundingClientRect().height || 64);
+    measure();
+    window.addEventListener('resize', measure);
+    const onScroll = () => {
+      const h = document.querySelector('header')?.getBoundingClientRect().height || 64;
+      const panelBottom = el.getBoundingClientRect().bottom;
+      const sectionBottom = document.getElementById('tutors')?.getBoundingClientRect().bottom ?? 0;
+      setShowCompact(panelBottom < h && sectionBottom > h + 120);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
 
   const stageChips = useMemo(() => stageChipsFor(data), [data]);
   const subjectChips = useMemo(() => subjectChipsFor(data, filters.stage), [data, filters.stage]);
@@ -573,7 +596,7 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`min-w-0 h-14 px-3.5 rounded-2xl border text-right flex items-center gap-2 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+      className={`min-w-0 h-12 px-3 rounded-xl border text-right flex items-center gap-2 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
         value ? 'border-[#0D4E8B] bg-[#F0F6FD]' : 'border-[#E2E8F0] bg-white hover:border-[#94A3B8]'
       }`}
     >
@@ -585,8 +608,28 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
     </button>
   );
 
+  const compactBar = showCompact && (
+    <div className="fixed inset-x-0 z-30 bg-white/95 backdrop-blur border-b border-[#E2E8F0] shadow-[0_4px_12px_rgba(15,23,42,0.06)]" style={{ top: headerH }} dir="rtl">
+      <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2">
+        <button type="button" onClick={() => setPicker('stage')} className={`min-w-0 flex-1 h-10 px-3 rounded-full border text-sm font-bold flex items-center justify-between gap-1 cursor-pointer ${stageLabel ? 'border-[#0D4E8B] bg-[#F0F6FD] text-[#0D4E8B]' : 'border-[#E2E8F0] text-[#1F2A44]'}`}>
+          <span className="truncate">{stageLabel || 'كل المراحل'}</span>
+          <ChevronDown className="w-4 h-4 shrink-0" />
+        </button>
+        <button type="button" onClick={() => setPicker('subject')} disabled={filters.stage === 'quran' || subjectChips.length === 0} className={`min-w-0 flex-1 h-10 px-3 rounded-full border text-sm font-bold flex items-center justify-between gap-1 cursor-pointer disabled:opacity-50 ${subjectLabel ? 'border-[#0D4E8B] bg-[#F0F6FD] text-[#0D4E8B]' : 'border-[#E2E8F0] text-[#1F2A44]'}`}>
+          <span className="truncate">{filters.stage === 'quran' ? 'قرآن' : subjectLabel || 'كل المواد'}</span>
+          <ChevronDown className="w-4 h-4 shrink-0" />
+        </button>
+        <button type="button" onClick={() => setSheet('filters')} aria-label="فلترة" className={`relative w-10 h-10 shrink-0 rounded-full flex items-center justify-center cursor-pointer ${advCount ? 'bg-[#1F2A44] text-white' : 'bg-[#FFC629] text-[#1F2A44]'}`}>
+          <SlidersHorizontal className="w-4 h-4" />
+          {advCount > 0 && <span className="absolute -top-1 -left-1 min-w-4 h-4 px-1 rounded-full bg-[#FFC629] text-[#1F2A44] text-[10px] font-extrabold flex items-center justify-center">{toArabicDigits(advCount)}</span>}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <section id="tutors" aria-label="المعلمين" className="w-full bg-gradient-to-b from-[#EAF2FC] via-[#F5F9FE] to-white border-b border-[#E2E8F0] scroll-mt-16">
+      {compactBar}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-12 pb-8 space-y-5">
         {/* Hero copy */}
         <div className="space-y-3 text-center max-w-2xl mx-auto">
@@ -594,7 +637,7 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
             <Gift className="w-4 h-4" />
             أول حصة تجريبية مجانًا · ٢٠ دقيقة أونلاين
           </p>
-          <h1 className="font-['Cairo'] font-black text-[#1F2A44] text-[28px] sm:text-[44px] leading-[1.25]">
+          <h1 className="font-['Cairo'] font-black text-[#1F2A44] text-[26px] sm:text-[42px] leading-[1.3]">
             {title ? (
               <>
                 أفضل معلمين <span className="text-[#0D4E8B]">{title}</span>
@@ -612,8 +655,8 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
         </div>
 
         {/* Search panel */}
-        <div className="sticky top-[64px] z-30 -mx-4 px-4 sm:mx-0 sm:px-0 py-2">
-          <div className="max-w-3xl mx-auto bg-white rounded-3xl border border-[#E2E8F0] shadow-[0_10px_30px_rgba(13,78,139,0.08)] p-2 grid grid-cols-[1fr_1fr_auto] gap-2">
+        <div ref={panelRef} className="py-1">
+          <div className="max-w-3xl mx-auto bg-white rounded-2xl border border-[#E2E8F0] shadow-[0_8px_24px_rgba(13,78,139,0.08)] p-1.5 grid grid-cols-[1fr_1fr_auto] gap-2">
             <SelectButton label="المرحلة" value={stageLabel || null} placeholder="كل المراحل" onClick={() => setPicker('stage')} />
             <SelectButton
               label="المادة"
@@ -626,7 +669,7 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
               type="button"
               onClick={() => setSheet('filters')}
               aria-label={advCount ? `فلترة (${advCount})` : 'فلترة: المواعيد والسعر'}
-              className={`relative h-14 w-14 rounded-2xl flex items-center justify-center cursor-pointer ${
+              className={`relative h-12 w-12 rounded-xl flex items-center justify-center cursor-pointer ${
                 advCount ? 'bg-[#1F2A44] text-white' : 'bg-[#FFC629] text-[#1F2A44] hover:bg-[#F5BC18]'
               }`}
             >

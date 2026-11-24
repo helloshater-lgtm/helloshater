@@ -451,7 +451,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* ===================================================================== */}
       {/* 2. SIMPLIFIED SEARCH SECTION + SEARCH RESULTS                         */}
       {/* ===================================================================== */}
-      <section
+      {!directory && <section
         id="tutor-selector"
         ref={selectorRef}
         className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 sm:mt-8 mb-12 sm:mb-14 scroll-mt-20"
@@ -484,7 +484,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             />
           </div>
         )}
-      </section>
+      </section>}
 
       {/* Main Content Flow */}
       <div className="space-y-12 sm:space-y-16">
