@@ -576,8 +576,6 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
   const [picker, setPicker] = useState<'stage' | 'subject' | null>(null);
   const dayLabel = (filters.parts || []).map((p) => PART_LABELS.find((x) => x.id === p)?.label).filter(Boolean).join('، ');
   const pills: Array<{ key: string; label: string; clear: () => void }> = [
-    ...(stageLabel ? [{ key: 'stage', label: stageLabel, clear: () => setStage(null) }] : []),
-    ...(subjectLabel ? [{ key: 'subject', label: subjectLabel, clear: () => setSubject(null) }] : []),
     ...(dayLabel ? [{ key: 'parts', label: dayLabel, clear: () => apply({ ...filters, parts: undefined }) }] : []),
     ...(filters.days?.length ? [{ key: 'days', label: filters.days.map((d) => DAY_LABELS.find((x) => x.id === d)?.label).join('، '), clear: () => apply({ ...filters, days: undefined }) }] : []),
     ...(filters.maxPrice ? [{ key: 'max', label: `لحد ${toArabicDigits(filters.maxPrice)} ج.م`, clear: () => apply({ ...filters, maxPrice: null }) }] : []),
@@ -630,9 +628,9 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
   return (
     <section id="tutors" aria-label="المعلمين" className="w-full bg-gradient-to-b from-[#EAF2FC] via-[#F5F9FE] to-white border-b border-[#E2E8F0] scroll-mt-16">
       {compactBar}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-12 pb-8 space-y-5">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-10 pb-8 space-y-3 sm:space-y-4">
         {/* Hero copy */}
-        <div className="space-y-3 text-center max-w-2xl mx-auto">
+        <div className="space-y-2 text-center max-w-2xl mx-auto">
           <p className="inline-flex items-center gap-2 h-8 px-3 rounded-full bg-white border border-[#CBEAD9] text-xs sm:text-sm font-['Cairo'] font-extrabold text-[#0B5D38]">
             <Gift className="w-4 h-4" />
             أول حصة تجريبية مجانًا · ٢٠ دقيقة أونلاين
@@ -640,7 +638,8 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
           <h1 className="font-['Cairo'] font-black text-[#1F2A44] text-[26px] sm:text-[42px] leading-[1.3]">
             {title ? (
               <>
-                أفضل معلمين <span className="text-[#0D4E8B]">{title}</span>
+                أفضل معلمين <span className="text-[#0D4E8B]">{subjectLabel || stageLabel}</span>
+                {subjectLabel && stageLabel && <span className="block text-lg sm:text-2xl text-[#475569] mt-1">{filters.stage === 'quran' ? '' : `للمرحلة ${stageLabel === 'ابتدائي' ? 'الابتدائية' : stageLabel === 'إعدادي' ? 'الإعدادية' : 'الثانوية'}`}</span>}
               </>
             ) : (
               <>
@@ -649,13 +648,13 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
               </>
             )}
           </h1>
-          <p className="text-sm sm:text-base text-[#475569] leading-relaxed">
+          <p className={`text-[13px] sm:text-base text-[#475569] leading-snug ${title ? 'hidden sm:block' : ''}`}>
             اختار المعلم، شوف أقرب ميعاد، واحجز في دقيقة. من غير دفع ولا تسجيل.
           </p>
         </div>
 
         {/* Search panel */}
-        <div ref={panelRef} className="py-1">
+        <div ref={panelRef}>
           <div className="max-w-3xl mx-auto bg-white rounded-2xl border border-[#E2E8F0] shadow-[0_8px_24px_rgba(13,78,139,0.08)] p-1.5 grid grid-cols-[1fr_1fr_auto] gap-2">
             <SelectButton label="المرحلة" value={stageLabel || null} placeholder="كل المراحل" onClick={() => setPicker('stage')} />
             <SelectButton
@@ -683,7 +682,7 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
           </div>
         </div>
 
-        <div className="max-w-3xl mx-auto -mt-1 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-1.5 sm:gap-3">
           <button type="button" onClick={() => setSheet('help')} className="inline-flex items-center gap-1.5 text-sm font-['Cairo'] font-extrabold text-[#0D4E8B] cursor-pointer hover:underline">
             <Sparkles className="w-4 h-4" />
             مش عارف تختار؟ جاوب ٣ أسئلة ونرشّحلك
@@ -720,7 +719,7 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
         </div>
 
         {/* Results header */}
-        <div className="flex flex-wrap items-end justify-between gap-2 pt-2">
+        <div className="flex flex-wrap items-end justify-between gap-2 pt-3 border-t border-[#E2E8F0]/70 sm:border-0 sm:pt-2">
           <div aria-live="polite">
             <h2 className="font-['Cairo'] text-lg sm:text-xl font-extrabold text-[#1F2A44]">
               {list.length === 0
@@ -748,7 +747,7 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
                 </button>
               ))}
               {pills.length > 1 && (
-                <button type="button" onClick={() => apply({ stage: null, subject: null })} className="h-8 px-2 text-xs font-bold text-[#0D4E8B] underline cursor-pointer">
+                <button type="button" onClick={() => apply({ stage: filters.stage, subject: filters.subject })} className="h-8 px-2 text-xs font-bold text-[#0D4E8B] underline cursor-pointer">
                   مسح الكل
                 </button>
               )}
