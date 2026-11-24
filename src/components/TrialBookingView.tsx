@@ -38,6 +38,7 @@ import {
 import { EmailCodeVerifier } from './EmailCodeVerifier';
 import { ParentDashboardService } from '../services/parentDashboardService';
 import { ParentChild } from '../types';
+import { trackTrialBooked } from '../services/analytics';
 
 interface TrialBookingViewProps {
   tutorId: string;
@@ -89,6 +90,8 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
   const [email, setEmail] = useState('');
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
   const [isSendingCode, setIsSendingCode] = useState(false);
+  // Guest booking (no login) is the default; email login is optional.
+  const [useEmailLogin, setUseEmailLogin] = useState(false);
 
   const [guardianName, setGuardianName] = useState('');
   const [countryCode, setCountryCode] = useState('+20');
@@ -292,6 +295,17 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
     }
     setIsConfirming(true);
     try {
+      if (!authUser) {
+        try {
+          const guest = await DirectTrialBookingService.signInGuest();
+          setAuthUser({ id: guest.id, email: null });
+        } catch {
+          saveDraft();
+          setUseEmailLogin(true);
+          setFormError('الحجز السريع مش متاح دلوقتي. أكّد بإيميلك في خطوة واحدة.');
+          return;
+        }
+      }
       const booked = await DirectTrialBookingService.parentBookTrial({
         slotId: selectedSlot.id,
         guardianName: guardianName.trim(),
@@ -301,6 +315,7 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
       clearDirectTrialReturnTarget();
       if (booked?.id) await attachChild(booked.id);
       setConfirmed(booked);
+      trackTrialBooked(tutorId, authUser?.email ? 'account' : 'guest');
       setStep('done');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       loadSlots().catch(() => undefined);
@@ -560,10 +575,15 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
             <div className={`${card} p-6 flex justify-center`}>
               <Loader2 className="w-6 h-6 animate-spin text-[#0D4E8B]" />
             </div>
-          ) : !authUser ? (
+          ) : !authUser && useEmailLogin ? (
             <section aria-label="تأكيد البريد" className={`${card} p-4 sm:p-5 space-y-4`}>
               <div className="space-y-1">
-                <h2 className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">بريدك الإلكتروني</h2>
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">بريدك الإلكتروني</h2>
+                  <button type="button" onClick={() => { setUseEmailLogin(false); setCodeSentTo(null); setFormError(null); }} className="text-sm font-bold text-[#0D4E8B] hover:underline cursor-pointer">
+                    احجز من غير إيميل
+                  </button>
+                </div>
                 <p className="text-sm text-[#64748B]">هنبعتلك كود تكتبه هنا، عشان تتابع حجزك ورابط الحصة في «حجوزاتي».</p>
               </div>
               {codeSentTo ? (
@@ -597,9 +617,20 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
             <form onSubmit={handleConfirm} noValidate aria-label="بيانات التواصل" className={`${card} p-4 sm:p-5 space-y-4`}>
               <div className="space-y-1">
                 <h2 className="font-['Cairo'] text-base font-extrabold text-[#1F2A44]">بيانات التواصل</h2>
-                <p className="text-xs text-[#64748B]" dir="rtl">
-                  مسجّل بـ <span dir="ltr">{authUser.email}</span>
-                </p>
+                {authUser?.email ? (
+                  <p className="text-xs text-[#64748B]" dir="rtl">
+                    مسجّل بـ <span dir="ltr">{authUser.email}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-[#64748B]">
+                    مش محتاج حساب. اكتب اسمك ورقم الواتساب وأكّد.{' '}
+                    {!authUser && (
+                      <button type="button" onClick={() => { setUseEmailLogin(true); setFormError(null); }} className="font-bold text-[#0D4E8B] hover:underline cursor-pointer">
+                        عندي حساب
+                      </button>
+                    )}
+                  </p>
+                )}
               </div>
               {children !== null && (
                 <div className="space-y-1.5">
