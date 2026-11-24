@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   Gift,
   GraduationCap,
   MessageCircle,
@@ -260,9 +261,13 @@ const Sheet: React.FC<{ title: string; onClose: () => void; footer: React.ReactN
           )}
         </div>
         <div className="overflow-y-auto px-4 py-5 space-y-7">{children}</div>
-        <div className="p-4 border-t border-[#F1F5F9] shrink-0" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
-          {footer}
-        </div>
+        {footer ? (
+          <div className="p-4 border-t border-[#F1F5F9] shrink-0" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
+            {footer}
+          </div>
+        ) : (
+          <div className="shrink-0" style={{ height: 'max(16px, env(safe-area-inset-bottom))' }} />
+        )}
       </div>
     </div>
   );
@@ -545,119 +550,168 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
   const subjectLabel = filters.subject ? subjectChips.find((c) => c.id === filters.subject)?.label : null;
   const title = [subjectLabel, stageLabel].filter(Boolean).join(' · ');
 
+  const [picker, setPicker] = useState<'stage' | 'subject' | null>(null);
+  const dayLabel = (filters.parts || []).map((p) => PART_LABELS.find((x) => x.id === p)?.label).filter(Boolean).join('، ');
+  const pills: Array<{ key: string; label: string; clear: () => void }> = [
+    ...(stageLabel ? [{ key: 'stage', label: stageLabel, clear: () => setStage(null) }] : []),
+    ...(subjectLabel ? [{ key: 'subject', label: subjectLabel, clear: () => setSubject(null) }] : []),
+    ...(dayLabel ? [{ key: 'parts', label: dayLabel, clear: () => apply({ ...filters, parts: undefined }) }] : []),
+    ...(filters.days?.length ? [{ key: 'days', label: filters.days.map((d) => DAY_LABELS.find((x) => x.id === d)?.label).join('، '), clear: () => apply({ ...filters, days: undefined }) }] : []),
+    ...(filters.maxPrice ? [{ key: 'max', label: `لحد ${toArabicDigits(filters.maxPrice)} ج.م`, clear: () => apply({ ...filters, maxPrice: null }) }] : []),
+    ...(filters.verifiedOnly ? [{ key: 'v', label: 'معتمد', clear: () => apply({ ...filters, verifiedOnly: false }) }] : []),
+  ];
+  const otherCount = list.length - bookableCount;
+
+  const SelectButton: React.FC<{ label: string; value: string | null; placeholder: string; onClick: () => void; disabled?: boolean }> = ({
+    label,
+    value,
+    placeholder,
+    onClick,
+    disabled,
+  }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`min-w-0 h-14 px-3.5 rounded-2xl border text-right flex items-center gap-2 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+        value ? 'border-[#0D4E8B] bg-[#F0F6FD]' : 'border-[#E2E8F0] bg-white hover:border-[#94A3B8]'
+      }`}
+    >
+      <span className="flex-1 min-w-0">
+        <span className="block text-[11px] font-bold text-[#64748B] leading-none mb-1">{label}</span>
+        <span className={`block truncate font-['Cairo'] text-sm font-extrabold ${value ? 'text-[#0D4E8B]' : 'text-[#1F2A44]'}`}>{value || placeholder}</span>
+      </span>
+      <ChevronDown className="w-4 h-4 text-[#64748B] shrink-0" />
+    </button>
+  );
+
   return (
-    <section id="tutors" aria-label="المعلمين" className="w-full bg-gradient-to-b from-[#F0F6FD] to-white border-b border-[#E2E8F0] scroll-mt-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-10 pb-8 space-y-4">
-        <div className="space-y-2 text-center sm:text-right">
-          <h1 className="font-['Cairo'] font-black text-[#1F2A44] text-[26px] sm:text-[36px] leading-tight">
-            {title ? `معلمين ${title}` : 'اختار معلم لطفلك'}
-            <span className="block text-[#0D4E8B] text-lg sm:text-2xl mt-1">واحجز تجربة مجانية ٢٠ دقيقة في دقيقة</span>
+    <section id="tutors" aria-label="المعلمين" className="w-full bg-gradient-to-b from-[#EAF2FC] via-[#F5F9FE] to-white border-b border-[#E2E8F0] scroll-mt-16">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-12 pb-8 space-y-5">
+        {/* Hero copy */}
+        <div className="space-y-3 text-center max-w-2xl mx-auto">
+          <p className="inline-flex items-center gap-2 h-8 px-3 rounded-full bg-white border border-[#CBEAD9] text-xs sm:text-sm font-['Cairo'] font-extrabold text-[#0B5D38]">
+            <Gift className="w-4 h-4" />
+            أول حصة تجريبية مجانًا · ٢٠ دقيقة أونلاين
+          </p>
+          <h1 className="font-['Cairo'] font-black text-[#1F2A44] text-[28px] sm:text-[44px] leading-[1.25]">
+            {title ? (
+              <>
+                أفضل معلمين <span className="text-[#0D4E8B]">{title}</span>
+              </>
+            ) : (
+              <>
+                معلم خصوصي لطفلك
+                <span className="block text-[#0D4E8B]">من بيتك، وبمتابعة حقيقية</span>
+              </>
+            )}
           </h1>
-          <p className="flex flex-wrap justify-center sm:justify-start gap-x-4 gap-y-1 text-xs sm:text-sm font-bold text-[#0B5D38]">
-            <span className="flex items-center gap-1"><CheckCircle2 className="w-4 h-4" />من غير دفع</span>
-            <span className="flex items-center gap-1"><CheckCircle2 className="w-4 h-4" />من غير تسجيل</span>
-            <span className="flex items-center gap-1"><CheckCircle2 className="w-4 h-4" />لو ما عجبكش نرشّحلك غيره</span>
+          <p className="text-sm sm:text-base text-[#475569] leading-relaxed">
+            اختار المعلم، شوف أقرب ميعاد، واحجز في دقيقة. من غير دفع ولا تسجيل.
           </p>
         </div>
 
-        {/* Trust bar — real numbers only, shown when meaningful */}
-        {stats && (
-          <dl className="grid grid-cols-3 gap-2 text-center">
-            <div className="bg-white rounded-2xl border border-[#E2E8F0] py-2.5">
-              <dt className="text-xs text-[#64748B]">معلم مراجَع من شاطر</dt>
-              <dd className="font-['Cairo'] text-xl font-extrabold text-[#1F2A44]">{toArabicDigits(stats.tutors)}+</dd>
-            </div>
-            <div className="bg-white rounded-2xl border border-[#E2E8F0] py-2.5">
-              {stats.completedSessions >= MIN_PUBLIC_SESSIONS ? (
-                <>
-                  <dt className="text-xs text-[#64748B]">حصة اتعملت</dt>
-                  <dd className="font-['Cairo'] text-xl font-extrabold text-[#1F2A44]">{toArabicDigits(stats.completedSessions)}+</dd>
-                </>
-              ) : (
-                <>
-                  <dt className="text-xs text-[#64748B]">مدة التجربة</dt>
-                  <dd className="font-['Cairo'] text-xl font-extrabold text-[#1F2A44]">٢٠ دقيقة</dd>
-                </>
-              )}
-            </div>
-            <div className="bg-white rounded-2xl border border-[#E2E8F0] py-2.5">
-              {stats.avgRating && stats.reviews >= MIN_PUBLIC_SESSIONS ? (
-                <>
-                  <dt className="text-xs text-[#64748B]">متوسط التقييم</dt>
-                  <dd className="font-['Cairo'] text-xl font-extrabold text-[#1F2A44] flex items-center justify-center gap-1">
-                    <Star className="w-4 h-4 fill-[#FFC629] text-[#FFC629]" />
-                    {toArabicDigits(Number(stats.avgRating).toFixed(1))}
-                  </dd>
-                </>
-              ) : (
-                <>
-                  <dt className="text-xs text-[#64748B]">تقرير بعد الحصة</dt>
-                  <dd className="font-['Cairo'] text-xl font-extrabold text-[#1F2A44]">مجانًا</dd>
-                </>
-              )}
-            </div>
-          </dl>
-        )}
-
-        {/* Help me choose */}
-        <button
-          type="button"
-          onClick={() => setSheet('help')}
-          className="w-full sm:w-auto h-12 px-5 rounded-2xl bg-white border border-[#0D4E8B]/30 text-[#0D4E8B] font-['Cairo'] font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer hover:bg-[#F0F6FD]"
-        >
-          <Sparkles className="w-4 h-4" />
-          مش عارف تختار؟ جاوب ٣ أسئلة ونرشّحلك
-        </button>
-
-        {/* Sticky filter bar */}
-        <div className="sticky top-[64px] z-30 -mx-4 px-4 sm:mx-0 sm:px-0 py-2 bg-[#F0F6FD]/95 backdrop-blur space-y-2">
-          <div className="flex gap-2 items-center">
+        {/* Search panel */}
+        <div className="sticky top-[64px] z-30 -mx-4 px-4 sm:mx-0 sm:px-0 py-2">
+          <div className="max-w-3xl mx-auto bg-white rounded-3xl border border-[#E2E8F0] shadow-[0_10px_30px_rgba(13,78,139,0.08)] p-2 grid grid-cols-[1fr_1fr_auto] gap-2">
+            <SelectButton label="المرحلة" value={stageLabel || null} placeholder="كل المراحل" onClick={() => setPicker('stage')} />
+            <SelectButton
+              label="المادة"
+              value={filters.stage === 'quran' ? 'قرآن وتجويد' : subjectLabel || null}
+              placeholder="كل المواد"
+              onClick={() => setPicker('subject')}
+              disabled={filters.stage === 'quran' || subjectChips.length === 0}
+            />
             <button
               type="button"
               onClick={() => setSheet('filters')}
-              aria-label="فلترة"
-              className={`shrink-0 h-10 px-3 rounded-full border flex items-center gap-1.5 text-sm font-bold cursor-pointer ${
-                advCount ? 'bg-[#1F2A44] text-white border-[#1F2A44]' : 'bg-white text-[#1F2A44] border-[#E2E8F0]'
+              aria-label={advCount ? `فلترة (${advCount})` : 'فلترة: المواعيد والسعر'}
+              className={`relative h-14 w-14 rounded-2xl flex items-center justify-center cursor-pointer ${
+                advCount ? 'bg-[#1F2A44] text-white' : 'bg-[#FFC629] text-[#1F2A44] hover:bg-[#F5BC18]'
               }`}
             >
-              <SlidersHorizontal className="w-4 h-4" />
-              {advCount > 0 ? (
-                <span className="min-w-5 h-5 px-1 rounded-full bg-white text-[#1F2A44] text-xs font-extrabold flex items-center justify-center">{toArabicDigits(advCount)}</span>
-              ) : (
-                <span>فلترة</span>
+              <SlidersHorizontal className="w-5 h-5" />
+              {advCount > 0 && (
+                <span className="absolute -top-1 -left-1 min-w-5 h-5 px-1 rounded-full bg-[#FFC629] text-[#1F2A44] text-[11px] font-extrabold flex items-center justify-center ring-2 ring-white">
+                  {toArabicDigits(advCount)}
+                </span>
               )}
             </button>
-            <div role="group" aria-label="المرحلة" className="flex gap-2 overflow-x-auto no-scrollbar">
-              <Chip active={!filters.stage} onClick={() => setStage(null)}>الكل</Chip>
-              {stageChips.map((c) => (
-                <Chip key={c.id} active={filters.stage === c.id} onClick={() => setStage(c.id)}>
-                  {c.label}
-                </Chip>
-              ))}
-            </div>
           </div>
-          {subjectChips.length > 0 && (
-            <div role="group" aria-label="المادة" className="flex gap-2 overflow-x-auto no-scrollbar">
-              <Chip active={!filters.subject} onClick={() => setSubject(null)}>كل المواد</Chip>
-              {subjectChips.map((c) => (
-                <Chip key={c.id} active={filters.subject === c.id} onClick={() => setSubject(c.id)} count={c.count}>
-                  {c.label}
-                </Chip>
+        </div>
+
+        <div className="max-w-3xl mx-auto -mt-1 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <button type="button" onClick={() => setSheet('help')} className="inline-flex items-center gap-1.5 text-sm font-['Cairo'] font-extrabold text-[#0D4E8B] cursor-pointer hover:underline">
+            <Sparkles className="w-4 h-4" />
+            مش عارف تختار؟ جاوب ٣ أسئلة ونرشّحلك
+          </button>
+          <ul className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs font-bold text-[#475569]">
+            {stats && (
+              <li className="flex items-center gap-1">
+                <BadgeCheck className="w-4 h-4 text-[#0D4E8B]" />
+                {toArabicDigits(stats.tutors)} معلم مراجَع
+              </li>
+            )}
+            {stats && stats.completedSessions >= MIN_PUBLIC_SESSIONS && (
+              <li className="flex items-center gap-1">
+                <Users className="w-4 h-4 text-[#0D4E8B]" />
+                {toArabicDigits(stats.completedSessions)}+ حصة
+              </li>
+            )}
+            {stats && stats.avgRating && stats.reviews >= MIN_PUBLIC_SESSIONS ? (
+              <li className="flex items-center gap-1">
+                <Star className="w-4 h-4 fill-[#FFC629] text-[#FFC629]" />
+                {toArabicDigits(Number(stats.avgRating).toFixed(1))} تقييم أولياء الأمور
+              </li>
+            ) : (
+              <li className="flex items-center gap-1">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                تقرير بعد كل حصة
+              </li>
+            )}
+            <li className="flex items-center gap-1">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              مش عاجبك؟ نغيّرلك مجانًا
+            </li>
+          </ul>
+        </div>
+
+        {/* Results header */}
+        <div className="flex flex-wrap items-end justify-between gap-2 pt-2">
+          <div aria-live="polite">
+            <h2 className="font-['Cairo'] text-lg sm:text-xl font-extrabold text-[#1F2A44]">
+              {list.length === 0
+                ? 'مفيش معلمين للاختيار ده دلوقتي'
+                : bookableCount
+                ? `${toArabicDigits(bookableCount)} ${bookableCount === 1 ? 'معلم متاح' : bookableCount <= 10 ? 'معلمين متاحين' : 'معلم متاح'} للتجربة الأسبوع ده`
+                : `${toArabicDigits(list.length)} معلم`}
+            </h2>
+            {bookableCount > 0 && otherCount > 0 && (
+              <p className="text-xs text-[#64748B]">و{toArabicDigits(otherCount)} معلم تاني مواعيدهم بتتفتح قريب</p>
+            )}
+          </div>
+          {pills.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {pills.map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={p.clear}
+                  aria-label={`إلغاء ${p.label}`}
+                  className="h-8 ps-3 pe-2 rounded-full bg-white border border-[#CBD5E1] text-xs font-bold text-[#1F2A44] flex items-center gap-1 cursor-pointer hover:border-rose-300"
+                >
+                  {p.label}
+                  <X className="w-3.5 h-3.5 text-[#64748B]" />
+                </button>
               ))}
+              {pills.length > 1 && (
+                <button type="button" onClick={() => apply({ stage: null, subject: null })} className="h-8 px-2 text-xs font-bold text-[#0D4E8B] underline cursor-pointer">
+                  مسح الكل
+                </button>
+              )}
             </div>
           )}
         </div>
-
-        <p className="text-sm text-[#64748B]" aria-live="polite">
-          {list.length === 0
-            ? 'مفيش معلمين للاختيار ده دلوقتي.'
-            : `${toArabicDigits(list.length)} معلم${bookableCount ? `، منهم ${toArabicDigits(bookableCount)} عندهم مواعيد تجربة قريبة` : ''}`}
-          {advCount > 0 && (
-            <button type="button" onClick={() => apply({ stage: filters.stage, subject: filters.subject })} className="ms-2 font-bold text-[#0D4E8B] underline cursor-pointer">
-              مسح الفلاتر
-            </button>
-          )}
-        </p>
 
         {list.length === 0 ? (
           <div className="bg-white rounded-3xl border border-[#E2E8F0] p-6 text-center space-y-3">
@@ -696,6 +750,36 @@ export const TutorDirectory: React.FC<Props> = ({ data, initialFilters, onBook, 
             document.getElementById('tutors')?.scrollIntoView({ behavior: 'smooth' });
           }}
         />
+      )}
+      {picker && (
+        <Sheet title={picker === 'stage' ? 'المرحلة' : 'المادة'} onClose={() => setPicker(null)} footer={null}>
+          <div className="space-y-2 -mt-2">
+            {[{ id: null as any, label: picker === 'stage' ? 'كل المراحل' : 'كل المواد', count: picker === 'stage' ? data.tutors.length : undefined },
+              ...(picker === 'stage' ? stageChips.map((c) => ({ ...c, label: c.id === 'quran' ? 'قرآن وتجويد' : c.label })) : subjectChips)].map((o: any) => {
+              const active = picker === 'stage' ? (filters.stage || null) === o.id : (filters.subject || null) === o.id;
+              return (
+                <button
+                  key={String(o.id)}
+                  type="button"
+                  onClick={() => {
+                    if (picker === 'stage') setStage(o.id);
+                    else setSubject(o.id);
+                    setPicker(null);
+                  }}
+                  className={`w-full min-h-[56px] px-4 rounded-2xl border text-right flex items-center justify-between gap-3 cursor-pointer ${
+                    active ? 'border-[#0D4E8B] bg-[#F0F6FD]' : 'border-[#E2E8F0] bg-white hover:border-[#94A3B8]'
+                  }`}
+                >
+                  <span className="font-['Cairo'] text-base font-bold text-[#1F2A44]">{o.label}</span>
+                  <span className="flex items-center gap-2">
+                    {o.count !== undefined && <span className="text-xs text-[#64748B]">{toArabicDigits(o.count)} معلم</span>}
+                    {active && <CheckCircle2 className="w-5 h-5 text-[#0D4E8B]" />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Sheet>
       )}
       {sheet === 'help' && (
         <HelpMeChoose
