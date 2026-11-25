@@ -6,6 +6,7 @@ import { formatPercent, percent, qualityFlags, sourceLabel } from '../../../util
 import { toArabicDigits } from '../../../utils/formatters';
 import { AdminAdLinkBuilder } from './AdminAdLinkBuilder';
 import { AdminSlotReminders } from './AdminSlotReminders';
+import { AdminAutoPublication } from './AdminAutoPublication';
 import { Card, EmptyState, ErrorNotice, ICON, LoadingBlock, PageHeader, Pill, RefreshButton, Segmented, StatTile } from './AdminConsoleUi';
 
 const FunnelBars: React.FC<{ steps: Array<{ label: string; value: number }> }> = ({ steps }) => {
@@ -87,6 +88,7 @@ export const AdminQualityView: React.FC<{
       />
 
       {error ? <ErrorNotice error={error} onRetry={load} /> : null}
+      <AdminAutoPublication />
       <AdminSlotReminders />
       <AdminAdLinkBuilder />
       {loading && !funnel ? <LoadingBlock /> : null}

@@ -16,6 +16,7 @@ import { TutorProfileView } from '../TutorProfileView';
 import { TutorDirectTrialsTab } from './TutorDirectTrialsTab';
 import { TutorCalendarTab, TutorCalendarAddRequest } from './TutorCalendarTab';
 import { TutorDashboardHome } from './TutorDashboardHome';
+import { TutorPublicationBanner } from './TutorPublicationBanner';
 import { TutorProfileSettings, TutorProfileFocus } from './TutorProfileSettings';
 import {
   TutorDashboardBottomNav,
@@ -1866,6 +1867,9 @@ export const TutorDashboardView: React.FC<TutorDashboardViewProps> = ({
       {/* ========================================================================= */}
       {/* SECTION 0: FIRST PAGE — PROFILE READINESS STEPS & OVERVIEW */}
       {/* ========================================================================= */}
+      {activeTab === 'overview' && (
+        <TutorPublicationBanner onEditProfile={() => setActiveTab('profile-draft')} onOpenCalendar={() => openCalendar('trial')} />
+      )}
       {activeTab === 'overview' && (
         <TutorDashboardHome
           isPublished={Boolean(tutor.isPublished)}
