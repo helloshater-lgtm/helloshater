@@ -159,7 +159,7 @@ const sessionStorageMock = createMemoryStorage();
 
 // 1. Verify Central Config Kill-Switch & index.html safety
 {
-  assert.equal(SHATIR_CONFIG.metaPixelEnabled, false, 'metaPixelEnabled must stay false until approved');
+  assert.equal(SHATIR_CONFIG.metaPixelEnabled, true, 'metaPixelEnabled approved by the owner for the booking conversion (consent-gated)');
   assert.equal(SHATIR_CONFIG.metaPixelId, '1515074777348342');
   assert.equal(META_PIXEL_ID, '1515074777348342');
   assert.equal(SHATIR_CONFIG.gaMeasurementId, 'G-CGL8XBRE0J');
@@ -172,7 +172,8 @@ const sessionStorageMock = createMemoryStorage();
 }
 
 // 2. Verify Production Kill-Switch (metaPixelEnabled: false) EVEN WHEN SAVED MARKETING CONSENT EXISTS
-{
+// (runs only while the real config is switched off; the switch logic itself is covered in block 2b)
+if (!SHATIR_CONFIG.metaPixelEnabled) {
   localStorageMock.clear();
   sessionStorageMock.clear();
   gtagCalls.length = 0;
@@ -246,6 +247,39 @@ const sessionStorageMock = createMemoryStorage();
   assert.equal(withdrawn.marketing, 'denied');
   assert.deepEqual(getConsentPreferences(), { analytics: 'granted', marketing: 'denied' });
   delete (globalThis as any).window.fbq;
+}
+
+// 2b. Kill-switch via controller + booking conversion («Schedule») rules
+{
+  const calls: any[][] = [];
+  let enabled = false;
+  let consent = true;
+  let hash = '#book/tutor-school-1';
+  const c = createMetaPixelController({
+    isPixelEnabled: () => enabled,
+    isMarketingConsentGranted: () => consent,
+    getCurrentHash: () => hash,
+    getCurrentSearch: () => '',
+    ensurePixelInitialized: () => undefined,
+    callFbq: (...args: any[]) => { calls.push(args); },
+  });
+  const school = makeTutor();
+  assert.equal(c.trackTrialBooked({ bookingId: 'b0', tutor: school }), false, 'kill-switch off → nothing');
+  assert.equal(calls.length, 0);
+  enabled = true;
+  assert.equal(c.trackTrialBooked({ bookingId: 'b1', tutor: school }), true);
+  const ev = calls.find((x) => x[0] === 'track');
+  assert.deepEqual(ev?.slice(0, 2), ['track', 'Schedule']);
+  assert.ok(!JSON.stringify(ev).match(/name|phone|email|whatsapp|@/i), 'no PII in Schedule payload');
+  assert.equal(c.trackTrialBooked({ bookingId: 'b1', tutor: school }), false, 'once per booking');
+  consent = false;
+  assert.equal(c.trackTrialBooked({ bookingId: 'b2', tutor: school }), false, 'no consent → nothing');
+  consent = true;
+  hash = '#admin';
+  assert.equal(c.trackTrialBooked({ bookingId: 'b3', tutor: school }), false, 'admin route → nothing');
+  hash = '#book/x';
+  const quranTutor = { ...school, quranOfferings: [{ id: 'q' }], offerings: [{ track: 'quran' }] } as any;
+  assert.equal(c.trackTrialBooked({ bookingId: 'b4', tutor: quranTutor }), false, 'Quran tutor → nothing');
 }
 
 // 3. Offline Policy Isolation Tests (mock isPixelEnabled: () => true, ZERO network requests)

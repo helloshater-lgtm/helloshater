@@ -437,8 +437,28 @@ export function createMetaPixelController(
     return true;
   };
 
+  /**
+   * Conversion for ads: a free trial was booked (standard «Schedule» event).
+   * School tutors only (Quran / mixed tutors are never tracked), no PII, once per booking.
+   */
+  const sentBookings = new Set<string>();
+  const trackTrialBooked = (params: { bookingId: string; tutor?: Tutor | null }): boolean => {
+    if (!isActive()) return false;
+    const hash = adapter.getCurrentHash();
+    if (EXCLUDED_HASH_PREFIXES.some((p) => hash.startsWith(p))) return false;
+    if (isSensitiveUrlOrPath(adapter.getCurrentSearch())) return false;
+    if (!isTutorEligibleForMetaTracking(params.tutor)) return false;
+    const id = String(params.bookingId || '').trim();
+    if (!id || sentBookings.has(id)) return false;
+    syncConsentState(true);
+    sentBookings.add(id);
+    adapter.callFbq('track', 'Schedule', sanitizeMetaPayload({ content_category: 'school', request_type: 'trial' }));
+    return true;
+  };
+
   return {
     pixelId,
+    trackTrialBooked,
     isEnabled: () => Boolean(adapter.isPixelEnabled()),
     syncConsentState,
     trackPageView,
