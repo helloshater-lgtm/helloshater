@@ -1,3 +1,4 @@
+import { SEO_PAGES } from '../utils/seoCatalog';
 import React from 'react';
 import { AppView } from '../types';
 import { SHATIR_CONFIG } from '../config/shatirConfig';
@@ -100,6 +101,20 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             </a>
           </div>
         </div>
+
+        {/* Subject × stage pages (internal links for Google) */}
+        <nav aria-label="مدرسين حسب المادة والمرحلة" className="py-4 border-t border-[#F1F5F9]">
+          <p className="text-xs font-bold text-[#64748B] mb-2">مدرسين خصوصي أونلاين</p>
+          <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[#475569]">
+            {SEO_PAGES.map((p) => (
+              <li key={p.slug}>
+                <a href={`/tutors/${p.slug}`} className="hover:text-[#0D4E8B]">
+                  مدرس {p.name.replace(/^مدرسين /, '')}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
         {/* Bottom Legal & Copyright Row */}
         <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#64748B]">
