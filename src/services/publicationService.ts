@@ -9,7 +9,10 @@ export const MISSING_LABELS: Record<string, string> = {
   price: 'سعر الحصة',
   duration: 'مدة الحصة',
   subject: 'المواد أو المراحل اللي بتدرّسها',
+  trial_slots: 'مواعيد حصص تجريبية',
+  private_slots: 'مواعيد ثابتة للحصص الخاصة',
 };
+export const SLOT_ITEMS = ['trial_slots', 'private_slots'];
 export const missingLabel = (code: string) => MISSING_LABELS[code] || code;
 
 export interface TutorPublicationStatus {

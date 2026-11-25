@@ -16,6 +16,8 @@ CREATE TABLE public.tutor_quran_offerings (tutor_id TEXT);
 CREATE TABLE public.tutor_private_info (tutor_id TEXT, country_code TEXT, phone_number TEXT, whatsapp_number TEXT);
 CREATE TABLE public.tutor_available_slots (tutor_id TEXT, slot_date DATE, start_time TIME, timezone TEXT DEFAULT 'Africa/Cairo',
   is_available BOOLEAN DEFAULT TRUE, is_booked BOOLEAN DEFAULT FALSE, admin_suspended BOOLEAN DEFAULT FALSE);
+CREATE TABLE public.tutor_private_slots (tutor_id TEXT, slot_date DATE, start_time TIME, timezone TEXT DEFAULT 'Africa/Cairo',
+  is_available BOOLEAN DEFAULT TRUE, is_booked BOOLEAN DEFAULT FALSE, admin_suspended BOOLEAN DEFAULT FALSE);
 CREATE TABLE public.tutor_account_links (tutor_id TEXT, user_id UUID, is_active BOOLEAN);
 CREATE TABLE public.admin_audit_log (id SERIAL, actor_email TEXT, action TEXT, entity_type TEXT, entity_id TEXT, tutor_id TEXT, summary TEXT, details JSONB);
 CREATE TABLE public.admins (uid UUID);
@@ -91,6 +93,20 @@ async function main() {
   assert.ok((await q(`SELECT count(*)::int AS n FROM public.admin_audit_log WHERE actor_email = 'النظام'`))[0].n >= 4);
   await assert.rejects(q('SELECT public.admin_get_auto_publication()'), /ADMIN_FORBIDDEN/);
   assert.ok((await q('SELECT public.admin_get_auto_publication() AS l', ADMIN))[0].l.length >= 4);
+  // ---- 028: both trial and fixed slots required ----
+  await db.exec(readFileSync(new URL('../supabase/migrations/028_publish_requires_slots.sql', import.meta.url), 'utf8').replace(/NOTIFY pgrst[^;]*;/, ''));
+  await q(`UPDATE public.tutor_publication_state SET admin_locked = FALSE`);
+  await q(`UPDATE public.tutors SET is_published = TRUE WHERE id IN ('ok','nophoto','noslot','newbie')`);
+  r = (await q('SELECT public.run_tutor_auto_publication() AS r'))[0].r;
+  assert.equal(r.hidden, 4, 'no fixed slots anywhere → all hidden');
+  const m = (await q(`SELECT missing FROM public.tutor_publication_state WHERE tutor_id = 'ok'`))[0].missing;
+  assert.deepEqual(m, ['private_slots']);
+  const body = (await q(`SELECT body FROM public.tutor_notifications WHERE tutor_id = 'ok' ORDER BY created_at DESC LIMIT 1`))[0].body;
+  assert.match(body, /مواعيد ثابتة/);
+  await q(`INSERT INTO public.tutor_private_slots (tutor_id, slot_date, start_time) VALUES ('ok', CURRENT_DATE + 4, '17:00')`);
+  r = (await q('SELECT public.run_tutor_auto_publication() AS r'))[0].r;
+  assert.equal(await pub('ok'), true, 'both slots → republished');
+  assert.equal(await pub('newbie'), false, 'newbie has no trial slot → stays hidden');
   console.log('Migration 027 tests passed (PGlite).');
 }
 main().catch((e) => { console.error(e); process.exit(1); });
