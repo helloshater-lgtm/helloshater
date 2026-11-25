@@ -17,7 +17,7 @@ const statusOf = (r: AdminAutoPublicationRow) => {
 
 const msgFor = (r: AdminAutoPublicationRow) =>
   r.autoHidden && r.missing.length
-    ? `أهلًا ${r.honorific} ${r.name} 👋\nملفك على شاطر كلاسيز متوقف مؤقتًا لأن ناقص: ${r.missing.map(missingLabel).join('، ')}.\nكمّلهم من لوحة المعلم وهيتنشر تلقائيًا:\nhttps://www.shatirclasses.com/#tutor-dashboard`
+    ? `أهلًا ${r.honorific} ${r.name} 👋\nملفك على شاطر كلاسيز مش ظاهر لأولياء الأمور لأن ناقص: ${r.missing.map(missingLabel).join('، ')}.\nضيفهم من لوحة المعلم وملفك هيتنشر تلقائيًا خلال ربع ساعة:\nhttps://www.shatirclasses.com/#tutor-dashboard`
     : `أهلًا ${r.honorific} ${r.name} 👋\nمفيش عندك مواعيد تجربة مفتوحة على شاطر كلاسيز، وأولياء الأمور مش قادرين يحجزوا.\nافتح ٣–٥ مواعيد من لوحة المعلم ← التقويم:\nhttps://www.shatirclasses.com/#tutor-dashboard`;
 
 /** Auto publication overview: who was hidden / is at risk, run now, lock / unlock. */
@@ -38,7 +38,7 @@ export const AdminAutoPublication: React.FC = () => {
   return (
     <Card
       title="النشر التلقائي"
-      subtitle={`المنصة بتفحص الملفات كل ساعة: الناقص يتوقف، واللي يكمل يتنشر لوحده.${lastRun ? ` آخر فحص ${relativeTimeAr(lastRun)}.` : ''}`}
+      subtitle={`المنصة بتفحص الملفات كل ربع ساعة: أي ملف ناقصه بيانات أو مواعيد تجريبي وثابتة بيتوقف، واللي يكمل يتنشر لوحده.${lastRun ? ` آخر فحص ${relativeTimeAr(lastRun)}.` : ''}`}
       icon={<Bot {...ICON} />}
       aside={
         <button

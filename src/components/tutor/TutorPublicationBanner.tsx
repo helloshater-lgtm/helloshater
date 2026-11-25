@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Bell, CalendarPlus, CheckCircle2, PencilLine } from 'lucide-react';
-import { PublicationService, TutorPublicationStatus, missingLabel } from '../../services/publicationService';
+import { PublicationService, SLOT_ITEMS, TutorPublicationStatus, missingLabel } from '../../services/publicationService';
 import { toArabicDigits } from '../../utils/formatters';
 
 /** Tells the tutor why the profile is hidden / at risk, and what to do. */
@@ -29,10 +29,19 @@ export const TutorPublicationBanner: React.FC<{ onEditProfile: () => void; onOpe
         <ul className="text-sm text-rose-900 list-disc pr-5 space-y-0.5">
           {s.missing.map((m) => <li key={m}>{missingLabel(m)}</li>)}
         </ul>
-        <p className="text-xs text-rose-800">أول ما تكمّلهم، ملفك هيتنشر تلقائيًا خلال ساعة.</p>
-        <button type="button" onClick={onEditProfile} className="h-11 px-4 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-sm font-extrabold flex items-center gap-2 cursor-pointer">
-          <PencilLine className="w-4 h-4" /> كمّل ملفك دلوقتي
-        </button>
+        <p className="text-xs text-rose-800">أول ما تكمّلهم، ملفك هيتنشر تلقائيًا خلال ربع ساعة.</p>
+        <div className="flex flex-wrap gap-2">
+          {s.missing.some((m) => SLOT_ITEMS.includes(m)) && (
+            <button type="button" onClick={onOpenCalendar} className="h-11 px-4 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-sm font-extrabold flex items-center gap-2 cursor-pointer">
+              <CalendarPlus className="w-4 h-4" /> أضف مواعيدك
+            </button>
+          )}
+          {s.missing.some((m) => !SLOT_ITEMS.includes(m)) && (
+            <button type="button" onClick={onEditProfile} className="h-11 px-4 rounded-xl bg-white ring-1 ring-rose-300 text-rose-800 text-sm font-extrabold flex items-center gap-2 cursor-pointer">
+              <PencilLine className="w-4 h-4" /> كمّل بيانات ملفك
+            </button>
+          )}
+        </div>
       </div>
     );
   } else if (!s.isPublished && s.autoReason === 'no_slots') {
@@ -41,7 +50,7 @@ export const TutorPublicationBanner: React.FC<{ onEditProfile: () => void; onOpe
         <p className="font-['Cairo'] font-extrabold text-rose-900 flex items-center gap-2">
           <AlertTriangle className="w-5 h-5" /> ملفك اتوقف لأنه مفيش مواعيد تجربة
         </p>
-        <p className="text-sm text-rose-900">افتح مواعيد تجربة (٢٠ دقيقة) وهيتنشر ملفك تلقائيًا خلال ساعة.</p>
+        <p className="text-sm text-rose-900">افتح مواعيد تجربة (٢٠ دقيقة) وهيتنشر ملفك تلقائيًا خلال ربع ساعة.</p>
         <button type="button" onClick={onOpenCalendar} className="h-11 px-4 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-sm font-extrabold flex items-center gap-2 cursor-pointer">
           <CalendarPlus className="w-4 h-4" /> افتح مواعيد تجربة
         </button>
