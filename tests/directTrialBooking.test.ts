@@ -382,8 +382,8 @@ function testAdminDraftsAndMetaExclusion() {
   assert.ok(tutorDraft.whatsappUrl?.startsWith('https://wa.me/201099887766?text='));
   assert.ok(tutorDraft.messageText.includes('الحجوزات التجريبية'));
 
-  // Meta Pixel remains disabled and #my-trials route is excluded
-  assert.equal(SHATIR_CONFIG.metaPixelEnabled, false);
+  // Meta Pixel is on (owner-approved, consent-gated) and #my-trials route stays excluded
+  assert.equal(SHATIR_CONFIG.metaPixelEnabled, true);
   assert.equal(isExcludedMetaRoute('my-trials', '#my-trials'), true);
 }
 

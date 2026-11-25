@@ -39,6 +39,7 @@ import { EmailCodeVerifier } from './EmailCodeVerifier';
 import { ParentDashboardService } from '../services/parentDashboardService';
 import { ParentChild } from '../types';
 import { trackTrialBooked } from '../services/analytics';
+import { MetaPixelService } from '../services/metaPixelService';
 
 interface TrialBookingViewProps {
   tutorId: string;
@@ -316,6 +317,7 @@ export const TrialBookingView: React.FC<TrialBookingViewProps> = ({
       if (booked?.id) await attachChild(booked.id);
       setConfirmed(booked);
       trackTrialBooked(tutorId, authUser?.email ? 'account' : 'guest');
+      if (booked?.id) MetaPixelService.trackTrialBooked({ bookingId: booked.id, tutor });
       setStep('done');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       loadSlots().catch(() => undefined);

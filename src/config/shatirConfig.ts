@@ -20,7 +20,8 @@ export const SHATIR_CONFIG = {
   gaMeasurementId: 'G-CGL8XBRE0J',
 
   // Central Meta Pixel ID & temporary feature toggle (keep disabled until path isolation review completes)
-  metaPixelEnabled: false,
+  // On (owner-approved): only with marketing consent, never on admin/tutor routes or Quran tutors; booking = «Schedule», no PII.
+  metaPixelEnabled: true,
   metaPixelId: RAW_META_PIXEL_ID || '1515074777348342',
 
   // Platform Guarantee & Trust messaging
